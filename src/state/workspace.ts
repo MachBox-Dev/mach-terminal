@@ -62,11 +62,20 @@ export function setActivePane(state: WorkspaceState, paneId: string): WorkspaceS
   return { ...state, activePaneId: paneId };
 }
 
-export function splitActivePane(state: WorkspaceState, sessionId: string | null): WorkspaceState {
+export function setSplitDirection(state: WorkspaceState, splitDirection: SplitDirection): WorkspaceState {
+  return { ...state, splitDirection };
+}
+
+export function splitActivePane(
+  state: WorkspaceState,
+  sessionId: string | null,
+  splitDirection?: SplitDirection,
+): WorkspaceState {
   const nextId = `pane-${state.panes.length + 1}`;
   return {
     ...state,
     panes: [...state.panes, { id: nextId, sessionId }],
+    splitDirection: splitDirection ?? state.splitDirection,
     activePaneId: nextId,
   };
 }
@@ -75,8 +84,13 @@ export function closePane(state: WorkspaceState, paneId: string): WorkspaceState
   if (state.panes.length <= 1) {
     return state;
   }
+  const paneIndex = state.panes.findIndex((pane) => pane.id === paneId);
+  if (paneIndex < 0) {
+    return state;
+  }
   const nextPanes = state.panes.filter((pane) => pane.id !== paneId);
-  const nextActive = state.activePaneId === paneId ? nextPanes[0].id : state.activePaneId;
+  const fallbackActiveIndex = Math.max(0, Math.min(paneIndex, nextPanes.length - 1));
+  const nextActive = state.activePaneId === paneId ? nextPanes[fallbackActiveIndex].id : state.activePaneId;
   return { ...state, panes: nextPanes, activePaneId: nextActive };
 }
 

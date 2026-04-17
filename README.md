@@ -23,6 +23,9 @@ npm install
 npm run tauri dev
 ```
 
+On first launch, use **Quick start (AI off)** in Settings to get to a working terminal session immediately.  
+Advanced provider/routing controls are optional and can be configured later.
+
 ## Developer diagnostics
 
 - **Vite dev + debug Tauri:** With `npm run tauri dev`, the header shows **Diagnostics** and the command palette includes **Open diagnostics snapshot** (merged JSON from `runtime_debug_snapshot` and `settings_schema_dump` when the native build has debug assertions).
@@ -36,6 +39,8 @@ npm run tauri dev
 - `src/core/plugins.ts`: plugin manifest contracts and capability labels
 - `src/core/runtime.ts`: frontend runtime capability types
 - `src-tauri/src/terminal_core.rs`: Rust terminal core capability source
+
+Current executable provider path is `ollama`; other providers remain visible as unavailable until adapters land.
 
 ## Next Build Steps
 

@@ -457,9 +457,13 @@ impl SessionManager {
                 .sessions
                 .lock()
                 .map_err(|error| format!("failed to lock session manager: {error}"))?;
-            sessions
-                .remove(session_id)
-                .ok_or_else(|| format!("session `{session_id}` does not exist"))?
+            sessions.remove(session_id)
+        };
+        let Some(session) = session else {
+            // Idempotent close contract: exiting shells can self-remove from the map
+            // before the UI sends `pty_close` from overlay/tab flows.
+            debug!(session_id, "close_session ignored for missing session");
+            return Ok(());
         };
         update_status_and_emit(
             app,

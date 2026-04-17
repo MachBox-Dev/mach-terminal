@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { aiErrorStatusMessage, canRunAiRequest, classifyAiError, providerToggleStatus } from "./providerUiState";
+import {
+  aiErrorStatusMessage,
+  canRunAiRequest,
+  classifyAiError,
+  isExecutableProvider,
+  providerToggleStatus,
+} from "./providerUiState";
 
 describe("provider ui state helpers", () => {
   it("gates AI request execution by opt-in and in-flight status", () => {
@@ -11,6 +17,13 @@ describe("provider ui state helpers", () => {
   it("formats provider toggle status for enable/disable transitions", () => {
     expect(providerToggleStatus("ollama", true)).toBe("Enabled provider ollama.");
     expect(providerToggleStatus("openai", false)).toBe("Disabled provider openai.");
+  });
+
+  it("marks only runtime-supported providers as executable", () => {
+    expect(isExecutableProvider("ollama")).toBe(true);
+    expect(isExecutableProvider("openai")).toBe(false);
+    expect(isExecutableProvider("anthropic")).toBe(false);
+    expect(isExecutableProvider("custom-openai")).toBe(false);
   });
 
   it("classifies backend AI errors into stable frontend categories", () => {

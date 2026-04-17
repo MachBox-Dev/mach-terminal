@@ -22,7 +22,7 @@ import {
 } from "./core/sessionCwd";
 import { collectExitedSessionIds } from "./core/sessionTabStatus";
 import { commandToTerminalUiIntent } from "./core/terminalCommandRouting";
-import { canRunAiRequest } from "./core/providerUiState";
+import { canRunAiRequest, isExecutableProvider } from "./core/providerUiState";
 import type { TerminalUiRequest } from "./core/terminalUiRequest";
 import { DEFAULT_KEYMAP, formatShortcut, matchShortcut } from "./core/keymap";
 import { drainChunksUpToByteBudget, nextSequenceState, SEQUENCE_LARGE_JUMP } from "./core/ptyOutputCoalesce";
@@ -66,6 +66,7 @@ import {
   restoreWorkspaceFromSnapshot,
   setActivePane,
   setPaneSession,
+  setSplitDirection,
   snapshotWorkspace,
   splitActivePane,
   workspaceLayoutFromSnapshot,
@@ -464,38 +465,49 @@ function App() {
     await createSessionAt(null);
   }, [createSessionAt]);
 
+  const clearSessionFromUiState = useCallback((sessionId: string) => {
+    setSessions((current) => {
+      const nextSessions = current.filter((session) => session.id !== sessionId);
+      const nextSessionIds = nextSessions.map((session) => session.id);
+      setWorkspace((currentWorkspace) => removeSessionFromWorkspace(currentWorkspace, sessionId, nextSessionIds));
+      return nextSessions;
+    });
+    setSessionBuffers((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionStatus((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionMessages((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionExited((current) => clearExitedInfo(current, sessionId));
+    setSessionCwd((current) => clearCwd(current, sessionId));
+  }, []);
+
   const closeSession = useCallback(
     async (sessionId: string) => {
       try {
         await ptyClose(sessionId);
-        setSessions((current) => {
-          const nextSessions = current.filter((session) => session.id !== sessionId);
-          const nextSessionIds = nextSessions.map((session) => session.id);
-          setWorkspace((currentWorkspace) => removeSessionFromWorkspace(currentWorkspace, sessionId, nextSessionIds));
-          return nextSessions;
-        });
-        setSessionBuffers((current) => {
-          const next = { ...current };
-          delete next[sessionId];
-          return next;
-        });
-        setSessionStatus((current) => {
-          const next = { ...current };
-          delete next[sessionId];
-          return next;
-        });
-        setSessionMessages((current) => {
-          const next = { ...current };
-          delete next[sessionId];
-          return next;
-        });
-        setSessionExited((current) => clearExitedInfo(current, sessionId));
-        setSessionCwd((current) => clearCwd(current, sessionId));
+        clearSessionFromUiState(sessionId);
       } catch (error) {
-        setRuntimeError(error instanceof Error ? error.message : "Failed to close session.");
+        const message = error instanceof Error ? error.message : "Failed to close session.";
+        if (message.includes("does not exist")) {
+          // Backend sessions can already be removed after natural exit; keep close/restart
+          // actions convergent by applying local teardown anyway.
+          clearSessionFromUiState(sessionId);
+          return;
+        }
+        setRuntimeError(message);
       }
     },
-    [],
+    [clearSessionFromUiState],
   );
 
   const handleInput = useCallback(async (sessionId: string, data: string) => {
@@ -634,7 +646,21 @@ function App() {
   }, []);
 
   const splitPane = useCallback(() => {
-    setWorkspace((current) => splitActivePane(current, activeSession?.id ?? null));
+    setWorkspace((current) => splitActivePane(current, activeSession?.id ?? null, current.splitDirection));
+  }, [activeSession?.id]);
+
+  const splitPaneRow = useCallback(() => {
+    setWorkspace((current) => {
+      const withDirection = setSplitDirection(current, "row");
+      return splitActivePane(withDirection, activeSession?.id ?? null, "row");
+    });
+  }, [activeSession?.id]);
+
+  const splitPaneColumn = useCallback(() => {
+    setWorkspace((current) => {
+      const withDirection = setSplitDirection(current, "column");
+      return splitActivePane(withDirection, activeSession?.id ?? null, "column");
+    });
   }, [activeSession?.id]);
 
   const closeActivePane = useCallback(() => {
@@ -923,11 +949,12 @@ function App() {
                     {provider.name}
                     <small>{provider.kind}</small>
                   </span>
-                  <strong>{provider.status}</strong>
+                  <strong>{isExecutableProvider(provider.id) ? provider.status : "unavailable"}</strong>
                   <button
                     type="button"
                     onClick={() => void toggleProvider(provider.id, !provider.enabled)}
                     className="inline-btn"
+                    disabled={!isExecutableProvider(provider.id) && !provider.enabled}
                   >
                     {provider.enabled ? "disable" : "enable"}
                   </button>
@@ -937,8 +964,14 @@ function App() {
                     placeholder="Endpoint URL"
                     className="inline-input"
                     aria-label={`${provider.id} endpoint`}
+                    disabled={!isExecutableProvider(provider.id)}
                   />
-                  <button type="button" className="inline-btn ghost" onClick={() => void saveProviderEndpoint(provider.id)}>
+                  <button
+                    type="button"
+                    className="inline-btn ghost"
+                    onClick={() => void saveProviderEndpoint(provider.id)}
+                    disabled={!isExecutableProvider(provider.id)}
+                  >
                     save endpoint
                   </button>
                 </li>
@@ -956,7 +989,13 @@ function App() {
                 restart session
               </button>
               <button type="button" className="inline-btn" onClick={() => splitPane()}>
-                split pane
+                split ({workspace.splitDirection})
+              </button>
+              <button type="button" className="inline-btn ghost" onClick={() => splitPaneColumn()}>
+                split vertical
+              </button>
+              <button type="button" className="inline-btn ghost" onClick={() => splitPaneRow()}>
+                split horizontal
               </button>
               <button type="button" className="inline-btn" onClick={() => closeActivePane()}>
                 close pane
@@ -995,8 +1034,8 @@ function App() {
                   onChange={(event) => setRoutingDraft((current) => ({ ...current, default_provider: event.currentTarget.value }))}
                 >
                   {providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name} ({provider.id})
+                    <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
+                      {provider.name} ({provider.id}){!isExecutableProvider(provider.id) ? " - unavailable" : ""}
                     </option>
                   ))}
                 </select>

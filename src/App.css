@@ -548,9 +548,17 @@ h1 {
 
 .split-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
   min-height: 70vh;
+}
+
+.split-grid.split-grid-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.split-grid.split-grid-row {
+  grid-template-columns: 1fr;
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .split-pane {
@@ -902,6 +910,14 @@ h1 {
 }
 
 .field-row input {
+  border: 1px solid #334155;
+  background: #020617;
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+}
+
+.field-row select {
   border: 1px solid #334155;
   background: #020617;
   color: #cbd5e1;

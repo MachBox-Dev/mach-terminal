@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { normalizeQuickStartProfile, QUICKSTART_ROUTING, toQuickStartProviders } from "../core/onboarding";
+import { isExecutableProvider } from "../core/providerUiState";
 import type { ProviderRoutingSettings, ProviderSettings, TerminalProfile } from "../core/terminal";
 import {
   profileGet,
@@ -27,6 +29,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
     ollama_model: "llama3.2",
     ai_feature_enabled: false,
   });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -89,6 +92,39 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
     }
   }, [profile, providers, routing, onClose, onSaved]);
 
+  const quickStart = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const quickStartProfile = normalizeQuickStartProfile(profile);
+      await profilePatch({
+        shell: quickStartProfile.shell ?? null,
+        cwd: quickStartProfile.cwd ?? null,
+        font_size: quickStartProfile.font_size,
+      });
+
+      const quickStartProviders = toQuickStartProviders(providers);
+      await Promise.all(
+        quickStartProviders.map(async (provider) => {
+          await providerSetEnabled(provider.id, false);
+        }),
+      );
+
+      await providerRoutingPatch({
+        default_provider: QUICKSTART_ROUTING.default_provider,
+        ollama_model: QUICKSTART_ROUTING.ollama_model,
+        ai_feature_enabled: QUICKSTART_ROUTING.ai_feature_enabled,
+      });
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "done");
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Quick start failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [onClose, onSaved, profile, providers]);
+
   const skip = useCallback(() => {
     window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "skipped");
     onClose();
@@ -112,7 +148,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
       >
         <h2 id="setup-title">Profile &amp; providers</h2>
         <p className="muted-block">
-          Set defaults for new sessions and optional AI providers. You can reopen this from <strong>Settings</strong> anytime.
+          Quick start gets you to a working terminal session fast. Advanced provider/routing settings are optional and can be changed anytime from <strong>Settings</strong>.
         </p>
 
         {error ? <p className="error-text">{error}</p> : null}
@@ -152,62 +188,84 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
         </section>
 
         <section className="setup-section">
-          <h3>Providers</h3>
-          <ul className="setup-provider-list">
-            {providers.map((row) => (
-              <li key={row.id}>
-                <label className="toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={row.enabled}
-                    onChange={(e) => updateProvider(row.id, { enabled: e.target.checked })}
-                  />
-                  <span>{row.id}</span>
-                </label>
+          <button type="button" className="inline-btn ghost" onClick={() => setShowAdvanced((current) => !current)}>
+            {showAdvanced ? "Hide advanced AI settings" : "Show advanced AI settings"}
+          </button>
+          {showAdvanced ? (
+            <>
+              <h3>Providers</h3>
+              <ul className="setup-provider-list">
+                {providers.map((row) => {
+                  const executable = isExecutableProvider(row.id);
+                  return (
+                    <li key={row.id}>
+                      <label className="toggle-row">
+                        <input
+                          type="checkbox"
+                          checked={row.enabled}
+                          onChange={(e) => updateProvider(row.id, { enabled: e.target.checked })}
+                          disabled={!executable && !row.enabled}
+                        />
+                        <span>
+                          {row.id}
+                          {!executable ? " (unavailable)" : ""}
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        className="endpoint-input"
+                        placeholder="Endpoint URL (if applicable)"
+                        value={row.endpoint ?? ""}
+                        onChange={(e) => updateProvider(row.id, { endpoint: e.target.value || undefined })}
+                        disabled={!executable}
+                      />
+                      {row.api_key_env ? (
+                        <small className="muted-block">API key env: {row.api_key_env}</small>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <h3>Routing</h3>
+              <label className="field-row">
+                <span>Default provider id</span>
+                <select
+                  value={routing.default_provider}
+                  onChange={(e) => setRouting((r) => ({ ...r, default_provider: e.target.value }))}
+                >
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
+                      {provider.id}
+                      {!isExecutableProvider(provider.id) ? " (unavailable)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-row">
+                <span>Ollama model</span>
                 <input
                   type="text"
-                  className="endpoint-input"
-                  placeholder="Endpoint URL (if applicable)"
-                  value={row.endpoint ?? ""}
-                  onChange={(e) => updateProvider(row.id, { endpoint: e.target.value || undefined })}
+                  value={routing.ollama_model}
+                  onChange={(e) => setRouting((r) => ({ ...r, ollama_model: e.target.value }))}
                 />
-                {row.api_key_env ? (
-                  <small className="muted-block">API key env: {row.api_key_env}</small>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="setup-section">
-          <h3>Routing</h3>
-          <label className="field-row">
-            <span>Default provider id</span>
-            <input
-              type="text"
-              value={routing.default_provider}
-              onChange={(e) => setRouting((r) => ({ ...r, default_provider: e.target.value }))}
-            />
-          </label>
-          <label className="field-row">
-            <span>Ollama model</span>
-            <input
-              type="text"
-              value={routing.ollama_model}
-              onChange={(e) => setRouting((r) => ({ ...r, ollama_model: e.target.value }))}
-            />
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={routing.ai_feature_enabled}
-              onChange={(e) => setRouting((r) => ({ ...r, ai_feature_enabled: e.target.checked }))}
-            />
-            Opt in to AI features (still requires enabled providers)
-          </label>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={routing.ai_feature_enabled}
+                  onChange={(e) => setRouting((r) => ({ ...r, ai_feature_enabled: e.target.checked }))}
+                />
+                Opt in to AI features (still requires enabled providers)
+              </label>
+            </>
+          ) : null}
         </section>
 
         <div className="modal-actions">
+          <button type="button" className="inline-btn" onClick={() => void quickStart()} disabled={loading}>
+            {loading ? "Starting..." : "Quick start (AI off)"}
+          </button>
           {showSkip ? (
             <button type="button" className="inline-btn ghost" onClick={() => skip()} disabled={loading}>
               Skip for now

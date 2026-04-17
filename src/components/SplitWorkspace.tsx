@@ -38,7 +38,12 @@ export function SplitWorkspace({
   onRequestRestartSession,
   onRequestCloseSession,
 }: SplitWorkspaceProps) {
-  const layoutClass = workspace.panes.length > 1 ? "split-grid" : "split-single";
+  const layoutClass =
+    workspace.panes.length > 1
+      ? workspace.splitDirection === "row"
+        ? "split-grid split-grid-row"
+        : "split-grid split-grid-column"
+      : "split-single";
 
   return (
     <div className={layoutClass}>

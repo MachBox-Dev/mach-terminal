@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "node scripts/dev-with-cleanup.mjs",
     "build": "tsc && vite build",
     "test": "npm run test:types && npm run test:ux && npm run test:pty",
     "test:types": "tsc --noEmit",

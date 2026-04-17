@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  closePane,
   createWorkspaceState,
   reconcileWorkspace,
   removeSessionFromWorkspace,
   restoreWorkspaceFromSnapshot,
+  setSplitDirection,
   setPaneSession,
   splitActivePane,
   workspaceLayoutFromSnapshot,
@@ -25,6 +27,25 @@ describe("workspace reconciliation", () => {
     workspace = setPaneSession(workspace, workspace.activePaneId, "session-a");
     const reconciled = reconcileWorkspace(workspace, []);
     expect(reconciled.panes[0].sessionId).toBeNull();
+  });
+
+  it("keeps chosen split orientation when splitting", () => {
+    let workspace = createWorkspaceState();
+    workspace = setSplitDirection(workspace, "row");
+    workspace = splitActivePane(workspace, "session-a", "row");
+    expect(workspace.splitDirection).toBe("row");
+    expect(workspace.panes).toHaveLength(2);
+  });
+
+  it("chooses neighboring pane as active when closing active pane", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, workspace.activePaneId, "session-a");
+    workspace = splitActivePane(workspace, "session-b", "column");
+    workspace = splitActivePane(workspace, "session-c", "column");
+    const activeBeforeClose = workspace.activePaneId;
+    workspace = closePane(workspace, activeBeforeClose);
+    expect(workspace.activePaneId).not.toBe(activeBeforeClose);
+    expect(workspace.panes).toHaveLength(2);
   });
 });
 

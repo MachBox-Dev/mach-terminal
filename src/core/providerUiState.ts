@@ -7,8 +7,14 @@ export type AiErrorCategory =
   | "decode_error"
   | "generic";
 
+const EXECUTABLE_PROVIDER_IDS = new Set(["ollama"]);
+
 export function canRunAiRequest(aiOptInEnabled: boolean, requestInFlight: boolean): boolean {
   return aiOptInEnabled && !requestInFlight;
+}
+
+export function isExecutableProvider(providerId: string): boolean {
+  return EXECUTABLE_PROVIDER_IDS.has(providerId);
 }
 
 export function providerToggleStatus(providerId: string, enabled: boolean): string {

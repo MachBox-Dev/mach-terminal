@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { aiErrorStatusMessage, providerToggleStatus } from "../core/providerUiState";
+import { aiErrorStatusMessage, isExecutableProvider, providerToggleStatus } from "../core/providerUiState";
 import { PROVIDER_REGISTRY, type ProviderDescriptor } from "../core/providers";
 import {
   aiExecute,
@@ -18,6 +18,17 @@ function endpointDraftsFromProviders(providers: ProviderDescriptor[]): Record<st
     drafts[provider.id] = provider.endpoint ?? "";
     return drafts;
   }, {});
+}
+
+function resolveExecutableDefaultProvider(
+  providers: ProviderDescriptor[],
+  requestedDefaultProvider: string,
+): string {
+  if (isExecutableProvider(requestedDefaultProvider)) {
+    return requestedDefaultProvider;
+  }
+  const fallback = providers.find((provider) => isExecutableProvider(provider.id));
+  return fallback?.id ?? requestedDefaultProvider;
 }
 
 interface UseProviderAiStateParams {
@@ -64,10 +75,14 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
 
   const initializeProviderAiState = useCallback(
     (providerDescriptors: ProviderDescriptor[], providerRouting: ProviderRoutingSettings) => {
+      const defaultProvider = resolveExecutableDefaultProvider(
+        providerDescriptors,
+        providerRouting.default_provider,
+      );
       setProviders(providerDescriptors);
-      setRouting(providerRouting);
+      setRouting({ ...providerRouting, default_provider: defaultProvider });
       setRoutingDraft({
-        default_provider: providerRouting.default_provider,
+        default_provider: defaultProvider,
         ollama_model: providerRouting.ollama_model,
       });
       setProviderEndpointDrafts(endpointDraftsFromProviders(providerDescriptors));
@@ -81,6 +96,10 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
   }, []);
 
   const toggleProvider = useCallback(async (providerId: string, enabled: boolean) => {
+    if (enabled && !isExecutableProvider(providerId)) {
+      setProviderConfigStatus(`Provider ${providerId} is not executable yet.`);
+      return;
+    }
     try {
       await providerSetEnabled(providerId, enabled);
       const providerDescriptors = await providerList();
@@ -108,6 +127,10 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
   }, [applyProviderDescriptors, onRuntimeError, providerEndpointDrafts]);
 
   const saveRoutingConfig = useCallback(async () => {
+    if (!isExecutableProvider(routingDraft.default_provider)) {
+      setProviderConfigStatus(`Provider ${routingDraft.default_provider} cannot be used yet.`);
+      return;
+    }
     try {
       const updated = await providerRoutingPatch({
         default_provider: routingDraft.default_provider,
@@ -148,6 +171,10 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
       onRuntimeError("No active session selected for AI prompt.");
       return;
     }
+    if (!isExecutableProvider(routing.default_provider)) {
+      setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
+      return;
+    }
     const requestId = latestAiRequestRef.current + 1;
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
@@ -180,6 +207,10 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
 
   const explainCommand = useCallback(async (command: string) => {
     if (!activeSession) {
+      return;
+    }
+    if (!isExecutableProvider(routing.default_provider)) {
+      setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
       return;
     }
     const requestId = latestAiRequestRef.current + 1;
@@ -217,6 +248,10 @@ export function useProviderAiState({ activeSession, onRuntimeError, onHistoryAct
 
   const fixCommand = useCallback(async (command: string) => {
     if (!activeSession) {
+      return;
+    }
+    if (!isExecutableProvider(routing.default_provider)) {
+      setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
       return;
     }
     const requestId = latestAiRequestRef.current + 1;
