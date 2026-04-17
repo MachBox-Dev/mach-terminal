@@ -17,12 +17,14 @@ This document defines the production release process for Mach Terminal.
 
 ## Preflight Checklist
 
-1. Run local validation:
+1. Run local validation (matches CI/release enforcement):
    - `npm run check:versions`
    - `npm run test`
+   - `npm run stability:signoff`
    - `npm run release:smoke`
+   - `npm run security:baseline`
 2. Verify `CHANGELOG.md` has an entry for the target version.
-3. Confirm nightly burn-in is green for the last 3 runs.
+3. Confirm latest nightly burn-in is green and threshold gate passed.
 4. Confirm updater manifest endpoint is reachable (GitHub `latest.json` for your repo).
 
 ## Required GitHub Secrets
@@ -47,8 +49,18 @@ If signing credentials are unavailable for a platform, release workflow will sti
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
 2. Wait for `.github/workflows/release.yml` to complete. The release is created as a **draft** with attached assets.
+   - The workflow now enforces preflight gates before publishing artifacts:
+     - version consistency
+     - full tests
+     - stability signoff
+     - release smoke
+     - security baseline
 3. Verify generated assets and checksums on the draft release.
 4. **Promote** the draft to a public release: run workflow **Promote release** (`.github/workflows/promote-release.yml`) with the tag name, **or** manually publish the draft in GitHub (ensure “Set as latest” matches your intent).
+   - The promote workflow now blocks unless:
+     - release is still a draft
+     - successful `CI` and `Release` runs exist for the release commit
+     - latest `Nightly Burn-In` run succeeded
 5. Confirm `latest.json` updater manifest points to the new version (GitHub release assets).
 
 The promote workflow refuses tags that look like RC (`-rc.`) so stable promotion stays explicit.

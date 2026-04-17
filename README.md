@@ -39,10 +39,10 @@ npm run tauri dev
 
 ## Next Build Steps
 
-1. Replace the demo terminal output with real PTY session I/O streams
-2. Add settings persistence for profiles/workspaces/session restore
-3. Implement a permissioned plugin runtime
-4. Wire provider adapters (Ollama first, cloud providers optional)
+1. Add additional provider adapters beyond Ollama (OpenAI/Anthropic/custom OpenAI-compatible)
+2. Expand plugin runtime execution contracts and policy telemetry
+3. Convert more UX dogfood checks into scripted smoke coverage
+4. Harden release promotion automation and signed artifact verification
 
 ## UX Dogfood Checklist
 
@@ -131,6 +131,7 @@ Run these checks before marking a stability tranche complete:
 4. Corrupt the settings file intentionally (invalid JSON) and verify startup surfaces explicit settings error instead of silent reset.
 5. Corrupt `command_history.json`, relaunch, and verify the recovery toast and a `corrupt-*.json` backup next to the config file.
 6. Run `npm run test` and confirm lifecycle ordering, settings persistence, and workspace layout persistence tests pass.
+7. Run `npm run security:baseline` and confirm dependency vulnerability checks pass for npm runtime deps and Rust crates.
 
 ## Runtime-performance smoke (history IO)
 
@@ -143,6 +144,17 @@ Use this when touching history persistence or hot-path IO:
    - a `command_history.corrupt-*.json` backup exists next to the config file
 4. Verify replay from history still writes input into the active session.
 5. For sustained PTY output and UI pacing, see **PTY output coalescing (UI)** in `docs/runtime-contracts.md` (sequence policy, RAF batching, per-frame byte cap).
+
+## Provider path smoke (Ollama first)
+
+Run this when touching provider routing, endpoint settings, or AI explain/fix flows:
+
+1. In **Settings**, set `ollama` endpoint to a reachable host (default `http://127.0.0.1:11434`) and save.
+2. Enable provider `ollama`, set routing default provider to `ollama`, and save routing config.
+3. With AI opt-in **off**, run an AI prompt and confirm request is blocked with explicit guidance.
+4. Turn AI opt-in **on**, run **Run AI prompt**, then trigger **Explain** and **Fix** from history; verify loading state and stable final response.
+5. Set endpoint to an invalid URL (for example `ftp://localhost:11434`) and confirm the UI surfaces the backend invalid-endpoint error.
+6. Set endpoint to an unreachable URL (for example `http://127.0.0.1:1`) and confirm the UI surfaces unreachable-endpoint guidance.
 
 ## Shutdown/cleanup smoke (no leaked shells)
 
@@ -162,3 +174,14 @@ npm run stability:signoff
 ```
 
 The command writes `artifacts/stability-signoff/stability-signoff-report.json` for handoff, including `ga_cutline.ga_candidate_ready` (true only when version check, full tests, and frontend build all pass). Manual GA items (release promotion, signing, onboarding smoke) are documented in `RELEASING.md`.
+
+## Enforced CI/Release gates
+
+- `CI` runs matrix build/test, release smoke, stability signoff (PRs + `master`), and security baseline checks.
+- `Release` workflow blocks artifact publishing until preflight gates pass:
+  - `npm run check:versions`
+  - `npm run test`
+  - `npm run stability:signoff`
+  - `npm run release:smoke`
+  - `npm run security:baseline`
+- `Promote stable release` blocks publishing unless the target draft release has successful `CI` + `Release` runs for the tagged commit and latest `Nightly Burn-In` run succeeded.

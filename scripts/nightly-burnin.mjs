@@ -16,6 +16,28 @@ const scenarios = [
 const runMetrics = [];
 let totalFailures = 0;
 
+function shellProcessCount() {
+  try {
+    if (process.platform === "win32") {
+      const output = execSync(
+        'powershell -NoProfile -Command "(Get-Process -Name pwsh,powershell,cmd -ErrorAction SilentlyContinue | Measure-Object).Count"',
+        { stdio: "pipe", encoding: "utf-8" },
+      );
+      const parsed = Number.parseInt(output.trim(), 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const output = execSync("ps -A -o comm=", { stdio: "pipe", encoding: "utf-8" });
+    const candidates = output
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .filter((command) => /^(bash|zsh|sh|fish|pwsh|powershell)$/i.test(command));
+    return candidates.length;
+  } catch {
+    return null;
+  }
+}
+
 function runCommand(command) {
   const started = performance.now();
   try {
@@ -49,10 +71,17 @@ for (const scenario of scenarios) {
   }
 }
 
+const shellCountBeforeBuild = shellProcessCount();
 const buildResult = runCommand("npm run build");
 if (!buildResult.ok) {
   totalFailures += 1;
 }
+const shellCountAfterBuild = shellProcessCount();
+const shellProcessDelta =
+  typeof shellCountBeforeBuild === "number" && typeof shellCountAfterBuild === "number"
+    ? shellCountAfterBuild - shellCountBeforeBuild
+    : null;
+const orphanPtyProcessesDetected = typeof shellProcessDelta === "number" ? shellProcessDelta > 1 : true;
 
 const elapsedSeries = runMetrics.map((entry) => entry.elapsedMs).sort((a, b) => a - b);
 const p95Index = Math.max(0, Math.ceil(elapsedSeries.length * 0.95) - 1);
@@ -77,7 +106,10 @@ const summary = {
     memory_rss_bytes: process.memoryUsage().rss,
   },
   stability: {
-    orphan_pty_processes_detected: false,
+    orphan_pty_processes_detected: orphanPtyProcessesDetected,
+    shell_process_count_before_build: shellCountBeforeBuild,
+    shell_process_count_after_build: shellCountAfterBuild,
+    shell_process_delta: shellProcessDelta,
     unclassified_lifecycle_failures: totalFailures,
   },
 };
