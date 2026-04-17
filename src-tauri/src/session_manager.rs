@@ -35,8 +35,11 @@ struct SessionHandle {
     /// reflect the latest known directory without a second emit round-trip.
     cwd: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<String>>,
-    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Wrapped in `Option` so `close_session_handle` can `take()` and drop the PTY master before
+    /// joining the reader thread — required on Windows ConPTY where `read()` may not return EOF
+    /// until the master handle is torn down (see `pty_reader_thread_finishes_after_child_kill`).
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
     command_buffer: Arc<Mutex<String>>,
     reader_thread: Option<JoinHandle<()>>,
@@ -328,8 +331,8 @@ impl SessionManager {
             shell: shell.clone(),
             cwd: live_cwd,
             status,
-            master: Arc::new(Mutex::new(pty_pair.master)),
-            writer: Arc::new(Mutex::new(writer)),
+            master: Arc::new(Mutex::new(Some(pty_pair.master))),
+            writer: Arc::new(Mutex::new(Some(writer))),
             child,
             command_buffer: Arc::new(Mutex::new(String::new())),
             reader_thread: Some(reader_thread),
@@ -378,6 +381,9 @@ impl SessionManager {
         let mut writer = writer
             .lock()
             .map_err(|error| format!("failed to lock session writer: {error}"))?;
+        let writer = writer
+            .as_mut()
+            .ok_or_else(|| format!("session `{session_id}` writer is torn down"))?;
         writer
             .write_all(data.as_bytes())
             .map_err(|error| {
@@ -392,7 +398,6 @@ impl SessionManager {
                 warn!(session_id = %session_id, %error, "failed to flush PTY input");
                 format!("failed to flush PTY input: {error}")
             })?;
-        drop(writer);
 
         let mut command_buffer = command_buffer
             .lock()
@@ -433,9 +438,12 @@ impl SessionManager {
                 .ok_or_else(|| format!("session `{session_id}` does not exist"))?;
             Arc::clone(&session.master)
         };
-        let master = master
+        let mut master = master
             .lock()
             .map_err(|error| format!("failed to lock PTY master: {error}"))?;
+        let master = master
+            .as_mut()
+            .ok_or_else(|| format!("session `{session_id}` PTY is torn down"))?;
         master
             .resize(PtySize {
                 rows,
@@ -649,6 +657,14 @@ fn close_session_handle(mut session: SessionHandle) -> Result<(), String> {
             .map_err(|error| format!("failed to lock session process: {error}"))?;
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    // Tear down IO handles before joining the reader so `read()` cannot block forever (Windows ConPTY).
+    if let Ok(mut slot) = session.writer.lock() {
+        slot.take();
+    }
+    if let Ok(mut slot) = session.master.lock() {
+        slot.take();
     }
 
     if let Some(reader_thread) = session.reader_thread.take() {

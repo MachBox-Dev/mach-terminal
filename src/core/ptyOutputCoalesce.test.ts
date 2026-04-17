@@ -21,8 +21,11 @@ describe("nextSequenceState", () => {
     expect(nextSequenceState(1, 101)).toEqual({ status: "resync", next: 101 });
   });
 
-  it("treats duplicate or rewind as gap", () => {
-    expect(nextSequenceState(5, 5)).toEqual({ status: "gap", next: 5 });
+  it("treats exact duplicate sequence as benign", () => {
+    expect(nextSequenceState(5, 5)).toEqual({ status: "duplicate", next: 5 });
+  });
+
+  it("treats rewind as gap", () => {
     expect(nextSequenceState(5, 4)).toEqual({ status: "gap", next: 4 });
   });
 

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
+import { AppSettingsModal } from "./components/AppSettingsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetup";
-import { HistoryPanel } from "./components/HistoryPanel";
 import { SplitWorkspace } from "./components/SplitWorkspace";
+import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
 import { APP_COMMANDS, DEV_PALETTE_COMMANDS, type AppCommandId } from "./core/commands";
 import {
@@ -22,11 +23,9 @@ import {
 } from "./core/sessionCwd";
 import { collectExitedSessionIds } from "./core/sessionTabStatus";
 import { commandToTerminalUiIntent } from "./core/terminalCommandRouting";
-import { canRunAiRequest, isExecutableProvider } from "./core/providerUiState";
 import type { TerminalUiRequest } from "./core/terminalUiRequest";
 import { DEFAULT_KEYMAP, formatShortcut, matchShortcut } from "./core/keymap";
 import { drainChunksUpToByteBudget, nextSequenceState, SEQUENCE_LARGE_JUMP } from "./core/ptyOutputCoalesce";
-import { PLUGIN_REGISTRY } from "./core/plugins";
 import { DEFAULT_RUNTIME_CAPABILITIES, type RuntimeCapabilities } from "./core/runtime";
 import {
   historyQuery,
@@ -117,7 +116,8 @@ function App() {
   const [historyActionStatus, setHistoryActionStatus] = useState<string | null>(null);
   const [pluginResult, setPluginResult] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string>(UPDATER_ENABLED ? "idle" : "disabled (build flag)");
-  const [setupModalOpen, setSetupModalOpen] = useState(false);
+  const [firstRunModalOpen, setFirstRunModalOpen] = useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticsJson, setDiagnosticsJson] = useState<string | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
@@ -184,7 +184,7 @@ function App() {
     }
     const v = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
     if (v !== "done" && v !== "skipped") {
-      setSetupModalOpen(true);
+      setFirstRunModalOpen(true);
     }
   }, []);
 
@@ -353,9 +353,12 @@ function App() {
         const previousSequence = lastSequenceRef.current[event.session_id];
         const seq = nextSequenceState(previousSequence, event.sequence);
         lastSequenceRef.current[event.session_id] = seq.next;
+        if (seq.status === "duplicate") {
+          return;
+        }
         if (seq.status === "gap") {
           setRuntimeError(
-            `Output sequence anomaly for ${event.session_id}: previous=${String(previousSequence)}, got ${event.sequence} (rewind, duplicate, or jump >${SEQUENCE_LARGE_JUMP})`,
+            `Output sequence anomaly for ${event.session_id}: previous=${String(previousSequence)}, got ${event.sequence} (rewind, or jump >${SEQUENCE_LARGE_JUMP})`,
           );
         } else if (seq.status === "resync" && import.meta.env.DEV) {
           console.debug(
@@ -559,6 +562,14 @@ function App() {
       setRuntimeError(error instanceof Error ? error.message : "Failed to refresh runtime metrics.");
     }
   }, []);
+
+  useEffect(() => {
+    if (!settingsModalOpen) {
+      return;
+    }
+    void refreshRuntimeMetrics();
+    void refreshHistory();
+  }, [settingsModalOpen, refreshRuntimeMetrics, refreshHistory]);
 
   const refreshDiagnostics = useCallback(async () => {
     setDiagnosticsLoading(true);
@@ -832,35 +843,39 @@ function App() {
   );
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">Mach Terminal</p>
-          <h1>Fast terminal core, zero lock-in.</h1>
-          <p className="subtext">
-            Warp-level UX without the vendor handcuffs. Bring your own keys, local models, and plugins.
-          </p>
-        </div>
-        <div className="app-header-actions">
-          <button type="button" className="inline-btn" onClick={() => setSetupModalOpen(true)}>
-            Settings
-          </button>
-          {import.meta.env.DEV ? (
-            <button type="button" className="inline-btn ghost" onClick={() => setDiagnosticsOpen(true)}>
-              Diagnostics
+    <div className="app-frame">
+      <CustomTitleBar />
+      <main className="app-shell">
+        {transientRuntimeError ? <p className="runtime-toast">{transientRuntimeError}</p> : null}
+        {recoveryBanner ? <p className="runtime-toast recovery-banner">{recoveryBanner}</p> : null}
+        {runtimeError ? (
+          <div className="runtime-error-strip" role="status">
+            <span>{runtimeError}</span>
+            <button type="button" className="inline-btn ghost" onClick={() => setSettingsModalOpen(true)}>
+              Open settings
             </button>
-          ) : null}
-          <div className="runtime-pill">
-            <span>PTY</span>
-            <strong>{capabilities.pty_backend}</strong>
           </div>
-        </div>
-      </header>
-      {transientRuntimeError ? <p className="runtime-toast">{transientRuntimeError}</p> : null}
-      {recoveryBanner ? <p className="runtime-toast recovery-banner">{recoveryBanner}</p> : null}
+        ) : null}
 
-      <section className="surface-grid">
-        <section className="terminal-stack">
+        <section className="terminal-surface">
+          <div className="terminal-chrome">
+            <div className="terminal-chrome-left">
+              <button type="button" className="inline-btn" onClick={() => setSettingsModalOpen(true)}>
+                Settings
+              </button>
+              {import.meta.env.DEV ? (
+                <button type="button" className="inline-btn ghost" onClick={() => setDiagnosticsOpen(true)}>
+                  Diagnostics
+                </button>
+              ) : null}
+            </div>
+            <div className="terminal-chrome-right">
+              <span className="terminal-chrome-pty" title="PTY backend">
+                {capabilities.pty_backend}
+              </span>
+            </div>
+          </div>
+          <section className="terminal-stack">
           <TabBar
             sessions={sessions}
             sessionStatus={sessionStatus}
@@ -905,243 +920,71 @@ function App() {
               })();
             }}
           />
+          </section>
         </section>
 
-        <aside className="info-panel">
-          <section>
-            <h2>Runtime Capabilities</h2>
-            {runtimeError ? <p className="error-text">{runtimeError}</p> : null}
-            <ul>
-              <li>
-                <span>Session persistence</span>
-                <strong>{capabilities.session_persistence ? "enabled" : "disabled"}</strong>
-              </li>
-              <li>
-                <span>Plugin host</span>
-                <strong>{capabilities.plugin_host ? "enabled" : "disabled"}</strong>
-              </li>
-              <li>
-                <span>Provider host</span>
-                <strong>{capabilities.provider_host ? "enabled" : "disabled"}</strong>
-              </li>
-              <li>
-                <span>Provider routing</span>
-                <strong>{capabilities.provider_routing ? "enabled" : "disabled"}</strong>
-              </li>
-            </ul>
-            {runtimeMetrics ? (
-              <div className="metrics-grid">
-                <p>chunks emitted: {runtimeMetrics.output_chunks_emitted}</p>
-                <p>chunks dropped: {runtimeMetrics.output_chunks_dropped}</p>
-                <p>emit failures: {runtimeMetrics.emit_failures}</p>
-                <p>sequence anomalies: {runtimeMetrics.sequence_anomalies}</p>
-              </div>
-            ) : null}
-          </section>
+        <AppSettingsModal
+          open={settingsModalOpen}
+          onClose={() => setSettingsModalOpen(false)}
+          onOpenProfile={() => {
+            setSettingsModalOpen(false);
+            setFirstRunModalOpen(true);
+          }}
+          onRefreshMetrics={refreshRuntimeMetrics}
+          capabilities={capabilities}
+          runtimeError={runtimeError}
+          runtimeMetrics={runtimeMetrics}
+          providers={providers}
+          providerConfigStatus={providerConfigStatus}
+          providerEndpointDrafts={providerEndpointDrafts}
+          updateProviderEndpointDraft={updateProviderEndpointDraft}
+          toggleProvider={toggleProvider}
+          saveProviderEndpoint={saveProviderEndpoint}
+          activeSession={activeSession}
+          sessionStatus={sessionStatus}
+          restartActiveSession={restartActiveSession}
+          splitPane={splitPane}
+          splitPaneColumn={splitPaneColumn}
+          splitPaneRow={splitPaneRow}
+          closeActivePane={closeActivePane}
+          onOpenCommandPalette={() => setPaletteOpen(true)}
+          workspaceSplitDirection={workspace.splitDirection}
+          checkForUpdates={checkForUpdates}
+          updateStatus={updateStatus}
+          updaterEnabled={UPDATER_ENABLED}
+          routing={routing}
+          routingDraft={routingDraft}
+          setRoutingDraft={setRoutingDraft}
+          saveRoutingConfig={saveRoutingConfig}
+          setAiOptIn={setAiOptIn}
+          aiPrompt={aiPrompt}
+          setAiPrompt={setAiPrompt}
+          runAiPrompt={runAiPrompt}
+          aiRequestInFlight={aiRequestInFlight}
+          aiRequestStatus={aiRequestStatus}
+          aiResponse={aiResponse}
+          lastAiContext={lastAiContext}
+          historyEntries={historyEntries}
+          historyLoading={historyLoading}
+          historyError={historyError}
+          historyActionStatus={historyActionStatus}
+          onReplayCommand={replayCommand}
+          onExplainCommand={explainCommand}
+          onFixCommand={fixCommand}
+          globalShortcutItems={globalShortcutItems}
+          terminalCommandItems={terminalCommandItems}
+          pluginResult={pluginResult}
+          runPluginDemo={runPluginDemo}
+        />
+        <CommandPalette
+          open={paletteOpen}
+          commands={commandPaletteItems}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(commandId) => void executeCommand(commandId as AppCommandId)}
+        />
+        <FirstRunSetup open={firstRunModalOpen} onClose={() => setFirstRunModalOpen(false)} onSaved={handleSetupSaved} />
 
-          <section>
-            <h2>Providers (disabled by default)</h2>
-            {providerConfigStatus ? <p className="muted-block">{providerConfigStatus}</p> : null}
-            <ul>
-              {providers.map((provider) => (
-                <li key={provider.id}>
-                  <span>
-                    {provider.name}
-                    <small>{provider.kind}</small>
-                  </span>
-                  <strong>{isExecutableProvider(provider.id) ? provider.status : "unavailable"}</strong>
-                  <button
-                    type="button"
-                    onClick={() => void toggleProvider(provider.id, !provider.enabled)}
-                    className="inline-btn"
-                    disabled={!isExecutableProvider(provider.id) && !provider.enabled}
-                  >
-                    {provider.enabled ? "disable" : "enable"}
-                  </button>
-                  <input
-                    value={providerEndpointDrafts[provider.id] ?? ""}
-                    onChange={(event) => updateProviderEndpointDraft(provider.id, event.currentTarget.value)}
-                    placeholder="Endpoint URL"
-                    className="inline-input"
-                    aria-label={`${provider.id} endpoint`}
-                    disabled={!isExecutableProvider(provider.id)}
-                  />
-                  <button
-                    type="button"
-                    className="inline-btn ghost"
-                    onClick={() => void saveProviderEndpoint(provider.id)}
-                    disabled={!isExecutableProvider(provider.id)}
-                  >
-                    save endpoint
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section>
-            <h2>Session Controls</h2>
-            <p className="muted-block">
-              active session: {activeSession?.id ?? "none"} ({activeSession ? sessionStatus[activeSession.id] ?? activeSession.status : "idle"})
-            </p>
-            <div className="inline-controls">
-              <button type="button" className="inline-btn" onClick={() => void restartActiveSession()}>
-                restart session
-              </button>
-              <button type="button" className="inline-btn" onClick={() => splitPane()}>
-                split ({workspace.splitDirection})
-              </button>
-              <button type="button" className="inline-btn ghost" onClick={() => splitPaneColumn()}>
-                split vertical
-              </button>
-              <button type="button" className="inline-btn ghost" onClick={() => splitPaneRow()}>
-                split horizontal
-              </button>
-              <button type="button" className="inline-btn" onClick={() => closeActivePane()}>
-                close pane
-              </button>
-              <button type="button" className="inline-btn" onClick={() => setPaletteOpen(true)}>
-                command palette
-              </button>
-            </div>
-          </section>
-
-          <section>
-            <h2>Updater</h2>
-            <div className="inline-controls">
-              <button type="button" className="inline-btn" onClick={() => void checkForUpdates()} disabled={!UPDATER_ENABLED}>
-                check for updates
-              </button>
-              <p className="muted-block">
-                status: {updateStatus}
-                {!UPDATER_ENABLED ? (
-                  <span>
-                    {" "}
-                    (updater runs only in release builds with <code>VITE_ENABLE_UPDATER=true</code>.)
-                  </span>
-                ) : null}
-              </p>
-            </div>
-          </section>
-
-          <section>
-            <h2>AI Router (v0)</h2>
-            <div className="stacked-controls">
-              <label className="field-row">
-                <span>Default provider</span>
-                <select
-                  value={routingDraft.default_provider}
-                  onChange={(event) => setRoutingDraft((current) => ({ ...current, default_provider: event.currentTarget.value }))}
-                >
-                  {providers.map((provider) => (
-                    <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
-                      {provider.name} ({provider.id}){!isExecutableProvider(provider.id) ? " - unavailable" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-row">
-                <span>Ollama model</span>
-                <input
-                  value={routingDraft.ollama_model}
-                  onChange={(event) => setRoutingDraft((current) => ({ ...current, ollama_model: event.currentTarget.value }))}
-                />
-              </label>
-              <button type="button" className="inline-btn ghost" onClick={() => void saveRoutingConfig()}>
-                save routing config
-              </button>
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={routing.ai_feature_enabled}
-                  onChange={(event) => void setAiOptIn(event.currentTarget.checked)}
-                />
-                AI opt-in required
-              </label>
-              <input value={aiPrompt} onChange={(event) => setAiPrompt(event.currentTarget.value)} />
-              <button
-                type="button"
-                className="inline-btn"
-                onClick={() => void runAiPrompt()}
-                disabled={!canRunAiRequest(routing.ai_feature_enabled, aiRequestInFlight)}
-              >
-                {aiRequestInFlight ? "running..." : "run ai prompt"}
-              </button>
-              {!routing.ai_feature_enabled ? (
-                <p className="muted-block">
-                  AI requests are blocked until you enable AI opt-in. Provider endpoints and routing can still be configured.
-                </p>
-              ) : null}
-              {aiRequestStatus ? <p className="muted-block">{aiRequestStatus}</p> : null}
-              {aiResponse ? <p className="muted-block">{aiResponse}</p> : null}
-              {lastAiContext ? (
-                <p className="muted-block">
-                  context: {lastAiContext.event_type} - {lastAiContext.payload}
-                </p>
-              ) : null}
-            </div>
-          </section>
-
-          <HistoryPanel
-            entries={historyEntries}
-            loading={historyLoading}
-            aiBusy={aiRequestInFlight}
-            error={historyError}
-            actionStatus={historyActionStatus}
-            onReplay={(command) => void replayCommand(command)}
-            onExplain={(command) => void explainCommand(command)}
-            onFix={(command) => void fixCommand(command)}
-          />
-
-          <section>
-            <h2>Keyboard Shortcuts</h2>
-            <ul>
-              {globalShortcutItems.map((command) => (
-                <li key={command.id}>
-                  <span>{command.label}</span>
-                  <strong>{command.shortcut ?? "unbound"}</strong>
-                </li>
-              ))}
-            </ul>
-            <p className="muted-block">Terminal-focused commands (palette or terminal local keys):</p>
-            <ul>
-              {terminalCommandItems.map((command) => (
-                <li key={command.id}>
-                  <span>{command.label}</span>
-                  <strong>{command.shortcut ?? "palette"}</strong>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section>
-            <h2>Plugin Contracts</h2>
-            <ul>
-              {PLUGIN_REGISTRY.map((plugin) => (
-                <li key={plugin.id}>
-                  <span>{plugin.name}</span>
-                  <strong>{plugin.stage}</strong>
-                </li>
-              ))}
-            </ul>
-            <div className="inline-controls">
-              <button type="button" className="inline-btn" onClick={() => void runPluginDemo()}>
-                run plugin demo
-              </button>
-              {pluginResult ? <p className="muted-block">{pluginResult}</p> : null}
-            </div>
-          </section>
-        </aside>
-      </section>
-      <CommandPalette
-        open={paletteOpen}
-        commands={commandPaletteItems}
-        onClose={() => setPaletteOpen(false)}
-        onRun={(commandId) => void executeCommand(commandId as AppCommandId)}
-      />
-      <FirstRunSetup open={setupModalOpen} onClose={() => setSetupModalOpen(false)} onSaved={handleSetupSaved} />
-
-      {diagnosticsOpen ? (
+        {diagnosticsOpen ? (
         <div
           className="modal-overlay"
           role="presentation"
@@ -1197,8 +1040,9 @@ function App() {
             {diagnosticsCopyStatus ? <p className="muted-block">{diagnosticsCopyStatus}</p> : null}
           </div>
         </div>
-      ) : null}
-    </main>
+        ) : null}
+      </main>
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@
  * Pure helpers for PTY output batching and per-session sequence bookkeeping on the UI thread.
  */
 
-export type SequenceStatus = "ok" | "resync" | "gap";
+export type SequenceStatus = "ok" | "resync" | "gap" | "duplicate";
 
 /** Forward jumps larger than this (skipped sequence numbers) surface as a strong anomaly. */
 export const SEQUENCE_LARGE_JUMP = 100;
@@ -14,10 +14,15 @@ export function nextSequenceState(
   if (previous === undefined) {
     return { status: "ok", next: incoming };
   }
+  if (incoming === previous) {
+    // Same sequence id as last accepted chunk: treat as duplicate emit, do not
+    // append output twice or surface a user-facing "anomaly" (Rust metrics stay 0).
+    return { status: "duplicate", next: previous };
+  }
   if (incoming === previous + 1) {
     return { status: "ok", next: incoming };
   }
-  if (incoming <= previous) {
+  if (incoming < previous) {
     return { status: "gap", next: incoming };
   }
   if (incoming > previous + SEQUENCE_LARGE_JUMP) {
