@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  detect-stability-signoff-changes:
+    name: Detect Stability Signoff Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      should_run: ${{ steps.filter.outputs.stability }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            stability:
+              - "src/**"
+              - "src-tauri/**"
+              - "scripts/**"
+              - "package.json"
+              - "package-lock.json"
+              - ".github/workflows/**"
+
+  matrix-build-and-test:
+    name: Matrix Build and Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  stability-signoff:
+    name: Stability Signoff (PR scoped)
+    runs-on: ubuntu-latest
+    needs: detect-stability-signoff-changes
+    if: github.event_name == 'pull_request' && needs.detect-stability-signoff-changes.outputs.should_run == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run stability signoff
+        run: npm run stability:signoff
+
+  release-smoke:
+    name: Release Smoke (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Release smoke build
+        env:
+          UPDATER_PUBLIC_KEY: "disabled-for-ci-smoke"
+        run: npm run release:smoke

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-15T21:13:04.240Z",
+  "sourceDir": "C:\\Users\\whobs\\dev\\mach-terminal\\artifacts\\burnin\\history",
+  "platforms": {
+    "win32": {
+      "samples": 1,
+      "warn": {
+        "p95_test_elapsed_ms": 2397,
+        "max_test_elapsed_ms": 2697,
+        "failures": 1,
+        "unclassified_lifecycle_failures": 0,
+        "memory_rss_bytes": 61560038
+      },
+      "fail": {
+        "p95_test_elapsed_ms": 2796,
+        "max_test_elapsed_ms": 3296,
+        "failures": 1,
+        "unclassified_lifecycle_failures": 0,
+        "memory_rss_bytes": 76043520
+      }
+    }
+  },
+  "hardZero": {
+    "orphan_pty_processes_detected": false
+  }
+}

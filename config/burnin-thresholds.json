@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "default": {
+    "warn": {
+      "p95_test_elapsed_ms": 90000,
+      "max_test_elapsed_ms": 150000,
+      "failures": 1,
+      "unclassified_lifecycle_failures": 0,
+      "memory_rss_bytes": 1200000000
+    },
+    "fail": {
+      "p95_test_elapsed_ms": 120000,
+      "max_test_elapsed_ms": 180000,
+      "failures": 2,
+      "unclassified_lifecycle_failures": 1,
+      "memory_rss_bytes": 1800000000
+    }
+  },
+  "platforms": {
+    "win32": {
+      "warn": {
+        "p95_test_elapsed_ms": 95000,
+        "max_test_elapsed_ms": 160000
+      },
+      "fail": {
+        "p95_test_elapsed_ms": 130000,
+        "max_test_elapsed_ms": 200000
+      }
+    },
+    "darwin": {
+      "warn": {
+        "p95_test_elapsed_ms": 85000,
+        "max_test_elapsed_ms": 145000
+      },
+      "fail": {
+        "p95_test_elapsed_ms": 115000,
+        "max_test_elapsed_ms": 175000
+      }
+    },
+    "linux": {
+      "warn": {
+        "p95_test_elapsed_ms": 85000,
+        "max_test_elapsed_ms": 145000
+      },
+      "fail": {
+        "p95_test_elapsed_ms": 115000,
+        "max_test_elapsed_ms": 175000
+      }
+    }
+  },
+  "hardZero": {
+    "orphan_pty_processes_detected": false
+  }
+}

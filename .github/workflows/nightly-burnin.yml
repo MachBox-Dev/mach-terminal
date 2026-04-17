@@ -1,0 +1,59 @@
+name: Nightly Burn-In
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-burnin:
+    name: Nightly Burn-In (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run nightly burn-in scenarios
+        env:
+          BURNIN_ARTIFACT_DIR: artifacts/burnin
+        run: npm run burnin:nightly
+
+      - name: Evaluate threshold gates
+        env:
+          BURNIN_ARTIFACT_DIR: artifacts/burnin
+          BURNIN_MAX_P95_MS: "120000"
+          BURNIN_MAX_TEST_MS: "180000"
+        run: npm run burnin:gate
+
+      - name: Upload burn-in artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: burnin-${{ matrix.os }}
+          path: artifacts/burnin

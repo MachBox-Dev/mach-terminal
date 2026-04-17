@@ -1,0 +1,31 @@
+name: Promote stable release
+
+# Run after validating draft release artifacts. Publishes a draft stable release (non-RC tag).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: Publish draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote release from draft to published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [[ "$TAG" == *"-rc"* ]]; then
+            echo "Refuse to promote RC tags via this workflow; RC releases publish as prerelease automatically."
+            exit 1
+          fi
+          gh release edit "$TAG" --draft=false --latest
+          echo "Published release $TAG"

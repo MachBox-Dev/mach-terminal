@@ -1,0 +1,42 @@
+{
+  "name": "mach-terminal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "npm run test:types && npm run test:ux && npm run test:pty",
+    "test:types": "tsc --noEmit",
+    "test:ux": "vitest run",
+    "test:pty": "cargo test --manifest-path src-tauri/Cargo.toml --tests",
+    "check:versions": "node scripts/check-version-sync.mjs",
+    "release:smoke": "npm run check:versions && npm run build && npm run tauri -- build --debug",
+    "release:dry-run": "node scripts/release-dry-run.mjs",
+    "stability:signoff": "node scripts/stability-signoff.mjs",
+    "burnin:nightly": "node scripts/nightly-burnin.mjs",
+    "burnin:gate": "node scripts/threshold-gates.mjs",
+    "burnin:calibrate": "node scripts/calibrate-thresholds.mjs",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/xterm": "^6.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.1.4"
+  }
+}
