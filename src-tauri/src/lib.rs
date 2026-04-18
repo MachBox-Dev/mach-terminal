@@ -1,6 +1,8 @@
 pub mod models;
 pub mod history_store;
+pub mod input_sanitize;
 pub mod osc7;
+pub mod shell_context;
 mod plugin_host;
 pub mod provider_host;
 pub mod session_manager;
@@ -330,7 +332,8 @@ pub fn run() {
             runtime_debug_snapshot,
             plugin_grant_capability,
             plugin_execute,
-            ai_execute
+            ai_execute,
+            shell_context::shell_context_snapshot
         ])
         .build(tauri::generate_context!());
 

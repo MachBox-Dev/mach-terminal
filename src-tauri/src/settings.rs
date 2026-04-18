@@ -154,6 +154,9 @@ pub fn apply_profile_patch(profile: &mut TerminalProfile, patch: &ProfilePatch) 
     if let Some(font_size) = patch.font_size {
         profile.font_size = font_size;
     }
+    if let Some(minimal_shell_prompt) = patch.minimal_shell_prompt {
+        profile.minimal_shell_prompt = minimal_shell_prompt;
+    }
 }
 
 pub fn apply_provider_endpoint_patch(providers: &mut [ProviderSettings], provider_id: &str, endpoint: Option<String>) {

@@ -134,6 +134,10 @@ impl SessionManager {
         for (key, value) in profile.env {
             command_builder.env(key, value);
         }
+        command_builder.env("MACH_TERMINAL", "1");
+        if profile.minimal_shell_prompt {
+            command_builder.env("MACH_TERMINAL_MINIMAL_PROMPT", "1");
+        }
 
         let child = pty_pair
             .slave
@@ -405,7 +409,7 @@ impl SessionManager {
         command_buffer.push_str(data);
 
         if data.contains('\r') || data.contains('\n') {
-            let command = command_buffer.trim().to_string();
+            let command = crate::input_sanitize::sanitize_command_line_for_history(&command_buffer);
             if !command.is_empty() {
                 self.record_history(app, session_id, &command)?;
                 app.emit(

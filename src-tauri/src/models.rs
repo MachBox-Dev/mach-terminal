@@ -37,6 +37,8 @@ pub struct TerminalProfile {
     pub cwd: Option<String>,
     pub env: HashMap<String, String>,
     pub font_size: u8,
+    #[serde(default)]
+    pub minimal_shell_prompt: bool,
 }
 
 impl Default for TerminalProfile {
@@ -46,6 +48,7 @@ impl Default for TerminalProfile {
             cwd: None,
             env: HashMap::new(),
             font_size: 13,
+            minimal_shell_prompt: false,
         }
     }
 }
@@ -132,6 +135,8 @@ pub struct ProfilePatch {
     pub shell: Option<Option<String>>,
     pub cwd: Option<Option<String>>,
     pub font_size: Option<u8>,
+    #[serde(default)]
+    pub minimal_shell_prompt: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
