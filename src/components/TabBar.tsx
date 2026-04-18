@@ -81,8 +81,8 @@ export function TabBar({
           </button>
         );
       })}
-      <button type="button" className="tab-btn create" onClick={onCreate}>
-        + new
+      <button type="button" className="tab-btn create" onClick={onCreate} aria-label="New session" title="New session">
+        <span aria-hidden="true">+</span>
       </button>
     </div>
   );

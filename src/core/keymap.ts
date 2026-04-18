@@ -23,6 +23,10 @@ export const DEFAULT_KEYMAP: ShortcutBinding[] = [
   { command: "palette.toggle", key: "k", ...modifierFlags() },
   { command: "history.refresh", key: "h", ...modifierFlags() },
   { command: "ai.explainSelection", key: "e", shiftKey: true, ...modifierFlags() },
+  { command: "ops.toggleRail", key: "o", altKey: true },
+  { command: "ops.selectNextRun", key: "ArrowDown", altKey: true },
+  { command: "ops.selectPrevRun", key: "ArrowUp", altKey: true },
+  { command: "ops.jumpSelectedRun", key: "Enter", altKey: true },
 ];
 
 export function formatShortcut(binding: ShortcutBinding): string {

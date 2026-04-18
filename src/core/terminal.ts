@@ -14,12 +14,15 @@ export interface TerminalProfile {
   cwd?: string;
   env: Record<string, string>;
   font_size: number;
+  /** When true, spawns set `MACH_TERMINAL_MINIMAL_PROMPT=1` for optional shell profile snippets. */
+  minimal_shell_prompt?: boolean;
 }
 
 export interface ProfilePatch {
   shell?: string | null;
   cwd?: string | null;
   font_size?: number;
+  minimal_shell_prompt?: boolean;
 }
 
 export interface PtySpawnRequest {
@@ -250,6 +253,19 @@ export async function historyReplay(sessionId: string, command: string) {
 
 export async function runtimeMetricsSnapshot() {
   return invoke<RuntimeMetricsSnapshot>("runtime_metrics_snapshot");
+}
+
+export interface ShellContextSnapshot {
+  elevated: boolean;
+  gitBranch: string | null;
+  gitShortStat: string | null;
+}
+
+export async function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
+  return invoke<ShellContextSnapshot>("shell_context_snapshot", {
+    cwd,
+    include_git_diff: includeGitDiff,
+  });
 }
 
 export async function workspaceLayoutGet() {

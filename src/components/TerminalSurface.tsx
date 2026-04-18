@@ -22,14 +22,18 @@ import { buildFindOptions, formatFindStatus } from "../core/terminalFindStatus";
 import { evaluateTerminalUiIntent } from "../core/terminalUiIntent";
 import type { TerminalUiRequest } from "../core/terminalUiRequest";
 import type { PtySessionInfo, SessionStatus } from "../core/terminal";
+import { MACH_TERMINAL_MONO_FONT } from "../core/terminalUiFont";
+import { MachStatusStrip } from "./MachStatusStrip";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const SCROLLBACK_LINES = 8000;
+/** Max composer height as a fraction of the terminal pane height; textarea scrolls internally beyond this. */
+const COMPOSER_MAX_HEIGHT_RATIO = 0.3;
 
 // Muted palette for find decorations. `onDidChangeResults` only fires when this bag is
 // passed to findNext/findPrevious, so every surface-facing find call spreads it in.
 const FIND_DECORATIONS: NonNullable<ISearchOptions["decorations"]> = {
-  matchBackground: "#334155",
+  matchBackground: "#1a3d36",
   matchBorder: "#475569",
   matchOverviewRuler: "#64748b",
   activeMatchBackground: "#f59e0b",
@@ -143,6 +147,11 @@ export function TerminalSurface({
   const [pendingPaste, setPendingPaste] = useState<PendingPasteState | null>(null);
   const [pasteBypassForSession, setPasteBypassForSession] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [composerDraft, setComposerDraft] = useState("");
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerFocusedRef = useRef(false);
+  const terminalPanelRef = useRef<HTMLElement | null>(null);
+  const composerLocked = !activeSession || Boolean(exitedInfo);
 
   pendingPasteRef.current = pendingPaste;
   pasteBypassForSessionRef.current = pasteBypassForSession;
@@ -195,6 +204,51 @@ export function TerminalSurface({
     }
     onInputRef.current(session.id, text);
   }, []);
+
+  const submitComposer = useCallback(() => {
+    const normalized = composerDraft.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (!normalized.trim()) {
+      return;
+    }
+    const payload = `${normalized.replace(/\n/g, "\r\n")}\r`;
+    sendTextToPty(payload);
+    setComposerDraft("");
+    queueMicrotask(() => composerTextareaRef.current?.focus());
+  }, [composerDraft, sendTextToPty]);
+
+  const syncComposerHeight = useCallback(() => {
+    const ta = composerTextareaRef.current;
+    if (!ta) {
+      return;
+    }
+    const panel = terminalPanelRef.current;
+    const panelH = panel?.getBoundingClientRect().height ?? 0;
+    const basis = panelH > 32 ? panelH : window.innerHeight;
+    const maxPx = Math.max(72, basis * COMPOSER_MAX_HEIGHT_RATIO);
+    ta.style.height = "auto";
+    const contentH = ta.scrollHeight;
+    const next = Math.min(contentH, maxPx);
+    ta.style.height = `${next}px`;
+    ta.style.overflowY = contentH > maxPx ? "auto" : "hidden";
+  }, []);
+
+  useLayoutEffect(() => {
+    syncComposerHeight();
+  }, [composerDraft, composerLocked, syncComposerHeight]);
+
+  useEffect(() => {
+    const panel = terminalPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    const ro = new ResizeObserver(() => syncComposerHeight());
+    ro.observe(panel);
+    window.addEventListener("resize", syncComposerHeight);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", syncComposerHeight);
+    };
+  }, [syncComposerHeight]);
 
   const handleCandidatePasteText = useCallback(
     (text: string) => {
@@ -250,6 +304,11 @@ export function TerminalSurface({
   }, [handleCandidatePasteText]);
 
   const statusLabel = useMemo(() => activeStatus.toUpperCase(), [activeStatus]);
+  const sessionInfoTooltip = useMemo(() => {
+    const sid = activeSession?.id ?? "none";
+    const shell = activeSession?.shell ?? "n/a";
+    return `Session: ${sid} · Shell: ${shell} · Status: ${statusLabel}`;
+  }, [activeSession?.id, activeSession?.shell, statusLabel]);
   const sessionMessage = useMemo(() => {
     if (activeMessage) {
       return activeMessage;
@@ -318,6 +377,7 @@ export function TerminalSurface({
     setPasteBypassForSession(false);
     findResultStateRef.current = { resultIndex: -1, resultCount: 0 };
     setFindResultState({ resultIndex: -1, resultCount: 0 });
+    setComposerDraft("");
   }, [activeSession?.id]);
 
   useEffect(() => {
@@ -381,6 +441,23 @@ export function TerminalSurface({
           t.scrollToBottom();
         }
         return;
+      case "jumpSearch": {
+        const q = decision.action.query;
+        const firstLine = q.split(/\r?\n/)[0]?.trim() ?? "";
+        if (!firstLine) {
+          return;
+        }
+        findOpenRef.current = true;
+        setFindOpen(true);
+        setFindQuery(firstLine);
+        findQueryRef.current = firstLine;
+        stickToBottomRef.current = false;
+        queueMicrotask(() => {
+          searchAddonRef.current?.clearDecorations();
+          runFindNext();
+        });
+        return;
+      }
     }
   }, [terminalUiRequest, isFocused, runFindNext, runFindPrevious]);
 
@@ -445,13 +522,16 @@ export function TerminalSurface({
     searchAddonRef.current = searchAddon;
 
     const terminal = new XTerm({
-      cursorBlink: true,
-      fontFamily: "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      cursorBlink: false,
+      disableStdin: true,
+      fontFamily: MACH_TERMINAL_MONO_FONT,
       fontSize: terminalFontSize,
       scrollback: SCROLLBACK_LINES,
       theme: {
-        background: "#0b1020",
-        foreground: "#e2e8f0",
+        background: "#0a0a0a",
+        foreground: "#e5e5e5",
+        cursor: "#0a0a0a",
+        cursorAccent: "#0a0a0a",
       },
       // OSC 8 hyperlinks are activated through the same policy as heuristic
       // HTTP/file scraping: http/https open via the URL opener, file:// is
@@ -693,8 +773,16 @@ export function TerminalSurface({
       return;
     }
     const size = Math.max(8, Math.min(48, Math.round(terminalFontSize)));
+    let needsFit = false;
     if (terminal.options.fontSize !== size) {
       terminal.options.fontSize = size;
+      needsFit = true;
+    }
+    if (terminal.options.fontFamily !== MACH_TERMINAL_MONO_FONT) {
+      terminal.options.fontFamily = MACH_TERMINAL_MONO_FONT;
+      needsFit = true;
+    }
+    if (needsFit) {
       fitAddon.fit();
     }
   }, [terminalFontSize]);
@@ -703,12 +791,14 @@ export function TerminalSurface({
     if (!isFocused) {
       return;
     }
-    const terminal = terminalRef.current;
-    if (!terminal) {
+    if (composerFocusedRef.current) {
+      return;
+    }
+    if (findOpenRef.current) {
       return;
     }
     const id = window.requestAnimationFrame(() => {
-      terminal.focus();
+      composerTextareaRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);
   }, [isFocused]);
@@ -767,13 +857,14 @@ export function TerminalSurface({
     }
   }, [activeSession, activeBuffer]);
 
+  useEffect(() => {
+    if (exitedInfo) {
+      setComposerDraft("");
+    }
+  }, [exitedInfo]);
+
   return (
-    <section className="terminal-panel">
-      <div className={`terminal-meta ${isFocused ? "focused" : ""}`}>
-        <span>Session: {activeSession?.id ?? "none"}</span>
-        <span>Shell: {activeSession?.shell ?? "n/a"}</span>
-        <span>Status: {statusLabel}</span>
-      </div>
+    <section ref={terminalPanelRef} className={`terminal-panel ${isFocused ? "focused" : ""}`}>
       {sessionMessage ? <p className="terminal-message">{sessionMessage}</p> : null}
       <div
         ref={hostRef}
@@ -783,6 +874,22 @@ export function TerminalSurface({
           setCtxMenu({ x: e.clientX, y: e.clientY });
         }}
       >
+        <div className="terminal-output-column">
+          <div className="terminal-output-stack">
+        <button
+          type="button"
+          className="terminal-session-info-btn"
+          title={sessionInfoTooltip}
+          aria-label={sessionInfoTooltip}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+            />
+          </svg>
+        </button>
         {findOpen ? (
           <div className="terminal-find-bar">
             <label className="terminal-find-label" htmlFor={`terminal-find-${activeSession?.id ?? "none"}`}>
@@ -805,7 +912,7 @@ export function TerminalSurface({
                 if (e.key === "Escape") {
                   e.preventDefault();
                   closeFind();
-                  void terminalRef.current?.focus();
+                  composerTextareaRef.current?.focus();
                   return;
                 }
                 if (e.key === "Enter") {
@@ -941,7 +1048,54 @@ export function TerminalSurface({
             </div>
           </div>
         ) : null}
-        <div ref={containerRef} className="terminal-container" tabIndex={-1} />
+            <div
+              className="terminal-xterm-input-guard"
+              onPointerDown={() => {
+                if (findOpenRef.current) {
+                  return;
+                }
+                composerTextareaRef.current?.focus();
+              }}
+            >
+              <div ref={containerRef} className="terminal-container" tabIndex={-1} />
+            </div>
+          </div>
+          <div className="terminal-input-chrome">
+            <MachStatusStrip liveCwd={liveCwd} shellExe={activeSession?.shell ?? null} />
+            <div className="terminal-composer" onContextMenu={(event) => event.stopPropagation()}>
+              <div className="terminal-composer-input-row">
+                <textarea
+                  ref={composerTextareaRef}
+                  className="terminal-composer-field"
+                  placeholder={composerLocked ? "Session unavailable…" : "Type a command…"}
+                  disabled={composerLocked}
+                  value={composerDraft}
+                  onChange={(e) => setComposerDraft(e.target.value)}
+                  onFocus={() => {
+                    composerFocusedRef.current = true;
+                  }}
+                  onBlur={() => {
+                    queueMicrotask(() => {
+                      composerFocusedRef.current = false;
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      submitComposer();
+                    }
+                  }}
+                  rows={1}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  aria-label="Shell command input"
+                />
+              </div>
+              <p className="terminal-composer-footer-hint">Enter to send · Shift+Enter newline</p>
+            </div>
+          </div>
+        </div>
         {exitedInfo ? (
           <div
             className={`terminal-exit-overlay status-${exitedInfo.status}`}
@@ -1042,6 +1196,32 @@ export function TerminalSurface({
               }}
             >
               Select all
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                findOpenRef.current = true;
+                setFindOpen(true);
+                setCtxMenu(null);
+                queueMicrotask(() => findInputRef.current?.focus());
+              }}
+            >
+              Find…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const t = terminalRef.current;
+                if (t) {
+                  t.scrollToBottom();
+                  stickToBottomRef.current = true;
+                }
+                setCtxMenu(null);
+              }}
+            >
+              Scroll to bottom
             </button>
           </div>
         ) : null}

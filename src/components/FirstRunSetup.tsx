@@ -14,6 +14,15 @@ import {
 
 export const ONBOARDING_STORAGE_KEY = "mach-terminal.onboarding.v1";
 
+const SNIPPET_PWSH =
+  "# Mach Terminal: paste into $PROFILE when Minimal shell prompt is enabled in Mach.\nif ($env:MACH_TERMINAL_MINIMAL_PROMPT -eq '1') { function prompt { '> ' } }";
+
+const SNIPPET_BASH = `# Mach Terminal: paste into ~/.bashrc when Minimal shell prompt is enabled.
+if [ "$MACH_TERMINAL_MINIMAL_PROMPT" = "1" ]; then PS1='> '; fi`;
+
+const SNIPPET_ZSH = `# Mach Terminal: paste into ~/.zshrc when Minimal shell prompt is enabled.
+[[ "$MACH_TERMINAL_MINIMAL_PROMPT" == "1" ]] && PROMPT='> '`;
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -70,6 +79,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
         shell: profile.shell ?? null,
         cwd: profile.cwd ?? null,
         font_size: profile.font_size,
+        minimal_shell_prompt: profile.minimal_shell_prompt ?? false,
       });
       await Promise.all(
         providers.map(async (provider) => {
@@ -101,6 +111,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
         shell: quickStartProfile.shell ?? null,
         cwd: quickStartProfile.cwd ?? null,
         font_size: quickStartProfile.font_size,
+        minimal_shell_prompt: quickStartProfile.minimal_shell_prompt ?? false,
       });
 
       const quickStartProviders = toQuickStartProviders(providers);
@@ -185,6 +196,58 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
               }
             />
           </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={profile.minimal_shell_prompt ?? false}
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  minimal_shell_prompt: e.target.checked,
+                }))
+              }
+            />
+            Minimal shell prompt for new sessions (sets <code>MACH_TERMINAL_MINIMAL_PROMPT</code>; use snippets below)
+          </label>
+          <p className="muted-block">
+            When enabled, Mach still shows path/git/time in the strip above the input; this option only helps thin out
+            the shell&apos;s own prompt line in scrollback once you paste a snippet into your shell profile.
+          </p>
+          <div className="minimal-prompt-snippet-block">
+            <div className="minimal-prompt-snippet-row">
+              <span className="minimal-prompt-snippet-label">PowerShell</span>
+              <button
+                type="button"
+                className="inline-btn ghost"
+                onClick={() => void navigator.clipboard.writeText(SNIPPET_PWSH)}
+              >
+                Copy snippet
+              </button>
+            </div>
+            <pre className="minimal-prompt-snippet">{SNIPPET_PWSH}</pre>
+            <div className="minimal-prompt-snippet-row">
+              <span className="minimal-prompt-snippet-label">Bash</span>
+              <button
+                type="button"
+                className="inline-btn ghost"
+                onClick={() => void navigator.clipboard.writeText(SNIPPET_BASH)}
+              >
+                Copy snippet
+              </button>
+            </div>
+            <pre className="minimal-prompt-snippet">{SNIPPET_BASH}</pre>
+            <div className="minimal-prompt-snippet-row">
+              <span className="minimal-prompt-snippet-label">zsh</span>
+              <button
+                type="button"
+                className="inline-btn ghost"
+                onClick={() => void navigator.clipboard.writeText(SNIPPET_ZSH)}
+              >
+                Copy snippet
+              </button>
+            </div>
+            <pre className="minimal-prompt-snippet">{SNIPPET_ZSH}</pre>
+          </div>
         </section>
 
         <section className="setup-section">

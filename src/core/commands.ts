@@ -17,6 +17,10 @@ export type AppCommandId =
   | "terminal.findPrevious"
   | "terminal.clearViewport"
   | "terminal.toggleFollowOutput"
+  | "ops.toggleRail"
+  | "ops.selectNextRun"
+  | "ops.selectPrevRun"
+  | "ops.jumpSelectedRun"
   | "dev.diagnostics";
 
 export interface AppCommand extends PaletteCommand {
@@ -109,6 +113,30 @@ export const APP_COMMANDS: AppCommand[] = [
     id: "terminal.toggleFollowOutput",
     label: "Toggle follow output",
     description: "Toggle whether new terminal output auto-scrolls while pinned to bottom.",
+  },
+  {
+    id: "ops.toggleRail",
+    label: "Toggle command log rail",
+    shortcut: "Alt+O",
+    description: "Show or hide the Ops rail command log for the active session.",
+  },
+  {
+    id: "ops.selectNextRun",
+    label: "Command log: select next entry",
+    shortcut: "Alt+Down",
+    description: "Move selection down in the command log (active session).",
+  },
+  {
+    id: "ops.selectPrevRun",
+    label: "Command log: select previous entry",
+    shortcut: "Alt+Up",
+    description: "Move selection up in the command log (active session).",
+  },
+  {
+    id: "ops.jumpSelectedRun",
+    label: "Command log: jump to selection",
+    shortcut: "Alt+Enter",
+    description: "Search the terminal buffer for the selected command (best-effort jump).",
   },
 ];
 

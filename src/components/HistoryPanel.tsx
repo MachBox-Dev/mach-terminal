@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import type { HistoryEntry } from "../core/terminal";
 
 interface HistoryPanelProps {
+  /** Optional DOM id for settings navigation / deep links */
+  sectionId?: string;
   entries: HistoryEntry[];
   loading: boolean;
   aiBusy: boolean;
@@ -24,7 +26,17 @@ function truncateCommand(command: string, maxLength: number): string {
   return `${command.slice(0, maxLength - 1)}…`;
 }
 
-export function HistoryPanel({ entries, loading, aiBusy, error, actionStatus, onReplay, onExplain, onFix }: HistoryPanelProps) {
+export function HistoryPanel({
+  sectionId,
+  entries,
+  loading,
+  aiBusy,
+  error,
+  actionStatus,
+  onReplay,
+  onExplain,
+  onFix,
+}: HistoryPanelProps) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     if (!query.trim()) {
@@ -34,7 +46,7 @@ export function HistoryPanel({ entries, loading, aiBusy, error, actionStatus, on
   }, [entries, query]);
 
   return (
-    <section>
+    <section id={sectionId}>
       <h2>History</h2>
       <div className="stacked-controls">
         <input

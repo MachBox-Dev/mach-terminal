@@ -26,6 +26,9 @@ describe("onboarding quick-start helpers", () => {
       env: {},
       font_size: 14,
     };
-    expect(normalizeQuickStartProfile(profile)).toEqual(profile);
+    expect(normalizeQuickStartProfile(profile)).toEqual({
+      ...profile,
+      minimal_shell_prompt: false,
+    });
   });
 });

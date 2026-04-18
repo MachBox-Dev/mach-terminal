@@ -7,6 +7,7 @@ import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetu
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
+import { OpsRail, type OpsRailFilter } from "./components/OpsRail";
 import { APP_COMMANDS, DEV_PALETTE_COMMANDS, type AppCommandId } from "./core/commands";
 import {
   clearExitedInfo,
@@ -73,6 +74,15 @@ import {
   type WorkspaceState,
 } from "./state/workspace";
 import { useProviderAiState } from "./hooks/useProviderAiState";
+import { isTauri } from "./core/tauriRuntime";
+import {
+  appendCommandSubmitted,
+  removeSessionRuns,
+  serializePinnedMap,
+  toggleRunPin,
+  type RunLedgerState,
+  type RunRecord,
+} from "./core/runLedger";
 
 const MAX_SESSION_BUFFER = 120_000;
 /** Max UTF-16 units applied to xterm per animation frame per session (remainder stays queued). */
@@ -80,8 +90,20 @@ const MAX_PTY_FLUSH_BYTES_PER_FRAME = 48_000;
 const RESIZE_THROTTLE_MS = 100;
 const WORKSPACE_STORAGE_KEY = "mach-terminal.workspace.v1";
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 320;
+const OPS_RAIL_COLLAPSED_KEY = "mach-terminal.opsRail.collapsed";
+const OPS_RAIL_PINS_KEY = "mach-terminal.opsRail.pins";
 
 const UPDATER_ENABLED = import.meta.env.VITE_ENABLE_UPDATER === "true";
+
+function stepRunSelection(runs: RunRecord[], selectedId: string | null, delta: number): string | null {
+  if (runs.length === 0) {
+    return null;
+  }
+  const idx = selectedId ? runs.findIndex((r) => r.id === selectedId) : -1;
+  const cur = idx < 0 ? runs.length - 1 : idx;
+  const next = (cur + delta + runs.length) % runs.length;
+  return runs[next]?.id ?? null;
+}
 
 function appendBoundedOutput(previous: string, nextChunk: string): string {
   const combined = `${previous}${nextChunk}`;
@@ -99,6 +121,14 @@ function App() {
   const [sessions, setSessions] = useState<PtySessionInfo[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceState>(createWorkspaceState);
   const [sessionBuffers, setSessionBuffers] = useState<Record<string, string>>({});
+  const sessionBuffersRef = useRef(sessionBuffers);
+  sessionBuffersRef.current = sessionBuffers;
+  const [runLedger, setRunLedger] = useState<RunLedgerState>({});
+  const [opsRailCollapsed, setOpsRailCollapsed] = useState(() =>
+    typeof window !== "undefined" ? window.localStorage.getItem(OPS_RAIL_COLLAPSED_KEY) === "1" : false,
+  );
+  const [opsFilter, setOpsFilter] = useState<OpsRailFilter>("all");
+  const [opsSelectedRunId, setOpsSelectedRunId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<Record<string, SessionStatus>>({});
   const [sessionMessages, setSessionMessages] = useState<Record<string, string | undefined>>({});
   const [sessionExited, setSessionExited] = useState<Record<string, SessionExitedInfo>>({});
@@ -148,6 +178,96 @@ function App() {
   }, [workspace]);
 
   const activeSession = activeSessionId ? sessionsById[activeSessionId] : undefined;
+
+  const filteredRunsForOps = useMemo(() => {
+    const list = activeSessionId ? (runLedger[activeSessionId] ?? []) : [];
+    if (opsFilter === "pinned") {
+      return list.filter((r) => r.pinned);
+    }
+    return list;
+  }, [runLedger, activeSessionId, opsFilter]);
+
+  const handleJumpRun = useCallback((run: RunRecord) => {
+    const q = run.commandText.split(/\r?\n/)[0]?.trim() ?? run.commandText.trim();
+    if (!q) {
+      return;
+    }
+    terminalUiSeqRef.current += 1;
+    setTerminalUiRequest({ seq: terminalUiSeqRef.current, kind: "jumpSearch", query: q });
+  }, []);
+
+  const handleOpsTogglePin = useCallback(
+    (runId: string) => {
+      if (!activeSessionId) {
+        return;
+      }
+      setRunLedger((ledger) => toggleRunPin(ledger, activeSessionId, runId));
+    },
+    [activeSessionId],
+  );
+
+  /** Taskbar / title-bar window icon (dev + prod); PNG bytes avoid stale embedded icon cache on Windows. */
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const rawBase = import.meta.env.BASE_URL ?? "/";
+        const base = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
+        const res = await fetch(`${base}mach-terminal-logo.png`);
+        if (!res.ok) {
+          return;
+        }
+        const buf = await res.arrayBuffer();
+        if (cancelled) {
+          return;
+        }
+        await getCurrentWindow().setIcon(new Uint8Array(buf));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (filteredRunsForOps.length === 0) {
+      setOpsSelectedRunId(null);
+      return;
+    }
+    setOpsSelectedRunId((prev) =>
+      prev && filteredRunsForOps.some((r) => r.id === prev)
+        ? prev
+        : (filteredRunsForOps[filteredRunsForOps.length - 1]?.id ?? null),
+    );
+  }, [filteredRunsForOps]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(OPS_RAIL_PINS_KEY, JSON.stringify(serializePinnedMap(runLedger)));
+    } catch {
+      /* ignore */
+    }
+  }, [runLedger]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(OPS_RAIL_COLLAPSED_KEY, opsRailCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [opsRailCollapsed]);
 
   const {
     providers,
@@ -412,6 +532,20 @@ function App() {
 
       contextUnlisten = await onAiContext((event) => {
         setLastAiContext(event);
+        if (event.event_type !== "command_submitted") {
+          return;
+        }
+        const sid = event.session_id;
+        const bufLen = sessionBuffersRef.current[sid]?.length ?? 0;
+        setRunLedger((ledger) =>
+          appendCommandSubmitted(ledger, {
+            sessionId: sid,
+            commandText: event.payload,
+            submittedAtMs: event.timestamp_ms,
+            sequence: event.sequence,
+            bufferLengthBefore: bufLen,
+          }),
+        );
       });
     };
 
@@ -480,6 +614,7 @@ function App() {
       delete next[sessionId];
       return next;
     });
+    setRunLedger((current) => removeSessionRuns(current, sessionId));
     setSessionStatus((current) => {
       const next = { ...current };
       delete next[sessionId];
@@ -678,9 +813,9 @@ function App() {
     setWorkspace((current) => closePane(current, current.activePaneId));
   }, []);
 
-  const dispatchTerminalUiRequest = useCallback((kind: TerminalUiRequest["kind"]) => {
+  const dispatchTerminalUiRequest = useCallback((payload: Omit<TerminalUiRequest, "seq">) => {
     terminalUiSeqRef.current += 1;
-    setTerminalUiRequest({ seq: terminalUiSeqRef.current, kind });
+    setTerminalUiRequest({ ...payload, seq: terminalUiSeqRef.current } as TerminalUiRequest);
   }, []);
 
   const restartSessionById = useCallback(
@@ -745,7 +880,7 @@ function App() {
     async (commandId: AppCommandId) => {
       const terminalIntent = commandToTerminalUiIntent(commandId);
       if (terminalIntent) {
-        dispatchTerminalUiRequest(terminalIntent);
+        dispatchTerminalUiRequest({ kind: terminalIntent });
         return;
       }
       switch (commandId) {
@@ -785,6 +920,22 @@ function App() {
         case "dev.diagnostics":
           setDiagnosticsOpen(true);
           break;
+        case "ops.toggleRail":
+          setOpsRailCollapsed((current) => !current);
+          break;
+        case "ops.selectNextRun":
+          setOpsSelectedRunId((prev) => stepRunSelection(filteredRunsForOps, prev, 1));
+          break;
+        case "ops.selectPrevRun":
+          setOpsSelectedRunId((prev) => stepRunSelection(filteredRunsForOps, prev, -1));
+          break;
+        case "ops.jumpSelectedRun": {
+          const run = filteredRunsForOps.find((r) => r.id === opsSelectedRunId);
+          if (run) {
+            handleJumpRun(run);
+          }
+          break;
+        }
       }
     },
     [
@@ -794,7 +945,10 @@ function App() {
       createSession,
       dispatchTerminalUiRequest,
       explainCommand,
+      filteredRunsForOps,
+      handleJumpRun,
       historyEntries,
+      opsSelectedRunId,
       refreshHistory,
       refreshRuntimeMetrics,
       restartActiveSession,
@@ -844,7 +998,11 @@ function App() {
 
   return (
     <div className="app-frame">
-      <CustomTitleBar />
+      <CustomTitleBar
+        onOpenSettings={() => setSettingsModalOpen(true)}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+        showDiagnostics={import.meta.env.DEV}
+      />
       <main className="app-shell">
         {transientRuntimeError ? <p className="runtime-toast">{transientRuntimeError}</p> : null}
         {recoveryBanner ? <p className="runtime-toast recovery-banner">{recoveryBanner}</p> : null}
@@ -858,23 +1016,7 @@ function App() {
         ) : null}
 
         <section className="terminal-surface">
-          <div className="terminal-chrome">
-            <div className="terminal-chrome-left">
-              <button type="button" className="inline-btn" onClick={() => setSettingsModalOpen(true)}>
-                Settings
-              </button>
-              {import.meta.env.DEV ? (
-                <button type="button" className="inline-btn ghost" onClick={() => setDiagnosticsOpen(true)}>
-                  Diagnostics
-                </button>
-              ) : null}
-            </div>
-            <div className="terminal-chrome-right">
-              <span className="terminal-chrome-pty" title="PTY backend">
-                {capabilities.pty_backend}
-              </span>
-            </div>
-          </div>
+          <div className={`terminal-workspace-split${opsRailCollapsed ? " ops-rail-window-collapsed" : ""}`}>
           <section className="terminal-stack">
           <TabBar
             sessions={sessions}
@@ -921,6 +1063,19 @@ function App() {
             }}
           />
           </section>
+          <OpsRail
+            collapsed={opsRailCollapsed}
+            onToggleCollapsed={() => setOpsRailCollapsed((current) => !current)}
+            filter={opsFilter}
+            onFilterChange={setOpsFilter}
+            entries={filteredRunsForOps}
+            scrollBuffer={activeSessionId ? sessionBuffers[activeSessionId] ?? "" : ""}
+            selectedRunId={opsSelectedRunId}
+            onSelectRun={setOpsSelectedRunId}
+            onTogglePin={handleOpsTogglePin}
+            onJump={handleJumpRun}
+          />
+          </div>
         </section>
 
         <AppSettingsModal

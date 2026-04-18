@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PLUGIN_REGISTRY } from "../core/plugins";
 import { canRunAiRequest, isExecutableProvider } from "../core/providerUiState";
 import type { ProviderDescriptor } from "../core/providers";
@@ -12,6 +13,19 @@ import type {
   SessionStatus,
 } from "../core/terminal";
 import { HistoryPanel } from "./HistoryPanel";
+import { StatusStripSettingsSection } from "./StatusStripSettingsSection";
+
+const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+  { id: "settings-section-runtime", label: "Runtime" },
+  { id: "settings-section-providers", label: "Providers" },
+  { id: "settings-section-status-strip", label: "Status strip" },
+  { id: "settings-section-session", label: "Session & layout" },
+  { id: "settings-section-updater", label: "Updater" },
+  { id: "settings-section-ai", label: "AI router" },
+  { id: "settings-section-history", label: "History" },
+  { id: "settings-section-shortcuts", label: "Shortcuts" },
+  { id: "settings-section-plugins", label: "Plugins" },
+];
 
 export type SettingsCommandItem = {
   id: string;
@@ -71,6 +85,28 @@ export type AppSettingsModalProps = {
 };
 
 export function AppSettingsModal(props: AppSettingsModalProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeSectionId, setActiveSectionId] = useState(
+    () => SETTINGS_SECTIONS[0]?.id ?? "settings-section-runtime",
+  );
+
+  useEffect(() => {
+    if (!props.open) {
+      return;
+    }
+    const first = SETTINGS_SECTIONS[0]?.id;
+    if (first) {
+      setActiveSectionId(first);
+    }
+  }, [props.open]);
+
+  const scrollToSection = useCallback((id: string) => {
+    setActiveSectionId(id);
+    queueMicrotask(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
   if (!props.open) {
     return null;
   }
@@ -161,9 +197,25 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
           </div>
         </div>
 
-        <div className="settings-modal-scroll">
-          <div className="info-panel settings-modal-panel">
-            <section>
+        <div className="settings-modal-body">
+          <nav className="settings-modal-nav" aria-label="Settings sections">
+            <p className="settings-modal-nav-title">Jump to</p>
+            {SETTINGS_SECTIONS.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={activeSectionId === section.id ? "active" : ""}
+                aria-current={activeSectionId === section.id ? "location" : undefined}
+                onClick={() => scrollToSection(section.id)}
+              >
+                {section.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="settings-modal-scroll" ref={scrollRef}>
+            <div className="info-panel settings-modal-panel">
+            <section id="settings-section-runtime">
               <h2>Runtime</h2>
               {runtimeError ? <p className="error-text">{runtimeError}</p> : null}
               <ul>
@@ -202,7 +254,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               ) : null}
             </section>
 
-            <section>
+            <section id="settings-section-providers">
               <h2>Providers</h2>
               {providerConfigStatus ? <p className="muted-block">{providerConfigStatus}</p> : null}
               <ul className="provider-block-list">
@@ -246,7 +298,9 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </ul>
             </section>
 
-            <section>
+            <StatusStripSettingsSection modalOpen={props.open} sectionId="settings-section-status-strip" />
+
+            <section id="settings-section-session">
               <h2>Session &amp; layout</h2>
               <p className="muted-block">
                 active session: {activeSession?.id ?? "none"} (
@@ -281,7 +335,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </div>
             </section>
 
-            <section>
+            <section id="settings-section-updater">
               <h2>Updater</h2>
               <div className="inline-controls">
                 <button type="button" className="inline-btn" onClick={() => void checkForUpdates()} disabled={!updaterEnabled}>
@@ -299,7 +353,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </div>
             </section>
 
-            <section>
+            <section id="settings-section-ai">
               <h2>AI Router (v0)</h2>
               <div className="stacked-controls">
                 <label className="field-row">
@@ -358,6 +412,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             </section>
 
             <HistoryPanel
+              sectionId="settings-section-history"
               entries={historyEntries}
               loading={historyLoading}
               aiBusy={aiRequestInFlight}
@@ -368,7 +423,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               onFix={(command) => void onFixCommand(command)}
             />
 
-            <section>
+            <section id="settings-section-shortcuts">
               <h2>Keyboard shortcuts</h2>
               <ul>
                 {globalShortcutItems.map((command) => (
@@ -389,7 +444,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </ul>
             </section>
 
-            <section>
+            <section id="settings-section-plugins">
               <h2>Plugin contracts</h2>
               <ul>
                 {PLUGIN_REGISTRY.map((plugin) => (
@@ -406,6 +461,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 {pluginResult ? <p className="muted-block">{pluginResult}</p> : null}
               </div>
             </section>
+            </div>
           </div>
         </div>
       </div>

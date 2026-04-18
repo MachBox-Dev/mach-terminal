@@ -6,7 +6,8 @@ export type TerminalUiIntentAction =
   | { type: "findNext" }
   | { type: "findPrevious" }
   | { type: "clearViewport" }
-  | { type: "setFollowOutput"; followOutput: boolean; scrollToBottom: boolean };
+  | { type: "setFollowOutput"; followOutput: boolean; scrollToBottom: boolean }
+  | { type: "jumpSearch"; query: string };
 
 export interface EvaluateTerminalUiIntentInput {
   request: TerminalUiRequest | null;
@@ -61,6 +62,10 @@ export function evaluateTerminalUiIntent(input: EvaluateTerminalUiIntentInput): 
           scrollToBottom: nextFollowOutput,
         },
       };
+    }
+    case "jumpSearch": {
+      const q = request.query.trim();
+      return q.length > 0 ? { nextConsumedSeq, action: { type: "jumpSearch", query: q } } : { nextConsumedSeq };
     }
   }
 }

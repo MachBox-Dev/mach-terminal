@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { evaluateTerminalUiIntent } from "./terminalUiIntent";
-import type { TerminalUiRequest } from "./terminalUiRequest";
-
-function request(kind: TerminalUiRequest["kind"], seq = 1): TerminalUiRequest {
-  return { kind, seq };
-}
 
 describe("terminal UI intent decision helper", () => {
   it("ignores stale seq on focused pane", () => {
     const result = evaluateTerminalUiIntent({
-      request: request("openFind", 3),
+      request: { kind: "openFind", seq: 3 },
       isFocused: true,
       consumedSeq: 3,
       findQuery: "foo",
@@ -20,7 +15,7 @@ describe("terminal UI intent decision helper", () => {
 
   it("fast-forwards consumed seq when unfocused without action", () => {
     const result = evaluateTerminalUiIntent({
-      request: request("scrollToBottom", 8),
+      request: { kind: "scrollToBottom", seq: 8 },
       isFocused: false,
       consumedSeq: 5,
       findQuery: "foo",
@@ -31,7 +26,7 @@ describe("terminal UI intent decision helper", () => {
 
   it("emits one action for a fresh focused request", () => {
     const result = evaluateTerminalUiIntent({
-      request: request("openFind", 9),
+      request: { kind: "openFind", seq: 9 },
       isFocused: true,
       consumedSeq: 8,
       findQuery: "",
@@ -45,14 +40,14 @@ describe("terminal UI intent decision helper", () => {
 
   it("uses explicit no-op for find next/previous with empty query", () => {
     const next = evaluateTerminalUiIntent({
-      request: request("findNext", 2),
+      request: { kind: "findNext", seq: 2 },
       isFocused: true,
       consumedSeq: 1,
       findQuery: "   ",
       followOutput: true,
     });
     const prev = evaluateTerminalUiIntent({
-      request: request("findPrevious", 3),
+      request: { kind: "findPrevious", seq: 3 },
       isFocused: true,
       consumedSeq: 2,
       findQuery: "",
@@ -64,14 +59,14 @@ describe("terminal UI intent decision helper", () => {
 
   it("toggles follow output off then on with scroll restore", () => {
     const off = evaluateTerminalUiIntent({
-      request: request("toggleFollowOutput", 11),
+      request: { kind: "toggleFollowOutput", seq: 11 },
       isFocused: true,
       consumedSeq: 10,
       findQuery: "foo",
       followOutput: true,
     });
     const on = evaluateTerminalUiIntent({
-      request: request("toggleFollowOutput", 12),
+      request: { kind: "toggleFollowOutput", seq: 12 },
       isFocused: true,
       consumedSeq: 11,
       findQuery: "foo",
@@ -85,5 +80,30 @@ describe("terminal UI intent decision helper", () => {
       nextConsumedSeq: 12,
       action: { type: "setFollowOutput", followOutput: true, scrollToBottom: true },
     });
+  });
+
+  it("emits jumpSearch when query non-empty", () => {
+    const result = evaluateTerminalUiIntent({
+      request: { kind: "jumpSearch", seq: 4, query: "  npm test  " },
+      isFocused: true,
+      consumedSeq: 3,
+      findQuery: "",
+      followOutput: true,
+    });
+    expect(result).toEqual({
+      nextConsumedSeq: 4,
+      action: { type: "jumpSearch", query: "npm test" },
+    });
+  });
+
+  it("skips jumpSearch when query empty after trim", () => {
+    const result = evaluateTerminalUiIntent({
+      request: { kind: "jumpSearch", seq: 5, query: "   " },
+      isFocused: true,
+      consumedSeq: 4,
+      findQuery: "",
+      followOutput: true,
+    });
+    expect(result).toEqual({ nextConsumedSeq: 5 });
   });
 });

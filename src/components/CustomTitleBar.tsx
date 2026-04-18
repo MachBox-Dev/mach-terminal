@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "../core/tauriRuntime";
+
+export interface CustomTitleBarProps {
+  onOpenSettings?: () => void;
+  onOpenDiagnostics?: () => void;
+  /** Dev-only diagnostics entry; wired from `import.meta.env.DEV` at callsite. */
+  showDiagnostics?: boolean;
+}
 
 function isMacHost(): boolean {
   if (typeof navigator === "undefined") {
@@ -9,7 +16,100 @@ function isMacHost(): boolean {
   return /Mac|iPhone|iPod|iPad/i.test(navigator.userAgent);
 }
 
-export function CustomTitleBar() {
+function TitleBarBrandRow() {
+  return (
+    <div className="custom-titlebar-brand-row">
+      <img
+        src="/mach-terminal-logo.png"
+        alt=""
+        className="custom-titlebar-logo"
+        width={22}
+        height={22}
+        decoding="async"
+      />
+      <span className="custom-titlebar-brand">Mach Terminal</span>
+    </div>
+  );
+}
+
+function TitleBarMenu({
+  onOpenSettings,
+  onOpenDiagnostics,
+  showDiagnostics,
+}: Required<Pick<CustomTitleBarProps, "onOpenSettings" | "onOpenDiagnostics" | "showDiagnostics">>) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onDocPointer = (event: MouseEvent | PointerEvent) => {
+      const el = wrapRef.current;
+      if (el && event.target instanceof Node && !el.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const run = (fn: () => void) => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div ref={wrapRef} className="custom-titlebar-menu-wrap">
+      <button
+        type="button"
+        className="custom-titlebar-menu-trigger"
+        aria-label="Open app menu"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M4 7h16v2H4V7zm0 4h16v2H4v-2zm0 4h16v2H4v-2z" />
+        </svg>
+      </button>
+      {open ? (
+        <div className="custom-titlebar-menu-dropdown" role="menu">
+          <button type="button" className="custom-titlebar-menu-item" role="menuitem" onClick={() => run(onOpenSettings)}>
+            Settings
+          </button>
+          {showDiagnostics ? (
+            <button
+              type="button"
+              className="custom-titlebar-menu-item"
+              role="menuitem"
+              onClick={() => run(onOpenDiagnostics)}
+            >
+              Diagnostics
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function CustomTitleBar({
+  onOpenSettings = () => {
+    /* no-op when not wired (e.g. tests) */
+  },
+  onOpenDiagnostics = () => {},
+  showDiagnostics = false,
+}: CustomTitleBarProps = {}) {
   const [maximized, setMaximized] = useState(false);
 
   const refreshMaximized = useCallback(async () => {
@@ -42,8 +142,37 @@ export function CustomTitleBar() {
     };
   }, [refreshMaximized]);
 
+  const menu = (
+    <TitleBarMenu onOpenSettings={onOpenSettings} onOpenDiagnostics={onOpenDiagnostics} showDiagnostics={showDiagnostics} />
+  );
+
+  const brand = (
+    <div
+      className="custom-titlebar-drag"
+      data-tauri-drag-region={isTauri() ? true : undefined}
+      onDoubleClick={(event) => {
+        if (!isTauri()) {
+          return;
+        }
+        if ((event.target as HTMLElement).closest("button")) {
+          return;
+        }
+        void onToggleMaximize();
+      }}
+    >
+      <TitleBarBrandRow />
+    </div>
+  );
+
   if (!isTauri()) {
-    return null;
+    return (
+      <header className="custom-titlebar custom-titlebar-web">
+        {menu}
+        <div className="custom-titlebar-drag custom-titlebar-drag-web">
+          <TitleBarBrandRow />
+        </div>
+      </header>
+    );
   }
 
   const w = getCurrentWindow();
@@ -57,21 +186,6 @@ export function CustomTitleBar() {
     })();
   };
   const onClose = () => void w.close();
-
-  const dragRegion = (
-    <div
-      className="custom-titlebar-drag"
-      data-tauri-drag-region
-      onDoubleClick={(event) => {
-        if ((event.target as HTMLElement).closest("button")) {
-          return;
-        }
-        void onToggleMaximize();
-      }}
-    >
-      <span className="custom-titlebar-brand">Mach Terminal</span>
-    </div>
-  );
 
   const controls = (
     <div className={`custom-titlebar-controls${mac ? " custom-titlebar-controls-mac" : ""}`}>
@@ -149,11 +263,13 @@ export function CustomTitleBar() {
       {mac ? (
         <>
           {controls}
-          {dragRegion}
+          {menu}
+          {brand}
         </>
       ) : (
         <>
-          {dragRegion}
+          {menu}
+          {brand}
           {controls}
         </>
       )}
