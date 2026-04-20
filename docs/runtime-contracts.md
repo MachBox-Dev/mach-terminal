@@ -189,6 +189,12 @@ This document defines the first stable contract between the frontend shell and R
   - `profilePath`, `backupCount`, `profilePathSource`, and `error` remain explicitly serialized (including null when absent)
   - canonical row ordering remains `pwsh`, `bash`, `zsh`
   - capability invariants remain stable per shell kind
+- Invoke-transport smoke coverage is now scaffolded as non-blocking:
+  - Rust integration spec: `src-tauri/tests/shell_integration_invoke_smoke.rs`
+  - runner script: `npm run test:invoke:smoke`
+  - cargo feature gate: `invoke-smoke` (excluded from default `cargo test`)
+  - tests are intentionally `#[ignore]` by default in this tranche and executed only via explicit opt-in (`--ignored`)
+  - runner swallows failures by design so rollout can collect signal without destabilizing release gates
 - The P5/P5-followup refactors do not change shell integration payload shapes; they reduce repeated backend branching only.
 
 ## Cross-Platform PTY Behavior

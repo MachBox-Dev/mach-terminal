@@ -210,6 +210,24 @@ Primary files:
 - `src-tauri/src/settings.rs`
 - `docs/runtime-contracts.md`
 
+### Shell invoke transport bootstrap (non-blocking phased rollout)
+
+- Added initial invoke-transport smoke spec for `shell_integration_status`:
+  - `src-tauri/tests/shell_integration_invoke_smoke.rs`
+  - assertions cover canonical shell row ordering and key pwsh error/null/source semantics.
+- Added non-blocking invoke runner:
+  - `npm run test:invoke:smoke` (`scripts/invoke-smoke.mjs`)
+  - executes feature-gated (`invoke-smoke`) ignored invoke smoke tests with failure-tolerant behavior for phased adoption.
+- Current environment caveat: Windows mock-webview runtime can fail with `STATUS_ENTRYPOINT_NOT_FOUND`; runner is intentionally non-blocking until transport stability is proven.
+
+Primary files:
+
+- `src-tauri/tests/shell_integration_invoke_smoke.rs`
+- `scripts/invoke-smoke.mjs`
+- `package.json`
+- `src-tauri/Cargo.toml`
+- `docs/runtime-contracts.md`
+
 ## Important Contracts
 
 ### Shell integration status contract
@@ -260,13 +278,13 @@ Anchor files:
 
 ### 2) Shell Integration P5 follow-up (status-path consolidation)
 
-Goal: continue P5 by adding full invoke-level command tests for `shell_integration_status` command transport boundaries (beyond current backend wire-shape guards) without changing payload contracts.
+Goal: continue P5 by promoting invoke-level command tests for `shell_integration_status` from non-blocking smoke to stable blocking coverage once runtime entrypoint issues are resolved.
 
 Potential tasks:
 
-- add Tauri-command tests for override-invalid / unresolved-path rows
-- assert serialized JSON field null/omission semantics at command boundary
-- verify frontend consumers remain contract-compatible under serialized payloads
+- stabilize Windows mock/webview invoke harness so ignored tests can run consistently
+- promote `test:invoke:smoke` from failure-tolerant to strict pass/fail gating
+- expand transport assertions beyond current pwsh-focused error/null paths
 
 ## Next Session Startup Checklist
 

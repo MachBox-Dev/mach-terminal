@@ -11,6 +11,7 @@
     "test:types": "tsc --noEmit",
     "test:ux": "vitest run",
     "test:ux:smoke": "vitest run smoke.test.ts",
+    "test:invoke:smoke": "node scripts/invoke-smoke.mjs",
     "test:pty": "cargo test --manifest-path src-tauri/Cargo.toml --tests",
     "security:npm": "npm audit --omit=dev --audit-level=high",
     "security:cargo": "cargo audit --manifest-path src-tauri/Cargo.toml --deny warnings",
