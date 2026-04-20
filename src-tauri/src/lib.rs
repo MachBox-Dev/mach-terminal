@@ -271,9 +271,12 @@ fn history_replay(
 }
 
 #[tauri::command]
-#[instrument(skip(request))]
-fn composer_complete(request: ComposerCompletionRequest) -> Result<ComposerCompletionResponse, String> {
-    composer_completion::complete(request)
+#[instrument(skip(manager, request))]
+fn composer_complete(
+    manager: State<'_, SessionManager>,
+    request: ComposerCompletionRequest,
+) -> Result<ComposerCompletionResponse, String> {
+    composer_completion::complete(request, Some(&manager))
 }
 
 #[tauri::command]

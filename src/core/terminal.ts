@@ -169,6 +169,8 @@ export interface ComposerCompletionRequest {
   cursor: number;
   cwd?: string;
   shell?: string;
+  /** When set, backend resolves cwd from the live PTY session (authoritative vs UI hints). */
+  sessionId?: string;
   limit?: number;
 }
 

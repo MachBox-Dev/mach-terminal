@@ -523,6 +523,18 @@ impl SessionManager {
         sessions.values().map(|session| session.info()).collect()
     }
 
+    /// Latest cwd snapshot for a session (OSC7-updated mutex when hooked, else spawn seed).
+    pub fn session_cwd_snapshot(&self, session_id: &str) -> Result<Option<String>, String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|error| format!("failed to lock session manager: {error}"))?;
+        let Some(handle) = sessions.get(session_id) else {
+            return Ok(None);
+        };
+        Ok(handle.info().ok().and_then(|info| info.cwd))
+    }
+
     #[instrument(skip(self, app, request))]
     pub fn history_query(&self, app: &AppHandle, request: HistoryQueryRequest) -> Result<Vec<HistoryEntry>, String> {
         self.ensure_history_hydrated(app)?;

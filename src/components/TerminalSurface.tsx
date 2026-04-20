@@ -142,6 +142,7 @@ interface TerminalSurfaceProps {
     cursor: number;
     cwd?: string;
     shell?: string;
+    sessionId?: string;
   }) => Promise<ComposerCompletionResponse>;
   onInput: (sessionId: string, data: string) => void;
   onResize: (sessionId: string, cols: number, rows: number) => void;
@@ -339,6 +340,7 @@ export function TerminalSurface({
         cursor,
         cwd: liveCwd ?? undefined,
         shell: activeSession?.shell,
+        sessionId: activeSession?.id,
       });
       if (completionRequestSeqRef.current !== nextSeq) {
         return false;

@@ -14,8 +14,10 @@ const COMMAND_CACHE_KEY: &str = "path_commands";
 pub struct ComposerCompletionRequest {
     pub draft: String,
     pub cursor: usize,
+    /// Optional UI hint (OSC7 map / session snapshot). Prefer `session_id` + backend lookup when set.
     pub cwd: Option<String>,
     pub shell: Option<String>,
+    pub session_id: Option<String>,
     pub limit: Option<usize>,
 }
 
@@ -51,12 +53,19 @@ struct CommandCache {
 
 static COMMAND_CACHE: OnceLock<Mutex<CommandCache>> = OnceLock::new();
 
-pub fn complete(request: ComposerCompletionRequest) -> Result<ComposerCompletionResponse, String> {
+pub fn complete(
+    request: ComposerCompletionRequest,
+    manager: Option<&crate::session_manager::SessionManager>,
+) -> Result<ComposerCompletionResponse, String> {
     let cursor = request.cursor.min(request.draft.len());
     let token = token_at_cursor(&request.draft, cursor);
     let query = unquote_token(&token.raw);
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-    let cwd = resolve_cwd(request.cwd.as_deref())?;
+    let session_cwd = match (request.session_id.as_deref(), manager) {
+        (Some(id), Some(mgr)) => mgr.session_cwd_snapshot(id)?,
+        _ => None,
+    };
+    let cwd = resolve_cwd_for_completion(session_cwd.as_deref(), request.cwd.as_deref())?;
 
     let candidates = if should_complete_path(&query) {
         complete_paths(&cwd, &query, limit)?
@@ -120,14 +129,29 @@ fn unquote_token(token: &str) -> String {
     token.to_string()
 }
 
-fn resolve_cwd(cwd: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(value) = cwd {
-        let path = PathBuf::from(value);
-        if path.is_absolute() && path.exists() {
-            return Ok(path);
-        }
+/// Prefer live session cwd from the PTY (when `session_id` resolves), then the UI hint.
+/// Do **not** require `exists()` — network paths, ACL quirks, and racey metadata should not
+/// force a fallback to the *app* process cwd (which breaks relative path completion).
+fn resolve_cwd_for_completion(session_cwd: Option<&str>, cwd_hint: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(path) = session_cwd.and_then(normalize_cwd_string) {
+        return Ok(path);
+    }
+    if let Some(path) = cwd_hint.and_then(normalize_cwd_string) {
+        return Ok(path);
     }
     std::env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))
+}
+
+fn normalize_cwd_string(value: &str) -> Option<PathBuf> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        return Some(path);
+    }
+    std::env::current_dir().ok().map(|cwd| cwd.join(path))
 }
 
 fn should_complete_path(query: &str) -> bool {
@@ -342,7 +366,9 @@ fn shell_builtin_commands(shell: Option<&str>) -> &'static [&'static str] {
 
 #[cfg(test)]
 mod tests {
-    use super::{split_dir_and_prefix, token_at_cursor, unquote_token};
+    use std::path::PathBuf;
+
+    use super::{normalize_cwd_string, resolve_cwd_for_completion, split_dir_and_prefix, token_at_cursor, unquote_token};
 
     #[test]
     fn token_scans_word_at_cursor() {
@@ -370,4 +396,31 @@ mod tests {
         assert_eq!(unquote_token("hello"), "hello");
     }
 
+    #[test]
+    fn normalize_cwd_accepts_absolute_paths_without_existence_check() {
+        #[cfg(windows)]
+        {
+            let p = normalize_cwd_string(r"C:\path\that\likely\does\not\exist").expect("cwd");
+            assert!(p.is_absolute());
+        }
+        #[cfg(not(windows))]
+        {
+            let p = normalize_cwd_string("/path/that/likely/does/not/exist").expect("cwd");
+            assert!(p.is_absolute());
+        }
+    }
+
+    #[test]
+    fn resolve_cwd_prefers_session_hint_over_ui_hint() {
+        #[cfg(windows)]
+        {
+            let got = resolve_cwd_for_completion(Some(r"C:\session"), Some(r"D:\hint")).unwrap();
+            assert_eq!(got, PathBuf::from(r"C:\session"));
+        }
+        #[cfg(not(windows))]
+        {
+            let got = resolve_cwd_for_completion(Some("/session"), Some("/hint")).unwrap();
+            assert_eq!(got, PathBuf::from("/session"));
+        }
+    }
 }

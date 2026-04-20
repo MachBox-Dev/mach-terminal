@@ -1114,7 +1114,13 @@ function App() {
   }, [aiInsightDismissed, aiRequestInFlight, aiRequestStatus, aiResponse]);
 
   const requestComposerCompletion = useCallback(
-    async (request: { draft: string; cursor: number; cwd?: string; shell?: string }) => {
+    async (request: {
+      draft: string;
+      cursor: number;
+      cwd?: string;
+      shell?: string;
+      sessionId?: string;
+    }) => {
       return composerComplete({
         ...request,
         limit: 60,
