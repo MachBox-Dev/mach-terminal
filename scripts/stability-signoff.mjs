@@ -51,6 +51,8 @@ try {
   runStep("Full automated tests", "npm run test");
   report.ga_cutline.full_tests = true;
 
+  runStep("UX smoke tests", "npm run test:ux:smoke");
+
   runStep("Frontend build", "npm run build");
   report.ga_cutline.frontend_build = true;
 

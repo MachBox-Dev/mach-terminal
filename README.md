@@ -53,6 +53,8 @@ Current executable provider path is `ollama`; other providers remain visible as 
 
 Run this checklist before calling a UX slice complete:
 
+Scripted smoke coverage now runs for a focused subset of terminal interaction checks (`test:ux:smoke`): BEL visual flash contract, context-menu open/clamp/paste availability, and safe-paste guard branching. Remaining checklist items below still require manual dogfood verification.
+
 1. Open command palette with `Ctrl/Cmd+K`, navigate with arrow keys, execute with Enter, dismiss with Escape.
 2. Split and resize panes rapidly; verify active-pane focus ring and stable terminal resize behavior.
 3. Search command history, confirm empty-state messaging, and replay a long command from history.

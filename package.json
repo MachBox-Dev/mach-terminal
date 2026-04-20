@@ -10,6 +10,7 @@
     "test": "npm run test:types && npm run test:ux && npm run test:pty",
     "test:types": "tsc --noEmit",
     "test:ux": "vitest run",
+    "test:ux:smoke": "vitest run src/components/TerminalSurface.smoke.test.ts",
     "test:pty": "cargo test --manifest-path src-tauri/Cargo.toml --tests",
     "security:npm": "npm audit --omit=dev --audit-level=high",
     "security:cargo": "cargo audit --manifest-path src-tauri/Cargo.toml --deny warnings",

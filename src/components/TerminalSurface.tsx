@@ -53,6 +53,51 @@ interface PendingPasteState {
   summary: PastePayloadSummary;
 }
 
+export const BELL_FLASH_DURATION_MS = 200;
+
+export function canPasteFromContextMenu(activeSession?: Pick<PtySessionInfo, "id">): boolean {
+  return Boolean(activeSession?.id);
+}
+
+export function evaluatePendingPasteState(
+  text: string,
+  bypassForSession: boolean,
+): PendingPasteState | null {
+  const decision = decidePasteAction({ text, bypassForSession });
+  if (decision.kind === "send") {
+    return null;
+  }
+  return {
+    text,
+    reasons: decision.risk.reasons,
+    summary: summarizePastePayload(text),
+  };
+}
+
+export function clampContextMenuPosition(args: {
+  x: number;
+  y: number;
+  menuWidth: number;
+  menuHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  padding?: number;
+}): { x: number; y: number } {
+  const pad = args.padding ?? 8;
+  let left = args.x;
+  let top = args.y;
+  if (left + args.menuWidth > args.viewportWidth - pad) {
+    left = args.viewportWidth - args.menuWidth - pad;
+  }
+  if (top + args.menuHeight > args.viewportHeight - pad) {
+    top = args.viewportHeight - args.menuHeight - pad;
+  }
+  return {
+    x: Math.max(pad, left),
+    y: Math.max(pad, top),
+  };
+}
+
 interface TerminalSurfaceProps {
   activeSession?: PtySessionInfo;
   activeBuffer: string;
@@ -265,20 +310,13 @@ export function TerminalSurface({
       if (!text || !activeSessionRef.current) {
         return;
       }
-      const decision = decidePasteAction({
-        text,
-        bypassForSession: pasteBypassForSessionRef.current,
-      });
-      if (decision.kind === "send") {
+      const pending = evaluatePendingPasteState(text, pasteBypassForSessionRef.current);
+      if (!pending) {
         sendTextToPty(text);
         setPendingPaste(null);
         return;
       }
-      setPendingPaste({
-        text,
-        reasons: decision.risk.reasons,
-        summary: summarizePastePayload(text),
-      });
+      setPendingPaste(pending);
     },
     [sendTextToPty],
   );
@@ -504,21 +542,16 @@ export function TerminalSurface({
       return;
     }
     const rect = el.getBoundingClientRect();
-    const pad = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = ctxMenu.x;
-    let top = ctxMenu.y;
-    if (left + rect.width > vw - pad) {
-      left = vw - rect.width - pad;
-    }
-    if (top + rect.height > vh - pad) {
-      top = vh - rect.height - pad;
-    }
-    left = Math.max(pad, left);
-    top = Math.max(pad, top);
-    if (Math.abs(left - ctxMenu.x) > 0.5 || Math.abs(top - ctxMenu.y) > 0.5) {
-      setCtxMenu({ x: left, y: top });
+    const next = clampContextMenuPosition({
+      x: ctxMenu.x,
+      y: ctxMenu.y,
+      menuWidth: rect.width,
+      menuHeight: rect.height,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    if (Math.abs(next.x - ctxMenu.x) > 0.5 || Math.abs(next.y - ctxMenu.y) > 0.5) {
+      setCtxMenu(next);
     }
   }, [ctxMenu]);
 
@@ -648,7 +681,7 @@ export function TerminalSurface({
       bellAnimTimerRef.current = window.setTimeout(() => {
         el.classList.remove("terminal-bell-flash");
         bellAnimTimerRef.current = null;
-      }, 200);
+      }, BELL_FLASH_DURATION_MS);
     });
 
     terminal.attachCustomKeyEventHandler((event) => {
@@ -1218,7 +1251,7 @@ export function TerminalSurface({
             <button
               type="button"
               role="menuitem"
-              disabled={!activeSession}
+              disabled={!canPasteFromContextMenu(activeSession)}
               onClick={() => {
                 requestClipboardPaste();
                 setCtxMenu(null);

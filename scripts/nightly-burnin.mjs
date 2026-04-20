@@ -9,6 +9,7 @@ mkdirSync(historyDir, { recursive: true });
 
 const scenarios = [
   { name: "smoke", iterations: 1, command: "npm run test" },
+  { name: "ux-smoke", iterations: 1, command: "npm run test:ux:smoke" },
   { name: "stress", iterations: 3, command: "npm run test:pty" },
   { name: "soak", iterations: 5, command: "npm run test:pty" },
 ];

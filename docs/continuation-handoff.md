@@ -135,6 +135,28 @@ Primary files:
 - `src/components/ShellIntegrationSection.test.ts`
 - `docs/runtime-contracts.md`
 
+### UX smoke vertical slice (TerminalSurface contracts)
+
+- Added deterministic smoke tests for `TerminalSurface` interaction contracts:
+  - context-menu clamp behavior near viewport edges
+  - context-menu paste enabled/disabled contract
+  - safe-paste guard branching for risky payloads
+  - BEL visual flash timing contract
+- Added additive `TerminalSurface` helper exports to keep assertions stable without runtime behavior drift.
+- Added dedicated `test:ux:smoke` script and wired it into:
+  - `stability-signoff`
+  - `nightly-burnin`
+- Updated README UX checklist notes to mark this subset as scripted.
+
+Primary files:
+
+- `src/components/TerminalSurface.tsx`
+- `src/components/TerminalSurface.smoke.test.ts`
+- `package.json`
+- `scripts/stability-signoff.mjs`
+- `scripts/nightly-burnin.mjs`
+- `README.md`
+
 ## Important Contracts
 
 ### Shell integration status contract
@@ -173,9 +195,9 @@ Do not set this flag from general onboarding Save/Quick start/Skip flows.
 
 ## Open Backlog (Recommended Priority)
 
-### 1) Scripted UX smoke coverage
+### 1) Scripted UX smoke coverage (expand beyond TerminalSurface tranche)
 
-Goal: convert more UX dogfood checklist coverage into scripted smoke checks.
+Goal: extend scripted smoke coverage from the current `TerminalSurface` subset to additional UX dogfood checklist items.
 
 Anchor files:
 
@@ -200,6 +222,7 @@ Potential tasks:
 3. Run baseline verification:
    - `npm run test:types`
    - `npm run test:ux`
+   - `npm run test:ux:smoke`
    - `cargo test --manifest-path src-tauri/Cargo.toml`
 4. Implement in small commits by logical behavior boundary.
 5. Re-run the same verification suite before final commit.
