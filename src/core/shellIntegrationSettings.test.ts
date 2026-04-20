@@ -23,7 +23,17 @@ describe("shellIntegrationSettings patch payload", () => {
   });
 
   it("supports shell status diagnostics fields", () => {
-    const diagnostics = { health: "stale", backupCount: 2 };
-    expect(diagnostics).toEqual(expect.objectContaining({ health: "stale", backupCount: 2 }));
+    const diagnostics = {
+      health: "stale",
+      backupCount: 2,
+      capabilities: { supportsBackupRestore: true, supportsProfileOverride: false },
+    };
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        health: "stale",
+        backupCount: 2,
+        capabilities: expect.objectContaining({ supportsBackupRestore: true }),
+      }),
+    );
   });
 });

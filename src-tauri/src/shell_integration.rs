@@ -38,6 +38,13 @@ pub struct ShellIntegrationMaterializeResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShellIntegrationShellCapabilities {
+    pub supports_backup_restore: bool,
+    pub supports_profile_override: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellIntegrationShellStatus {
     pub shell_kind: String,
     pub profile_path: Option<String>,
@@ -45,8 +52,9 @@ pub struct ShellIntegrationShellStatus {
     pub marker_present: bool,
     /// `healthy`, `stale`, `missing`, or `error`.
     pub health: String,
-    /// Number of available sidecar backups (PowerShell only).
+    /// Number of available sidecar backups.
     pub backup_count: Option<u32>,
+    pub capabilities: ShellIntegrationShellCapabilities,
     /// `override`, `auto`, or unset when PowerShell profile could not be resolved.
     pub profile_path_source: Option<String>,
     pub error: Option<String>,
@@ -227,6 +235,14 @@ fn resolve_zsh_profile() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".zshrc"))
 }
 
+fn resolve_unix_shell_profile(shell_kind: &str) -> Option<PathBuf> {
+    match shell_kind {
+        "bash" => resolve_bash_profile(),
+        "zsh" => resolve_zsh_profile(),
+        _ => None,
+    }
+}
+
 fn normalize_pwsh_display_path(raw: &str) -> String {
     let t = raw.trim();
     if cfg!(windows) {
@@ -264,6 +280,32 @@ fn resolve_pwsh_hook_target(app: &AppHandle, shell_hint: Option<&str>) -> Result
     resolve_powershell_profile(shell_hint).map(|p| (p, "auto"))
 }
 
+fn resolve_shell_hook_target(
+    app: &AppHandle,
+    shell_kind: &str,
+    shell_hint: Option<&str>,
+) -> Result<(PathBuf, Option<&'static str>), String> {
+    match shell_kind {
+        "pwsh" | "powershell" => {
+            let (path, source) = resolve_pwsh_hook_target(app, shell_hint)?;
+            Ok((path, Some(source)))
+        }
+        "bash" | "zsh" => {
+            let path = resolve_unix_shell_profile(shell_kind)
+                .ok_or_else(|| "could not resolve home directory".to_string())?;
+            Ok((path, Some("auto")))
+        }
+        _ => Err(format!("unknown shell_kind: {shell_kind}")),
+    }
+}
+
+fn shell_capabilities(shell_kind: &str) -> ShellIntegrationShellCapabilities {
+    ShellIntegrationShellCapabilities {
+        supports_backup_restore: matches!(shell_kind, "pwsh" | "powershell" | "bash" | "zsh"),
+        supports_profile_override: matches!(shell_kind, "pwsh" | "powershell"),
+    }
+}
+
 fn classify_shell_health(error: Option<&str>, marker: bool, expected_matches: Option<bool>) -> &'static str {
     if error.is_some() {
         return "error";
@@ -290,7 +332,7 @@ struct BackupCandidate {
     entry: ShellIntegrationBackupEntry,
 }
 
-fn list_pwsh_backup_candidates(profile_path: &Path) -> Result<Vec<BackupCandidate>, String> {
+fn list_backup_candidates(profile_path: &Path) -> Result<Vec<BackupCandidate>, String> {
     let backup_dir = backup_dir_for_profile(profile_path)?;
     if !backup_dir.exists() {
         return Ok(Vec::new());
@@ -334,7 +376,7 @@ fn list_pwsh_backup_candidates(profile_path: &Path) -> Result<Vec<BackupCandidat
 }
 
 fn count_backups_for_profile(profile_path: &Path) -> u32 {
-    list_pwsh_backup_candidates(profile_path)
+    list_backup_candidates(profile_path)
         .map(|v| v.len() as u32)
         .unwrap_or(0)
 }
@@ -361,6 +403,7 @@ fn pwsh_shell_status(pb: &Path, source: &'static str, expected_line: Option<&str
                     marker_present: marker,
                     health: classify_shell_health(None, marker, matches_expected).to_string(),
                     backup_count,
+                    capabilities: shell_capabilities("pwsh"),
                     profile_path_source: Some(source.to_string()),
                     error: None,
                 }
@@ -372,6 +415,7 @@ fn pwsh_shell_status(pb: &Path, source: &'static str, expected_line: Option<&str
                 marker_present: false,
                 health: classify_shell_health(Some(e.as_str()), false, None).to_string(),
                 backup_count,
+                capabilities: shell_capabilities("pwsh"),
                 profile_path_source: Some(source.to_string()),
                 error: Some(e),
             },
@@ -384,6 +428,7 @@ fn pwsh_shell_status(pb: &Path, source: &'static str, expected_line: Option<&str
             marker_present: false,
             health: "missing".to_string(),
             backup_count,
+            capabilities: shell_capabilities("pwsh"),
             profile_path_source: Some(source.to_string()),
             error: None,
         }
@@ -437,7 +482,7 @@ fn map_profile_io_error(op: &str, e: std::io::Error) -> String {
     }
 }
 
-fn unix_profile_shell_status(kind: &str, resolve: Option<PathBuf>) -> ShellIntegrationShellStatus {
+fn unix_profile_shell_status(kind: &str, resolve: Option<PathBuf>, expected_line: Option<&str>) -> ShellIntegrationShellStatus {
     match resolve {
         None => ShellIntegrationShellStatus {
             shell_kind: kind.to_string(),
@@ -446,30 +491,45 @@ fn unix_profile_shell_status(kind: &str, resolve: Option<PathBuf>) -> ShellInteg
             marker_present: false,
             health: "error".to_string(),
             backup_count: None,
+            capabilities: shell_capabilities(kind),
             profile_path_source: None,
             error: Some("could not resolve home directory".to_string()),
         },
         Some(path) => {
             let ps = path.to_string_lossy().to_string();
+            let backup_count = Some(count_backups_for_profile(&path));
             if path.exists() {
                 match read_profile_capped(&path) {
-                    Ok(c) => ShellIntegrationShellStatus {
-                        shell_kind: kind.to_string(),
-                        profile_path: Some(ps),
-                        profile_resolved: true,
-                        marker_present: marker_present(&c),
-                        health: classify_shell_health(None, marker_present(&c), None).to_string(),
-                        backup_count: None,
-                        profile_path_source: Some("auto".to_string()),
-                        error: None,
-                    },
+                    Ok(c) => {
+                        let marker = marker_present(&c);
+                        let matches_expected = if marker {
+                            match (expected_line, marker_inner_line(&c)) {
+                                (Some(expected), Some(inner)) => Some(inner == expected),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        ShellIntegrationShellStatus {
+                            shell_kind: kind.to_string(),
+                            profile_path: Some(ps),
+                            profile_resolved: true,
+                            marker_present: marker,
+                            health: classify_shell_health(None, marker, matches_expected).to_string(),
+                            backup_count,
+                            capabilities: shell_capabilities(kind),
+                            profile_path_source: Some("auto".to_string()),
+                            error: None,
+                        }
+                    }
                     Err(e) => ShellIntegrationShellStatus {
                         shell_kind: kind.to_string(),
                         profile_path: Some(ps),
                         profile_resolved: true,
                         marker_present: false,
                         health: "error".to_string(),
-                        backup_count: None,
+                        backup_count,
+                        capabilities: shell_capabilities(kind),
                         profile_path_source: Some("auto".to_string()),
                         error: Some(e),
                     },
@@ -481,7 +541,8 @@ fn unix_profile_shell_status(kind: &str, resolve: Option<PathBuf>) -> ShellInteg
                     profile_resolved: true,
                     marker_present: false,
                     health: "missing".to_string(),
-                    backup_count: None,
+                    backup_count,
+                    capabilities: shell_capabilities(kind),
                     profile_path_source: Some("auto".to_string()),
                     error: None,
                 }
@@ -501,6 +562,8 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
     let si = settings::load_settings(&app).map(|s| s.shell_integration).unwrap_or_default();
     let shell_hint = profile.shell.as_deref();
     let expected_pwsh_line = powershell_dot_source_line(&dir.join("mach-init.ps1")).ok();
+    let expected_bash_line = Some(bash_source_line(&dir.join("mach-init.bash")));
+    let expected_zsh_line = Some(zsh_source_line(&dir.join("mach-init.zsh")));
 
     if let Some(raw) = pwsh_trimmed_override(&si) {
         match validate_pwsh_profile_override(raw) {
@@ -512,6 +575,7 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
                 marker_present: false,
                 health: "error".to_string(),
                 backup_count: None,
+                capabilities: shell_capabilities("pwsh"),
                 profile_path_source: Some("override".to_string()),
                 error: Some(e),
             }),
@@ -526,6 +590,7 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
                 marker_present: false,
                 health: "error".to_string(),
                 backup_count: None,
+                capabilities: shell_capabilities("pwsh"),
                 profile_path_source: None,
                 error: Some(e),
             }),
@@ -535,10 +600,12 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
     shells.push(unix_profile_shell_status(
         "bash",
         resolve_bash_profile(),
+        expected_bash_line.as_deref(),
     ));
     shells.push(unix_profile_shell_status(
         "zsh",
         resolve_zsh_profile(),
+        expected_zsh_line.as_deref(),
     ));
 
     Ok(ShellIntegrationStatus {
@@ -552,21 +619,20 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
 #[tracing::instrument(skip(app))]
 pub fn shell_integration_backups_list(app: AppHandle, shell_kind: String) -> Result<ShellIntegrationBackupListResult, String> {
     let profile = settings::get_profile(&app).unwrap_or_else(|_| TerminalProfile::default());
-    match shell_kind.as_str() {
-        "pwsh" | "powershell" => {
-            let (profile_path, _) = resolve_pwsh_hook_target(&app, profile.shell.as_deref())?;
-            let entries = list_pwsh_backup_candidates(&profile_path)?
-                .into_iter()
-                .map(|candidate| candidate.entry)
-                .collect();
-            Ok(ShellIntegrationBackupListResult {
-                shell_kind: "pwsh".to_string(),
-                profile_path: profile_path.to_string_lossy().to_string(),
-                entries,
-            })
-        }
-        _ => Err(format!("backup list unsupported for shell_kind: {shell_kind}")),
-    }
+    let normalized_kind = match shell_kind.as_str() {
+        "powershell" => "pwsh",
+        other => other,
+    };
+    let (profile_path, _) = resolve_shell_hook_target(&app, normalized_kind, profile.shell.as_deref())?;
+    let entries = list_backup_candidates(&profile_path)?
+        .into_iter()
+        .map(|candidate| candidate.entry)
+        .collect();
+    Ok(ShellIntegrationBackupListResult {
+        shell_kind: normalized_kind.to_string(),
+        profile_path: profile_path.to_string_lossy().to_string(),
+        entries,
+    })
 }
 
 fn restore_profile_from_backup(profile_path: &Path, backup_path: &Path) -> Result<(), String> {
@@ -592,23 +658,22 @@ pub fn shell_integration_backup_restore(
     backup_id: String,
 ) -> Result<ShellIntegrationBackupRestoreResult, String> {
     let profile = settings::get_profile(&app).unwrap_or_else(|_| TerminalProfile::default());
-    match shell_kind.as_str() {
-        "pwsh" | "powershell" => {
-            let (profile_path, _) = resolve_pwsh_hook_target(&app, profile.shell.as_deref())?;
-            let candidates = list_pwsh_backup_candidates(&profile_path)?;
-            let selected = candidates
-                .into_iter()
-                .find(|candidate| candidate.entry.backup_id == backup_id)
-                .ok_or_else(|| "backup id not found for current profile target".to_string())?;
-            restore_profile_from_backup(&profile_path, &selected.path)?;
-            Ok(ShellIntegrationBackupRestoreResult {
-                shell_kind: "pwsh".to_string(),
-                profile_path: profile_path.to_string_lossy().to_string(),
-                restored_backup_id: selected.entry.backup_id,
-            })
-        }
-        _ => Err(format!("backup restore unsupported for shell_kind: {shell_kind}")),
-    }
+    let normalized_kind = match shell_kind.as_str() {
+        "powershell" => "pwsh",
+        other => other,
+    };
+    let (profile_path, _) = resolve_shell_hook_target(&app, normalized_kind, profile.shell.as_deref())?;
+    let candidates = list_backup_candidates(&profile_path)?;
+    let selected = candidates
+        .into_iter()
+        .find(|candidate| candidate.entry.backup_id == backup_id)
+        .ok_or_else(|| "backup id not found for current profile target".to_string())?;
+    restore_profile_from_backup(&profile_path, &selected.path)?;
+    Ok(ShellIntegrationBackupRestoreResult {
+        shell_kind: normalized_kind.to_string(),
+        profile_path: profile_path.to_string_lossy().to_string(),
+        restored_backup_id: selected.entry.backup_id,
+    })
 }
 
 fn powershell_dot_source_line(init_path: &Path) -> Result<String, String> {
@@ -671,7 +736,7 @@ pub fn shell_integration_install(app: AppHandle, shell_kind: String) -> Result<(
 
     match shell_kind.as_str() {
         "pwsh" | "powershell" => {
-            let (profile_path, _) = resolve_pwsh_hook_target(&app, profile.shell.as_deref())?;
+            let (profile_path, _) = resolve_shell_hook_target(&app, "pwsh", profile.shell.as_deref())?;
             let init = dir.join("mach-init.ps1");
             if !init.exists() {
                 return Err("mach-init.ps1 was not materialized".to_string());
@@ -680,9 +745,7 @@ pub fn shell_integration_install(app: AppHandle, shell_kind: String) -> Result<(
             install_into_profile(&profile_path, &line)
         }
         "bash" => {
-            let Some(profile_path) = resolve_bash_profile() else {
-                return Err("could not resolve home directory".to_string());
-            };
+            let (profile_path, _) = resolve_shell_hook_target(&app, "bash", profile.shell.as_deref())?;
             let init = dir.join("mach-init.bash");
             if !init.exists() {
                 return Err("mach-init.bash was not materialized".to_string());
@@ -691,9 +754,7 @@ pub fn shell_integration_install(app: AppHandle, shell_kind: String) -> Result<(
             install_into_profile(&profile_path, &line)
         }
         "zsh" => {
-            let Some(profile_path) = resolve_zsh_profile() else {
-                return Err("could not resolve home directory".to_string());
-            };
+            let (profile_path, _) = resolve_shell_hook_target(&app, "zsh", profile.shell.as_deref())?;
             let init = dir.join("mach-init.zsh");
             if !init.exists() {
                 return Err("mach-init.zsh was not materialized".to_string());
@@ -712,19 +773,15 @@ pub fn shell_integration_remove(app: AppHandle, shell_kind: String) -> Result<()
 
     match shell_kind.as_str() {
         "pwsh" | "powershell" => {
-            let (profile_path, _) = resolve_pwsh_hook_target(&app, profile.shell.as_deref())?;
+            let (profile_path, _) = resolve_shell_hook_target(&app, "pwsh", profile.shell.as_deref())?;
             remove_from_profile(&profile_path)
         }
         "bash" => {
-            let Some(profile_path) = resolve_bash_profile() else {
-                return Err("could not resolve home directory".to_string());
-            };
+            let (profile_path, _) = resolve_shell_hook_target(&app, "bash", profile.shell.as_deref())?;
             remove_from_profile(&profile_path)
         }
         "zsh" => {
-            let Some(profile_path) = resolve_zsh_profile() else {
-                return Err("could not resolve home directory".to_string());
-            };
+            let (profile_path, _) = resolve_shell_hook_target(&app, "zsh", profile.shell.as_deref())?;
             remove_from_profile(&profile_path)
         }
         _ => Err(format!("unknown shell_kind: {shell_kind}")),
@@ -797,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn list_pwsh_backup_candidates_filters_invalid_names() {
+    fn list_backup_candidates_filters_invalid_names() {
         let temp = tempdir().expect("tempdir");
         let profile = temp.path().join("Microsoft.PowerShell_profile.ps1");
         let backup_dir = profile
@@ -816,7 +873,7 @@ mod tests {
         )
         .expect("write invalid backup");
         fs::write(backup_dir.join("other.1001.mach.bak"), "a").expect("write foreign backup");
-        let entries = list_pwsh_backup_candidates(&profile).expect("list backups");
+        let entries = list_backup_candidates(&profile).expect("list backups");
         assert_eq!(entries.len(), 1);
         assert_eq!(
             entries[0].entry.file_name,
@@ -850,5 +907,15 @@ mod tests {
         assert_eq!(stale, "stale");
         assert_eq!(healthy, "healthy");
         assert_eq!(missing, "missing");
+    }
+
+    #[test]
+    fn shell_capabilities_match_expected_shells() {
+        let pwsh = shell_capabilities("pwsh");
+        let bash = shell_capabilities("bash");
+        assert!(pwsh.supports_backup_restore);
+        assert!(pwsh.supports_profile_override);
+        assert!(bash.supports_backup_restore);
+        assert!(!bash.supports_profile_override);
     }
 }

@@ -20,6 +20,9 @@ import {
 } from "../core/machShellSnippets";
 
 type ShellTarget = "pwsh" | "bash" | "zsh";
+type BackupStateMap = Partial<Record<ShellTarget, ShellIntegrationBackupListResult>>;
+type BackupValueMap = Partial<Record<ShellTarget, string | null>>;
+type BackupBusyMap = Partial<Record<ShellTarget, boolean>>;
 
 function labelFor(kind: string): string {
   if (kind === "pwsh") return "PowerShell";
@@ -43,7 +46,12 @@ function healthBadgeLabel(health: string): string {
   return `health: ${health}`;
 }
 
-export function canRestorePwshBackup(args: { busy: boolean; backupBusy: boolean; backupSelectedId: string | null }): boolean {
+function shellTargetFromKind(kind: string): ShellTarget | null {
+  if (kind === "pwsh" || kind === "bash" || kind === "zsh") return kind;
+  return null;
+}
+
+export function canRestoreShellBackup(args: { busy: boolean; backupBusy: boolean; backupSelectedId: string | null }): boolean {
   return !args.busy && !args.backupBusy && !!args.backupSelectedId;
 }
 
@@ -111,11 +119,11 @@ export function ShellIntegrationSection({ modalOpen, sectionId = "settings-secti
   const [overrideDraft, setOverrideDraft] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [backupState, setBackupState] = useState<ShellIntegrationBackupListResult | null>(null);
-  const [backupBusy, setBackupBusy] = useState(false);
-  const [backupSelectedId, setBackupSelectedId] = useState<string | null>(null);
-  const [backupFeedback, setBackupFeedback] = useState<string | null>(null);
-  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupStateByShell, setBackupStateByShell] = useState<BackupStateMap>({});
+  const [backupBusyByShell, setBackupBusyByShell] = useState<BackupBusyMap>({});
+  const [backupSelectedIdByShell, setBackupSelectedIdByShell] = useState<BackupValueMap>({});
+  const [backupFeedbackByShell, setBackupFeedbackByShell] = useState<BackupValueMap>({});
+  const [backupErrorByShell, setBackupErrorByShell] = useState<BackupValueMap>({});
 
   const overrideMismatch = useMemo(() => {
     const saved = integrationSettings?.pwshProfileOverride ?? "";
@@ -143,30 +151,34 @@ export function ShellIntegrationSection({ modalOpen, sectionId = "settings-secti
   }, []);
 
   const loadBackups = useCallback(async () => {
+    const loadForShell = async (shell: ShellTarget) => {
+      setBackupBusyByShell((prev) => ({ ...prev, [shell]: true }));
+      setBackupErrorByShell((prev) => ({ ...prev, [shell]: null }));
+      try {
+        const next = await shellIntegrationBackupsList(shell);
+        setBackupStateByShell((prev) => ({ ...prev, [shell]: next }));
+        setBackupSelectedIdByShell((prev) => {
+          const current = prev[shell] ?? null;
+          if (current && next.entries.some((entry) => entry.backupId === current)) {
+            return prev;
+          }
+          return { ...prev, [shell]: next.entries[0]?.backupId ?? null };
+        });
+      } catch (e) {
+        setBackupStateByShell((prev) => ({ ...prev, [shell]: null }));
+        setBackupSelectedIdByShell((prev) => ({ ...prev, [shell]: null }));
+        setBackupErrorByShell((prev) => ({ ...prev, [shell]: e instanceof Error ? e.message : String(e) }));
+      } finally {
+        setBackupBusyByShell((prev) => ({ ...prev, [shell]: false }));
+      }
+    };
     if (!isTauri()) {
-      setBackupState(null);
-      setBackupSelectedId(null);
-      setBackupError(null);
+      setBackupStateByShell({});
+      setBackupSelectedIdByShell({});
+      setBackupErrorByShell({});
       return;
     }
-    setBackupBusy(true);
-    setBackupError(null);
-    try {
-      const next = await shellIntegrationBackupsList("pwsh");
-      setBackupState(next);
-      setBackupSelectedId((prev) => {
-        if (prev && next.entries.some((entry) => entry.backupId === prev)) {
-          return prev;
-        }
-        return next.entries[0]?.backupId ?? null;
-      });
-    } catch (e) {
-      setBackupState(null);
-      setBackupSelectedId(null);
-      setBackupError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBackupBusy(false);
-    }
+    await Promise.all((["pwsh", "bash", "zsh"] as ShellTarget[]).map(loadForShell));
   }, []);
 
   useEffect(() => {
@@ -191,19 +203,20 @@ export function ShellIntegrationSection({ modalOpen, sectionId = "settings-secti
 
   const install = (kind: ShellTarget) => run(async () => shellIntegrationInstall(kind));
   const remove = (kind: ShellTarget) => run(async () => shellIntegrationRemove(kind));
-  const restoreSelectedBackup = () =>
+  const restoreSelectedBackup = (shell: ShellTarget) =>
     run(async () => {
-      if (!backupSelectedId) {
-        setBackupError("Choose a backup before restoring.");
+      const selectedBackupId = backupSelectedIdByShell[shell] ?? null;
+      if (!selectedBackupId) {
+        setBackupErrorByShell((prev) => ({ ...prev, [shell]: "Choose a backup before restoring." }));
         return;
       }
-      const confirmed = window.confirm("Restore selected PowerShell profile backup?");
+      const confirmed = window.confirm(`Restore selected ${labelFor(shell)} profile backup?`);
       if (!confirmed) {
         return;
       }
-      const restored = await shellIntegrationBackupRestore("pwsh", backupSelectedId);
-      setBackupFeedback(`Restored backup ${restored.restoredBackupId}.`);
-      setBackupError(null);
+      const restored = await shellIntegrationBackupRestore(shell, selectedBackupId);
+      setBackupFeedbackByShell((prev) => ({ ...prev, [shell]: `Restored backup ${restored.restoredBackupId}.` }));
+      setBackupErrorByShell((prev) => ({ ...prev, [shell]: null }));
       await loadBackups();
     });
 
@@ -227,6 +240,64 @@ export function ShellIntegrationSection({ modalOpen, sectionId = "settings-secti
   const pwshRow = status?.shells.find((s) => s.shellKind === "pwsh");
   const bashRow = status?.shells.find((s) => s.shellKind === "bash");
   const zshRow = status?.shells.find((s) => s.shellKind === "zsh");
+  const supportsOverride = Boolean(pwshRow?.capabilities.supportsProfileOverride);
+  const rows = [pwshRow, bashRow, zshRow].filter((row): row is ShellIntegrationShellStatus => Boolean(row));
+
+  const renderRecovery = (row: ShellIntegrationShellStatus) => {
+    if (!row.capabilities.supportsBackupRestore) {
+      return null;
+    }
+    const shell = shellTargetFromKind(row.shellKind);
+    if (!shell) {
+      return null;
+    }
+    const backupState = backupStateByShell[shell] ?? null;
+    const backupBusy = Boolean(backupBusyByShell[shell]);
+    const backupSelectedId = backupSelectedIdByShell[shell] ?? null;
+    const backupFeedback = backupFeedbackByShell[shell] ?? null;
+    const backupError = backupErrorByShell[shell] ?? null;
+    return (
+      <div className="shell-integration-recovery">
+        <h3 className="shell-integration-subheading">{labelFor(shell)} recovery</h3>
+        <p className="muted-block">
+          Restore a Mach-managed backup for the current profile target when shell startup behavior regresses.
+        </p>
+        {backupError ? <p className="error-text">{backupError}</p> : null}
+        {backupFeedback ? <p className="muted-block">{backupFeedback}</p> : null}
+        <label className="field-row shell-integration-backup-field">
+          <span>Backups</span>
+          <select
+            value={backupSelectedId ?? ""}
+            onChange={(e) => setBackupSelectedIdByShell((prev) => ({ ...prev, [shell]: e.target.value || null }))}
+            disabled={busy || backupBusy || !backupState || backupState.entries.length === 0}
+          >
+            {backupState && backupState.entries.length > 0 ? (
+              backupState.entries.map((entry) => (
+                <option key={entry.backupId} value={entry.backupId}>
+                  {entry.fileName} ({new Date(entry.createdAtMs).toLocaleString()})
+                </option>
+              ))
+            ) : (
+              <option value="">No backups found</option>
+            )}
+          </select>
+        </label>
+        <div className="inline-controls">
+          <button
+            type="button"
+            className="inline-btn"
+            disabled={!canRestoreShellBackup({ busy, backupBusy, backupSelectedId })}
+            onClick={() => void restoreSelectedBackup(shell)}
+          >
+            Restore selected backup
+          </button>
+          <button type="button" className="inline-btn ghost" disabled={busy || backupBusy} onClick={() => void loadBackups()}>
+            {backupBusy ? "Refreshing…" : "Refresh backups"}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <section id={sectionId}>
@@ -248,88 +319,52 @@ export function ShellIntegrationSection({ modalOpen, sectionId = "settings-secti
             <code className="shell-integration-path-inline">{status.shellDir}</code>
           </p>
 
-          <div className="shell-integration-override-panel">
-            <h3 className="shell-integration-subheading">PowerShell profile override</h3>
-            <p className="muted-block">
-              Optional. When set, Install/Remove targets this file instead of the resolved <code>$PROFILE</code> path.
-              Must end with <code>.ps1</code>.
-            </p>
-            <label className="field-row shell-integration-override-field">
-              <span>Override path</span>
-              <input
-                type="text"
-                placeholder="e.g. C:\Users\you\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
-                value={overrideDraft}
-                onChange={(e) => setOverrideDraft(e.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </label>
-            <div className="inline-controls">
-              <button
-                type="button"
-                className="inline-btn"
-                disabled={busy || !overrideMismatch}
-                onClick={() => void saveOverride()}
-              >
-                Save override
-              </button>
-              <button type="button" className="inline-btn ghost" disabled={busy} onClick={() => void clearOverride()}>
-                Clear override
-              </button>
-            </div>
-          </div>
-
-          {pwshRow ? (
-            <IntegrationRow row={pwshRow} disabled={false} busy={busy} onInstall={() => install("pwsh")} onRemove={() => remove("pwsh")} />
-          ) : null}
-          {pwshRow ? (
-            <div className="shell-integration-recovery">
-              <h3 className="shell-integration-subheading">PowerShell recovery</h3>
+          {supportsOverride ? (
+            <div className="shell-integration-override-panel">
+              <h3 className="shell-integration-subheading">PowerShell profile override</h3>
               <p className="muted-block">
-                Restore a Mach-managed backup for the current profile target when shell startup behavior regresses.
+                Optional. When set, Install/Remove targets this file instead of the resolved <code>$PROFILE</code> path.
+                Must end with <code>.ps1</code>.
               </p>
-              {backupError ? <p className="error-text">{backupError}</p> : null}
-              {backupFeedback ? <p className="muted-block">{backupFeedback}</p> : null}
-              <label className="field-row shell-integration-backup-field">
-                <span>Backups</span>
-                <select
-                  value={backupSelectedId ?? ""}
-                  onChange={(e) => setBackupSelectedId(e.target.value || null)}
-                  disabled={busy || backupBusy || !backupState || backupState.entries.length === 0}
-                >
-                  {backupState && backupState.entries.length > 0 ? (
-                    backupState.entries.map((entry) => (
-                      <option key={entry.backupId} value={entry.backupId}>
-                        {entry.fileName} ({new Date(entry.createdAtMs).toLocaleString()})
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">No backups found</option>
-                  )}
-                </select>
+              <label className="field-row shell-integration-override-field">
+                <span>Override path</span>
+                <input
+                  type="text"
+                  placeholder="e.g. C:\Users\you\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+                  value={overrideDraft}
+                  onChange={(e) => setOverrideDraft(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
               </label>
               <div className="inline-controls">
                 <button
                   type="button"
                   className="inline-btn"
-                  disabled={!canRestorePwshBackup({ busy, backupBusy, backupSelectedId })}
-                  onClick={() => void restoreSelectedBackup()}
+                  disabled={busy || !overrideMismatch}
+                  onClick={() => void saveOverride()}
                 >
-                  Restore selected backup
+                  Save override
                 </button>
-                <button type="button" className="inline-btn ghost" disabled={busy || backupBusy} onClick={() => void loadBackups()}>
-                  {backupBusy ? "Refreshing…" : "Refresh backups"}
+                <button type="button" className="inline-btn ghost" disabled={busy} onClick={() => void clearOverride()}>
+                  Clear override
                 </button>
               </div>
             </div>
           ) : null}
-          {bashRow ? (
-            <IntegrationRow row={bashRow} disabled={false} busy={busy} onInstall={() => install("bash")} onRemove={() => remove("bash")} />
-          ) : null}
-          {zshRow ? (
-            <IntegrationRow row={zshRow} disabled={false} busy={busy} onInstall={() => install("zsh")} onRemove={() => remove("zsh")} />
-          ) : null}
+
+          {rows.map((row) => {
+            const shell = shellTargetFromKind(row.shellKind);
+            if (!shell) {
+              return null;
+            }
+            return (
+              <div key={row.shellKind}>
+                <IntegrationRow row={row} disabled={false} busy={busy} onInstall={() => install(shell)} onRemove={() => remove(shell)} />
+                {renderRecovery(row)}
+              </div>
+            );
+          })}
           <button type="button" className="inline-btn ghost" disabled={busy} onClick={() => void load()}>
             Refresh status
           </button>

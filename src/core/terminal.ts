@@ -308,6 +308,10 @@ export interface ShellIntegrationShellStatus {
   health: string;
   /** PowerShell sidecar backup count when applicable. */
   backupCount?: number | null;
+  capabilities: {
+    supportsBackupRestore: boolean;
+    supportsProfileOverride: boolean;
+  };
   /** `override`, `auto`, or omitted when pwsh profile could not be resolved */
   profilePathSource?: string | null;
   error: string | null;
