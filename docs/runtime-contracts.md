@@ -191,10 +191,21 @@ This document defines the first stable contract between the frontend shell and R
   - capability invariants remain stable per shell kind
 - Invoke-transport smoke coverage is now scaffolded as non-blocking:
   - Rust integration spec: `src-tauri/tests/shell_integration_invoke_smoke.rs`
-  - runner script: `npm run test:invoke:smoke`
-  - cargo feature gate: `invoke-smoke` (excluded from default `cargo test`)
-  - tests are intentionally `#[ignore]` by default in this tranche and executed only via explicit opt-in (`--ignored`)
-  - runner swallows failures by design so rollout can collect signal without destabilizing release gates
+  - scripts:
+    - `npm run test:invoke:smoke` (non-blocking signal path)
+    - `npm run test:invoke:strict` (opt-in strict promotion path)
+  - cargo feature gate: `invoke-smoke` enables `tauri/test` and keeps baseline `cargo test` unaffected
+  - tests are intentionally `#[ignore]` by default and executed only via explicit opt-in (`--ignored`)
+  - current transport assertions cover:
+    - top-level payload shape (`scriptVersion`, `shellDir`, `shells`)
+    - canonical row order (`pwsh`, `bash`, `zsh`)
+    - per-shell capability invariants
+    - pwsh error/null/source semantics for invalid override + unresolved auto scenarios
+  - known caveat: some Windows environments can fail with `STATUS_ENTRYPOINT_NOT_FOUND` before assertions execute
+  - promotion criteria to blocking gates:
+    - strict invoke path passes reliably on target OS matrix
+    - no crash-level runtime failures (including entrypoint failures)
+    - invoke assertions stay in parity with backend serialization guard tests
 - The P5/P5-followup refactors do not change shell integration payload shapes; they reduce repeated backend branching only.
 
 ## Cross-Platform PTY Behavior

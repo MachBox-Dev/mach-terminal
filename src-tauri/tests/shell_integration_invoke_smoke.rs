@@ -130,9 +130,42 @@ fn shell_row<'a>(status: &'a Value, shell_kind: &str) -> &'a Value {
         .expect("shell row by kind")
 }
 
+fn assert_top_level_shape(status: &Value) {
+    assert!(status.get("scriptVersion").is_some_and(Value::is_number));
+    assert!(
+        status
+            .get("shellDir")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(status.get("shells").is_some_and(Value::is_array));
+}
+
+fn assert_allowed_health(row: &Value) {
+    assert!(matches!(
+        row.get("health").and_then(Value::as_str),
+        Some("healthy" | "stale" | "missing" | "error")
+    ));
+}
+
+fn assert_capabilities(row: &Value, supports_profile_override: bool) {
+    assert_eq!(
+        row.get("capabilities")
+            .and_then(|capabilities| capabilities.get("supportsBackupRestore"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        row.get("capabilities")
+            .and_then(|capabilities| capabilities.get("supportsProfileOverride"))
+            .and_then(Value::as_bool),
+        Some(supports_profile_override)
+    );
+}
+
 #[test]
 #[ignore = "non-blocking invoke smoke; run manually when local runtime supports mock webview entrypoints"]
-fn invoke_shell_status_reports_canonical_row_order_and_capabilities() {
+fn invoke_shell_status_reports_top_level_shape_order_and_cross_shell_capabilities() {
     let _lock = INVOKE_SHELL_STATUS_TEST_LOCK.lock().expect("lock");
     let app = build_test_app();
     let app_handle = app.handle().clone();
@@ -140,6 +173,7 @@ fn invoke_shell_status_reports_canonical_row_order_and_capabilities() {
     let _path_guard = EnvVarGuard::set_empty("PATH");
 
     let status = invoke_shell_integration_status(&app);
+    assert_top_level_shape(&status);
     let rows = status
         .get("shells")
         .and_then(Value::as_array)
@@ -151,18 +185,22 @@ fn invoke_shell_status_reports_canonical_row_order_and_capabilities() {
     assert_eq!(kinds, vec!["pwsh", "bash", "zsh"]);
 
     let pwsh = shell_row(&status, "pwsh");
-    assert_eq!(
-        pwsh.get("capabilities")
-            .and_then(|capabilities| capabilities.get("supportsBackupRestore"))
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        pwsh.get("capabilities")
-            .and_then(|capabilities| capabilities.get("supportsProfileOverride"))
-            .and_then(Value::as_bool),
-        Some(true)
-    );
+    let bash = shell_row(&status, "bash");
+    let zsh = shell_row(&status, "zsh");
+    assert_capabilities(pwsh, true);
+    assert_capabilities(bash, false);
+    assert_capabilities(zsh, false);
+    assert_allowed_health(pwsh);
+    assert_allowed_health(bash);
+    assert_allowed_health(zsh);
+    assert!(matches!(
+        bash.get("profilePathSource").and_then(Value::as_str),
+        Some("auto") | None
+    ));
+    assert!(matches!(
+        zsh.get("profilePathSource").and_then(Value::as_str),
+        Some("auto") | None
+    ));
 }
 
 #[test]

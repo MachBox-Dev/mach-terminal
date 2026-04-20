@@ -228,6 +228,29 @@ Primary files:
 - `src-tauri/Cargo.toml`
 - `docs/runtime-contracts.md`
 
+### Shell invoke promotion wiring (strict path + expanded contracts)
+
+- Hardened invoke harness gating and diagnostics:
+  - `invoke-smoke` now enables `tauri/test` only when requested, so baseline `cargo test` stays unaffected.
+  - invoke runner now reports structured failure details (exit status/signal + entrypoint caveat hints).
+- Expanded invoke transport assertions:
+  - top-level payload shape (`scriptVersion`, `shellDir`, `shells`)
+  - canonical row order remains `pwsh`, `bash`, `zsh`
+  - cross-shell capability + allowed-health invariants now asserted at transport boundary
+- Added staged invoke scripts:
+  - `npm run test:invoke:smoke` (non-blocking, failure-tolerant)
+  - `npm run test:invoke:strict` (opt-in strict, failure-propagating)
+- Added backend guard parity coverage for top-level shell integration status serialization to reduce transport-vs-backend drift.
+
+Primary files:
+
+- `src-tauri/tests/shell_integration_invoke_smoke.rs`
+- `src-tauri/src/shell_integration.rs`
+- `scripts/invoke-smoke.mjs`
+- `package.json`
+- `src-tauri/Cargo.toml`
+- `docs/runtime-contracts.md`
+
 ## Important Contracts
 
 ### Shell integration status contract
@@ -282,9 +305,9 @@ Goal: continue P5 by promoting invoke-level command tests for `shell_integration
 
 Potential tasks:
 
-- stabilize Windows mock/webview invoke harness so ignored tests can run consistently
-- promote `test:invoke:smoke` from failure-tolerant to strict pass/fail gating
-- expand transport assertions beyond current pwsh-focused error/null paths
+- clear Windows mock/webview `STATUS_ENTRYPOINT_NOT_FOUND` runtime failures so strict invoke path becomes reliable
+- promote strict invoke path into `stability:signoff` / CI only after repeatable multi-OS passes
+- continue expanding invoke coverage to additional shell-status edge cases while preserving payload contract keys/casing
 
 ## Next Session Startup Checklist
 

@@ -1031,6 +1031,91 @@ mod tests {
     }
 
     #[test]
+    fn shell_integration_status_serialization_preserves_top_level_and_cross_shell_contract() {
+        let status = ShellIntegrationStatus {
+            script_version: MACH_SHELL_SCRIPT_VERSION,
+            shell_dir: "/tmp/mach-shell".to_string(),
+            shells: vec![
+                build_shell_status_row(
+                    "pwsh",
+                    Some("C:\\Users\\mike\\profile.ps1".to_string()),
+                    true,
+                    true,
+                    "healthy",
+                    Some(1),
+                    Some("override"),
+                    None,
+                ),
+                unresolved_profile_shell_status(
+                    "bash",
+                    Some("/home/mike/.bashrc".to_string()),
+                    Some("auto"),
+                    "resolver failed".to_string(),
+                ),
+                build_shell_status_row(
+                    "zsh",
+                    Some("/home/mike/.zshrc".to_string()),
+                    true,
+                    false,
+                    "missing",
+                    Some(0),
+                    Some("auto"),
+                    None,
+                ),
+            ],
+        };
+        let value = serde_json::to_value(&status).expect("serialize shell integration status");
+        assert_eq!(
+            value.get("scriptVersion").and_then(|field| field.as_u64()),
+            Some(MACH_SHELL_SCRIPT_VERSION as u64)
+        );
+        assert_eq!(
+            value.get("shellDir").and_then(|field| field.as_str()),
+            Some("/tmp/mach-shell")
+        );
+        let rows = value
+            .get("shells")
+            .and_then(|field| field.as_array())
+            .expect("shell rows");
+        let kinds: Vec<&str> = rows
+            .iter()
+            .map(|row| row.get("shellKind").and_then(|field| field.as_str()).expect("shell kind"))
+            .collect();
+        assert_eq!(kinds, vec!["pwsh", "bash", "zsh"]);
+        assert_eq!(
+            rows[0]
+                .get("capabilities")
+                .and_then(|field| field.get("supportsBackupRestore"))
+                .and_then(|field| field.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            rows[0]
+                .get("capabilities")
+                .and_then(|field| field.get("supportsProfileOverride"))
+                .and_then(|field| field.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            rows[1]
+                .get("capabilities")
+                .and_then(|field| field.get("supportsProfileOverride"))
+                .and_then(|field| field.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            rows[2]
+                .get("profilePathSource")
+                .and_then(|field| field.as_str()),
+            Some("auto")
+        );
+        assert!(matches!(
+            rows[1].get("health").and_then(|field| field.as_str()),
+            Some("healthy" | "stale" | "missing" | "error")
+        ));
+    }
+
+    #[test]
     fn shell_status_canonical_rows_preserve_capabilities_and_allowed_health_values() {
         let pwsh = build_shell_status_row(
             "pwsh",
