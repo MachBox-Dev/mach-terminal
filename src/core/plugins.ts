@@ -27,3 +27,15 @@ export const PLUGIN_REGISTRY: PluginDescriptor[] = [
     capabilities: ["provider-host.read", "provider-host.route"],
   },
 ];
+
+const pluginCapabilityIndex = new Map<string, Set<string>>(
+  PLUGIN_REGISTRY.map((plugin) => [plugin.id, new Set(plugin.capabilities)]),
+);
+
+export function isKnownPluginId(pluginId: string): boolean {
+  return pluginCapabilityIndex.has(pluginId);
+}
+
+export function isPluginCapabilityDeclared(pluginId: string, capability: string): boolean {
+  return pluginCapabilityIndex.get(pluginId)?.has(capability) ?? false;
+}

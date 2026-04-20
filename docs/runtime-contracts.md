@@ -32,8 +32,10 @@ This document defines the first stable contract between the frontend shell and R
 - `runtime_metrics_snapshot() -> RuntimeMetricsSnapshot`
 - `workspace_layout_get() -> WorkspaceLayout | null` — reads `workspace_layout.json` next to `settings.json`; returns `null` if missing; invalid JSON is backed up as `workspace_layout.corrupt-*.json` and yields `null` so startup can continue
 - `workspace_layout_set(layout: WorkspaceLayout) -> void` — full replace, atomic write, normalizes `schemaVersion` to the current supported version on save
-- `plugin_grant_capability(plugin_id: string, capability: string) -> void`
-- `plugin_execute(plugin_id: string, capability: string, payload: string) -> PluginExecutionResult`
+- `plugin_grant_capability(request: PluginGrantRequest) -> PluginPolicyDecision`
+- `plugin_execute(request: PluginExecuteRequest) -> PluginExecutionResult`
+- `plugin_metrics_snapshot() -> PluginMetricsSnapshot`
+- `plugin_grants_snapshot() -> PluginGrantSnapshot[]`
 - `ai_execute(request: AiExecuteRequest) -> AiExecuteResponse`
 
 ## Settings persistence contract
@@ -142,7 +144,26 @@ This document defines the first stable contract between the frontend shell and R
 ## Plugin Host Rules
 
 - Deny-by-default for all plugin capabilities.
-- `plugin_grant_capability` is required before `plugin_execute` can succeed.
+- `plugin_grant_capability` validates plugin/capability against the runtime allowlist before mutating grants.
+- `plugin_execute` returns structured policy outcomes:
+  - `policy_allowed`
+  - `policy_denied_missing_grant`
+  - `invalid_plugin_id`
+  - `capability_not_declared`
+- `PluginExecutionResult` remains additive with legacy fields (`accepted`, `message`) and now includes:
+  - `reason_code`
+  - `payload_bytes`
+  - optional `decision { accepted, reasonCode, message }`
+- `plugin_grants_snapshot` returns effective grants currently held in memory.
+- `plugin_metrics_snapshot` exposes telemetry counters:
+  - `grantsTotal`
+  - `executionAllowedTotal`
+  - `executionDeniedTotal`
+  - `executionErrorTotal`
+  - `executionTotal`
+  - `cumulativeExecutionMs`
+  - `lastExecutionMs`
+  - `grantedPluginCount`
 
 ## Cross-Platform PTY Behavior
 

@@ -11,6 +11,7 @@ import type {
   PtySessionInfo,
   RuntimeMetricsSnapshot,
   SessionStatus,
+  PluginMetricsSnapshot,
 } from "../core/terminal";
 import { HistoryPanel } from "./HistoryPanel";
 import { ShellIntegrationSection } from "./ShellIntegrationSection";
@@ -101,6 +102,9 @@ export type AppSettingsModalProps = {
   globalShortcutItems: SettingsCommandItem[];
   terminalCommandItems: SettingsCommandItem[];
   pluginResult: string | null;
+  pluginPolicyDecision: string | null;
+  pluginGrantSummary: string | null;
+  pluginTelemetry: PluginMetricsSnapshot | null;
   runPluginDemo: () => void | Promise<void>;
 };
 
@@ -182,6 +186,9 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     globalShortcutItems,
     terminalCommandItems,
     pluginResult,
+    pluginPolicyDecision,
+    pluginGrantSummary,
+    pluginTelemetry,
     runPluginDemo,
   } = props;
 
@@ -541,6 +548,15 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                   run plugin demo
                 </button>
                 {pluginResult ? <p className="muted-block">{pluginResult}</p> : null}
+                {pluginPolicyDecision ? <p className="muted-block">{pluginPolicyDecision}</p> : null}
+                {pluginGrantSummary ? <p className="muted-block">{pluginGrantSummary}</p> : null}
+                {pluginTelemetry ? (
+                  <p className="muted-block">
+                    telemetry: grants={pluginTelemetry.grantsTotal}, allowed={pluginTelemetry.executionAllowedTotal},
+                    denied={pluginTelemetry.executionDeniedTotal}, total={pluginTelemetry.executionTotal}, last=
+                    {pluginTelemetry.lastExecutionMs ?? 0}ms
+                  </p>
+                ) : null}
               </div>
             </section>
             </div>

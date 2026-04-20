@@ -386,3 +386,60 @@ pub struct RuntimeDebugSnapshot {
     pub timestamp_ms: u64,
     pub debug_build: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginGrantRequest {
+    pub plugin_id: String,
+    pub capability: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginExecuteRequest {
+    pub plugin_id: String,
+    pub capability: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPolicyDecision {
+    pub accepted: bool,
+    pub reason_code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginExecutionResult {
+    pub plugin_id: String,
+    pub capability: String,
+    pub accepted: bool,
+    pub message: String,
+    #[serde(default)]
+    pub reason_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<PluginPolicyDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginMetricsSnapshot {
+    pub grants_total: u64,
+    pub execution_allowed_total: u64,
+    pub execution_denied_total: u64,
+    pub execution_error_total: u64,
+    pub execution_total: u64,
+    pub cumulative_execution_ms: u64,
+    pub last_execution_ms: Option<u64>,
+    pub granted_plugin_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginGrantSnapshot {
+    pub plugin_id: String,
+    pub capabilities: Vec<String>,
+}

@@ -201,6 +201,42 @@ export interface PluginExecutionResult {
   capability: string;
   accepted: boolean;
   message: string;
+  reason_code: string;
+  payload_bytes?: number;
+  decision?: PluginPolicyDecision;
+}
+
+export interface PluginPolicyDecision {
+  accepted: boolean;
+  reasonCode: string;
+  message: string;
+}
+
+export interface PluginGrantRequest {
+  pluginId: string;
+  capability: string;
+}
+
+export interface PluginExecuteRequest {
+  pluginId: string;
+  capability: string;
+  payload: string;
+}
+
+export interface PluginMetricsSnapshot {
+  grantsTotal: number;
+  executionAllowedTotal: number;
+  executionDeniedTotal: number;
+  executionErrorTotal: number;
+  executionTotal: number;
+  cumulativeExecutionMs: number;
+  lastExecutionMs: number | null;
+  grantedPluginCount: number;
+}
+
+export interface PluginGrantSnapshot {
+  pluginId: string;
+  capabilities: string[];
 }
 
 export async function runtimeCapabilities() {
@@ -424,12 +460,20 @@ export async function runtimeDebugSnapshot() {
   return invoke<RuntimeDebugSnapshot>("runtime_debug_snapshot");
 }
 
-export async function pluginGrantCapability(pluginId: string, capability: string) {
-  return invoke("plugin_grant_capability", { pluginId, capability });
+export async function pluginGrantCapability(request: PluginGrantRequest) {
+  return invoke<PluginPolicyDecision>("plugin_grant_capability", { request });
 }
 
-export async function pluginExecute(pluginId: string, capability: string, payload: string) {
-  return invoke<PluginExecutionResult>("plugin_execute", { pluginId, capability, payload });
+export async function pluginExecute(request: PluginExecuteRequest) {
+  return invoke<PluginExecutionResult>("plugin_execute", { request });
+}
+
+export async function pluginMetricsSnapshot() {
+  return invoke<PluginMetricsSnapshot>("plugin_metrics_snapshot");
+}
+
+export async function pluginGrantsSnapshot() {
+  return invoke<PluginGrantSnapshot[]>("plugin_grants_snapshot");
 }
 
 export async function aiExecute(request: AiExecuteRequest) {

@@ -17,9 +17,10 @@ use crate::models::{
     AiExecuteRequest, AiExecuteResponse, HistoryEntry, HistoryQueryRequest, ProfilePatch, ProviderApiKeyStatus,
     ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings, PtySessionInfo,
     PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot, RuntimeMetricsSnapshot, SettingsSchemaDebug,
-    ShellIntegrationPatch, ShellIntegrationSettings, TerminalProfile, WorkspaceLayout,
+    ShellIntegrationPatch, ShellIntegrationSettings, TerminalProfile, WorkspaceLayout, PluginExecutionResult,
+    PluginExecuteRequest, PluginGrantRequest, PluginGrantSnapshot, PluginMetricsSnapshot, PluginPolicyDecision,
 };
-use crate::plugin_host::{PluginExecutionResult, PluginHost};
+use crate::plugin_host::PluginHost;
 use crate::session_manager::SessionManager;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, RunEvent, State};
@@ -321,21 +322,30 @@ fn runtime_debug_snapshot(
 #[instrument(skip(host))]
 fn plugin_grant_capability(
     host: State<'_, PluginHost>,
-    plugin_id: String,
-    capability: String,
-) -> Result<(), String> {
-    host.grant_capability(&plugin_id, &capability)
+    request: PluginGrantRequest,
+) -> Result<PluginPolicyDecision, String> {
+    host.grant_capability_request(&request)
 }
 
 #[tauri::command]
-#[instrument(skip(host, payload))]
+#[instrument(skip(host, request))]
 fn plugin_execute(
     host: State<'_, PluginHost>,
-    plugin_id: String,
-    capability: String,
-    payload: String,
+    request: PluginExecuteRequest,
 ) -> Result<PluginExecutionResult, String> {
-    host.execute(&plugin_id, &capability, &payload)
+    host.execute(&request.plugin_id, &request.capability, &request.payload)
+}
+
+#[tauri::command]
+#[instrument(skip(host))]
+fn plugin_metrics_snapshot(host: State<'_, PluginHost>) -> Result<PluginMetricsSnapshot, String> {
+    host.metrics_snapshot()
+}
+
+#[tauri::command]
+#[instrument(skip(host))]
+fn plugin_grants_snapshot(host: State<'_, PluginHost>) -> Result<Vec<PluginGrantSnapshot>, String> {
+    host.grants_snapshot()
 }
 
 #[tauri::command]
@@ -402,6 +412,8 @@ pub fn run() {
             runtime_debug_snapshot,
             plugin_grant_capability,
             plugin_execute,
+            plugin_metrics_snapshot,
+            plugin_grants_snapshot,
             ai_execute,
             shell_context::shell_context_snapshot,
             shell_integration_settings_get,

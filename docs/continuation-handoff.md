@@ -98,6 +98,25 @@ Primary files:
 - `src/core/terminal.ts`
 - `src/core/providerUiState.ts`
 
+### Plugin runtime contract expansion (policy + telemetry)
+
+- Formalized plugin bridge contracts with structured request/decision types.
+- Added capability allowlist validation + reason-coded policy decisions.
+- Added plugin telemetry snapshots for grants/executions/timing diagnostics.
+- Added grants snapshot introspection for diagnostics surfaces.
+- Updated settings plugin demo to show grant decisions + runtime plugin telemetry.
+
+Primary files:
+
+- `src-tauri/src/models.rs`
+- `src-tauri/src/plugin_host.rs`
+- `src-tauri/src/lib.rs`
+- `src/core/terminal.ts`
+- `src/core/plugins.ts`
+- `src/components/AppSettingsModal.tsx`
+- `src/App.tsx`
+- `docs/runtime-contracts.md`
+
 ## Important Contracts
 
 ### Shell integration status contract
@@ -136,17 +155,7 @@ Do not set this flag from general onboarding Save/Quick start/Skip flows.
 
 ## Open Backlog (Recommended Priority)
 
-### 1) Plugin runtime contract expansion
-
-Goal: formalize plugin execution contracts, capability boundaries, and telemetry.
-
-Anchor files:
-
-- `src/core/plugins.ts`
-- `src-tauri/src/lib.rs` (plugin command bridge)
-- `docs/runtime-contracts.md`
-
-### 2) Shell Integration P5 (optional follow-up)
+### 1) Shell Integration P5 (optional follow-up)
 
 Goal: reduce maintenance overhead by extracting common shell integration logic
 into explicit shell strategy helpers and add table-driven matrix tests.
@@ -156,6 +165,16 @@ Potential tasks:
 - move shell target/expected line resolution to strategy map
 - reduce repeated status/install/remove conditionals
 - add matrix tests over shell-kind x operation x profile state
+
+### 2) Scripted UX smoke coverage
+
+Goal: convert more UX dogfood checklist coverage into scripted smoke checks.
+
+Anchor files:
+
+- `scripts/*`
+- `docs/ux-dogfood-log-template.md`
+- relevant UX test targets under `src/*`
 
 ## Next Session Startup Checklist
 

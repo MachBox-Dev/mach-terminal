@@ -38,7 +38,9 @@ import {
   onPtyLifecycle,
   onPtyOutput,
   pluginExecute,
+  pluginGrantsSnapshot,
   pluginGrantCapability,
+  pluginMetricsSnapshot,
   profileGet,
   providerList,
   providerRoutingGet,
@@ -54,6 +56,7 @@ import {
   type PtyLifecycleEvent,
   type PtySessionInfo,
   type RuntimeMetricsSnapshot,
+  type PluginMetricsSnapshot,
   type SessionStatus,
   runtimeCapabilities,
   workspaceLayoutGet,
@@ -150,6 +153,9 @@ function App() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyActionStatus, setHistoryActionStatus] = useState<string | null>(null);
   const [pluginResult, setPluginResult] = useState<string | null>(null);
+  const [pluginPolicyDecision, setPluginPolicyDecision] = useState<string | null>(null);
+  const [pluginGrantSummary, setPluginGrantSummary] = useState<string | null>(null);
+  const [pluginTelemetry, setPluginTelemetry] = useState<PluginMetricsSnapshot | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string>(UPDATER_ENABLED ? "idle" : "disabled (build flag)");
   const [firstRunModalOpen, setFirstRunModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
@@ -806,10 +812,32 @@ function App() {
 
   const runPluginDemo = useCallback(async () => {
     try {
-      await pluginGrantCapability("history-tools", "command-history.read");
-      const result = await pluginExecute("history-tools", "command-history.read", "{\"scope\":\"active\"}");
-      setPluginResult(`${result.accepted ? "allowed" : "denied"}: ${result.message}`);
+      const grantDecision = await pluginGrantCapability({
+        pluginId: "history-tools",
+        capability: "command-history.read",
+      });
+      const result = await pluginExecute({
+        pluginId: "history-tools",
+        capability: "command-history.read",
+        payload: "{\"scope\":\"active\"}",
+      });
+      const [metrics, grants] = await Promise.all([pluginMetricsSnapshot(), pluginGrantsSnapshot()]);
+      setPluginPolicyDecision(
+        `${grantDecision.accepted ? "grant allowed" : "grant denied"} [${grantDecision.reasonCode}]: ${grantDecision.message}`,
+      );
+      setPluginGrantSummary(
+        `grants: ${grants.length} plugin(s), ${
+          grants.find((entry) => entry.pluginId === "history-tools")?.capabilities.length ?? 0
+        } capability grant(s) for history-tools`,
+      );
+      setPluginTelemetry(metrics);
+      setPluginResult(
+        `${result.accepted ? "allowed" : "denied"} [${result.reason_code}]: ${result.message}`,
+      );
     } catch (error) {
+      setPluginPolicyDecision(null);
+      setPluginGrantSummary(null);
+      setPluginTelemetry(null);
       setPluginResult(error instanceof Error ? error.message : "Plugin execution failed.");
     }
   }, []);
@@ -1244,6 +1272,9 @@ function App() {
           globalShortcutItems={globalShortcutItems}
           terminalCommandItems={terminalCommandItems}
           pluginResult={pluginResult}
+          pluginPolicyDecision={pluginPolicyDecision}
+          pluginGrantSummary={pluginGrantSummary}
+          pluginTelemetry={pluginTelemetry}
           runPluginDemo={runPluginDemo}
         />
         <CommandPalette
