@@ -46,3 +46,13 @@ export const MACH_SNIPPET_OSC7_ZSH = [
   "  add-zsh-hook precmd mach_terminal_osc7",
   "fi",
 ].join("\n");
+
+/** Minimal prompt when `MACH_TERMINAL_MINIMAL_PROMPT=1` — paste into shell rc (see Settings). */
+export const MACH_MINIMAL_PROMPT_PWSH =
+  "# Mach Terminal: paste into $PROFILE when Minimal shell prompt is enabled in Mach.\nif ($env:MACH_TERMINAL_MINIMAL_PROMPT -eq '1') { function prompt { '> ' } }";
+
+export const MACH_MINIMAL_PROMPT_BASH = `# Mach Terminal: paste into ~/.bashrc when Minimal shell prompt is enabled.
+if [ "$MACH_TERMINAL_MINIMAL_PROMPT" = "1" ]; then PS1='> '; fi`;
+
+export const MACH_MINIMAL_PROMPT_ZSH = `# Mach Terminal: paste into ~/.zshrc when Minimal shell prompt is enabled.
+[[ "$MACH_TERMINAL_MINIMAL_PROMPT" == "1" ]] && PROMPT='> '`;

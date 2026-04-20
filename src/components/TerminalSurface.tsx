@@ -37,6 +37,7 @@ import {
   predictionForDraft,
   type ComposerHistoryDirection,
 } from "../core/composerHistory";
+import { canFocusComposerWhenPaneActive } from "../core/terminalComposerFocus";
 import { MACH_TERMINAL_MONO_FONT } from "../core/terminalUiFont";
 import { MachStatusStrip } from "./MachStatusStrip";
 
@@ -289,9 +290,13 @@ export function TerminalSurface({
     searchAddonRef.current?.findPrevious(term, currentFindOptions());
   }, [currentFindOptions]);
 
-  const focusTerminalInput = useCallback(() => {
-    terminalRef.current?.focus();
-  }, []);
+  /** Composer is the only typing surface; keep keyboard focus here when the pane is active. */
+  const focusComposerInput = useCallback(() => {
+    if (composerLocked) {
+      return;
+    }
+    queueMicrotask(() => composerTextareaRef.current?.focus());
+  }, [composerLocked]);
 
   const sendTextToPty = useCallback((text: string) => {
     const session = activeSessionRef.current;
@@ -995,17 +1000,14 @@ export function TerminalSurface({
   }, [terminalFontSize]);
 
   useEffect(() => {
-    if (!isFocused) {
-      return;
-    }
-    if (findOpenRef.current) {
+    if (!isFocused || !canFocusComposerWhenPaneActive(findOpen, composerLocked)) {
       return;
     }
     const id = window.requestAnimationFrame(() => {
-      focusTerminalInput();
+      focusComposerInput();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [focusTerminalInput, isFocused]);
+  }, [composerLocked, findOpen, focusComposerInput, isFocused]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1125,7 +1127,7 @@ export function TerminalSurface({
                 if (e.key === "Escape") {
                   e.preventDefault();
                   closeFind();
-                  focusTerminalInput();
+                  focusComposerInput();
                   return;
                 }
                 if (e.key === "Enter") {
@@ -1267,7 +1269,7 @@ export function TerminalSurface({
                 if (findOpenRef.current) {
                   return;
                 }
-                focusTerminalInput();
+                focusComposerInput();
               }}
             >
               <div ref={containerRef} className="terminal-container" tabIndex={-1} />
@@ -1370,7 +1372,7 @@ export function TerminalSurface({
                   Completion {completionState.selectedIndex + 1}/{completionState.response.candidates.length}
                 </p>
               ) : null}
-              {completionMetricsTick >= 0 ? (
+              {import.meta.env.DEV && completionMetricsTick >= 0 ? (
                 <p className="terminal-composer-completion-metrics" aria-live="polite">
                   Assist metrics: {completionMetricsRef.current.requests} requests · {completionMetricsRef.current.accepted} accepts ·
                   avg{" "}

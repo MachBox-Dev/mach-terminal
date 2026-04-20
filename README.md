@@ -80,9 +80,14 @@ Scripted smoke coverage now runs for a focused subset of terminal interaction ch
 Use the reusable execution log template for team handoff and release notes:
 - `docs/ux-dogfood-log-template.md`
 
-### Composer Input Contracts
+### Composer input (unified model)
 
-- Composer remains the only interactive input surface; xterm viewport typing is intentionally disabled.
+- **Typing** happens only in the composer; the xterm viewport is output and selection (stdin to the shell is disabled there on purpose).
+- **Focus** follows the composer when you click the output area or focus the pane, so the caret is not “stuck” in the scrollback view.
+- **Shell prompt noise:** if your profile draws a rich prompt (PSReadLine, posh themes) in the viewport while you type below it, enable **Settings → Session & layout → Composer input → Minimal shell prompt** and paste the matching snippet into your shell rc. That sets `MACH_TERMINAL_MINIMAL_PROMPT` for new sessions and thins the in-scrollback prompt so it does not compete with the composer. Pair with **OSC 7** (Shell integration) so cwd in the status strip matches the session.
+
+#### Composer assist behavior
+
 - `Tab` requests completion and cycles candidates; when no completion candidates exist, `Tab` accepts inline prediction if the caret is at draft end.
 - `Escape` dismisses active completion metadata without mutating the draft.
 - `Up` / `Down` browse bounded recent history (newest-first) and restore the pre-browse draft when leaving history mode.

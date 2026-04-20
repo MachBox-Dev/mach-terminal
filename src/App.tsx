@@ -43,6 +43,7 @@ import {
   pluginGrantCapability,
   pluginMetricsSnapshot,
   profileGet,
+  profilePatch,
   providerList,
   providerRoutingGet,
   runtimeDebugSnapshot,
@@ -168,6 +169,7 @@ function App() {
   const [recoveryBanner, setRecoveryBanner] = useState<string | null>(null);
   const [aiInsightDismissed, setAiInsightDismissed] = useState(false);
   const [terminalFontSize, setTerminalFontSize] = useState(13);
+  const [minimalShellPrompt, setMinimalShellPrompt] = useState(false);
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
   const pendingOutputRef = useRef<Record<string, string[]>>({});
@@ -365,6 +367,7 @@ function App() {
         setCapabilities(runtime);
         initializeProviderAiState(providerDescriptors, providerRouting);
         setTerminalFontSize(initialProfile.font_size);
+        setMinimalShellPrompt(initialProfile.minimal_shell_prompt ?? false);
         setSessions(existingSessions);
         const existingSessionIds = existingSessions.map((session) => session.id);
         let storedWorkspace: string | null = null;
@@ -851,7 +854,17 @@ function App() {
     ]);
     initializeProviderAiState(providerDescriptors, providerRouting);
     setTerminalFontSize(profile.font_size);
+    setMinimalShellPrompt(profile.minimal_shell_prompt ?? false);
   }, [initializeProviderAiState]);
+
+  const setMinimalShellPromptPreference = useCallback(async (enabled: boolean) => {
+    try {
+      const updated = await profilePatch({ minimal_shell_prompt: enabled });
+      setMinimalShellPrompt(updated.minimal_shell_prompt ?? enabled);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Failed to update profile.");
+    }
+  }, []);
 
   const checkForUpdates = useCallback(async () => {
     if (!UPDATER_ENABLED) {
@@ -1295,6 +1308,8 @@ function App() {
           pluginGrantSummary={pluginGrantSummary}
           pluginTelemetry={pluginTelemetry}
           runPluginDemo={runPluginDemo}
+          minimalShellPrompt={minimalShellPrompt}
+          onMinimalShellPromptChange={setMinimalShellPromptPreference}
         />
         <CommandPalette
           open={paletteOpen}

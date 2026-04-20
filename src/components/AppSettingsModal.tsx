@@ -13,6 +13,11 @@ import type {
   SessionStatus,
   PluginMetricsSnapshot,
 } from "../core/terminal";
+import {
+  MACH_MINIMAL_PROMPT_BASH,
+  MACH_MINIMAL_PROMPT_PWSH,
+  MACH_MINIMAL_PROMPT_ZSH,
+} from "../core/machShellSnippets";
 import { HistoryPanel } from "./HistoryPanel";
 import { ShellIntegrationSection } from "./ShellIntegrationSection";
 import { StatusStripSettingsSection } from "./StatusStripSettingsSection";
@@ -106,6 +111,9 @@ export type AppSettingsModalProps = {
   pluginGrantSummary: string | null;
   pluginTelemetry: PluginMetricsSnapshot | null;
   runPluginDemo: () => void | Promise<void>;
+  /** When true, new sessions set `MACH_TERMINAL_MINIMAL_PROMPT=1` (thin shell prompt in scrollback; pair with rc snippets). */
+  minimalShellPrompt: boolean;
+  onMinimalShellPromptChange: (enabled: boolean) => void | Promise<void>;
 };
 
 export function buildHistoryPanelHandlers(
@@ -202,6 +210,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     pluginGrantSummary,
     pluginTelemetry,
     runPluginDemo,
+    minimalShellPrompt,
+    onMinimalShellPromptChange,
   } = props;
   const historyHandlers = buildHistoryPanelHandlers(onReplayCommand, onExplainCommand, onFixCommand);
 
@@ -409,6 +419,56 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 >
                   command palette
                 </button>
+              </div>
+              <h3 className="settings-subsection-title">Composer input</h3>
+              <p className="muted-block">
+                Commands are typed in the composer below the terminal. For a unified feel, thin out the shell&apos;s own
+                prompt in scrollback: enable this option (sets <code>MACH_TERMINAL_MINIMAL_PROMPT</code> for new
+                sessions) and paste the matching snippet into your shell profile so the env var actually changes the
+                prompt.
+              </p>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={minimalShellPrompt}
+                  onChange={(event) => void onMinimalShellPromptChange(event.currentTarget.checked)}
+                />
+                Minimal shell prompt (recommended with composer input)
+              </label>
+              <div className="minimal-prompt-snippet-block mach-osc7-block">
+                <div className="minimal-prompt-snippet-row">
+                  <span className="minimal-prompt-snippet-label">PowerShell</span>
+                  <button
+                    type="button"
+                    className="inline-btn ghost"
+                    onClick={() => void navigator.clipboard.writeText(MACH_MINIMAL_PROMPT_PWSH)}
+                  >
+                    Copy snippet
+                  </button>
+                </div>
+                <pre className="minimal-prompt-snippet">{MACH_MINIMAL_PROMPT_PWSH}</pre>
+                <div className="minimal-prompt-snippet-row">
+                  <span className="minimal-prompt-snippet-label">Bash</span>
+                  <button
+                    type="button"
+                    className="inline-btn ghost"
+                    onClick={() => void navigator.clipboard.writeText(MACH_MINIMAL_PROMPT_BASH)}
+                  >
+                    Copy snippet
+                  </button>
+                </div>
+                <pre className="minimal-prompt-snippet">{MACH_MINIMAL_PROMPT_BASH}</pre>
+                <div className="minimal-prompt-snippet-row">
+                  <span className="minimal-prompt-snippet-label">zsh</span>
+                  <button
+                    type="button"
+                    className="inline-btn ghost"
+                    onClick={() => void navigator.clipboard.writeText(MACH_MINIMAL_PROMPT_ZSH)}
+                  >
+                    Copy snippet
+                  </button>
+                </div>
+                <pre className="minimal-prompt-snippet">{MACH_MINIMAL_PROMPT_ZSH}</pre>
               </div>
             </section>
 

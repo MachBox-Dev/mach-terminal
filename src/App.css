@@ -27,6 +27,9 @@
   --mach-input-bg: #070707;
   --mach-edge: #262626;
   --mach-edge-strong: rgba(255, 255, 255, 0.14);
+  /* xterm canvas + composer footer (single “tape” column) */
+  --mach-terminal-tape-bg: var(--mach-bg);
+  --mach-terminal-tape-fg: var(--mach-fg-soft);
   color-scheme: dark;
   accent-color: var(--mach-accent);
   color: var(--mach-fg-soft);
@@ -579,6 +582,13 @@ body {
   font-size: 0.98rem;
 }
 
+.settings-modal-panel section h3.settings-subsection-title {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
 .modal-overlay.settings-modal-overlay {
   z-index: 45;
 }
@@ -764,6 +774,10 @@ body {
 
 .terminal-panel.focused .terminal-session-info-btn {
   color: var(--mach-accent-muted-fg);
+}
+
+.terminal-panel.focused .terminal-output-column {
+  box-shadow: inset 0 0 0 1px rgba(0, 212, 184, 0.12);
 }
 
 .terminal-message {
@@ -1087,6 +1101,7 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
+  background: var(--mach-terminal-tape-bg);
 }
 
 .terminal-xterm-input-guard {
@@ -1112,14 +1127,12 @@ body {
   flex-direction: column;
   gap: 0;
   margin: 0;
-  padding: 0.5rem 0.55rem 0.55rem;
-  border-top: 1px solid var(--mach-accent-border);
-  border-radius: 12px 12px 0 0;
-  background: linear-gradient(180deg, rgba(18, 26, 24, 0.94) 0%, rgba(10, 10, 10, 0.92) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(0, 212, 184, 0.06),
-    0 -8px 28px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(10px);
+  padding: 0.35rem 0 0;
+  border-top: 1px solid rgba(71, 85, 105, 0.35);
+  border-radius: 0;
+  background: var(--mach-terminal-tape-bg);
+  box-shadow: inset 0 1px 0 rgba(0, 212, 184, 0.04);
+  backdrop-filter: none;
 }
 
 .mach-status-strip {
@@ -1299,9 +1312,9 @@ body {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0 0.15rem 0.1rem;
-  border-radius: 0 0 8px 8px;
+  gap: 0.35rem;
+  padding: 0 0 0.1rem;
+  border-radius: 0;
 }
 
 .terminal-composer-input-row {
@@ -1317,15 +1330,16 @@ body {
   max-height: none;
   resize: none;
   margin: 0;
-  padding: 0.5rem 0.6rem;
-  border-radius: 10px;
-  border: 1px solid var(--mach-edge);
-  background: rgba(12, 12, 12, 0.94);
-  color: #e2e8f0;
+  padding: 0.45rem 0.45rem;
+  border-radius: 0 0 6px 6px;
+  border: 1px solid rgba(71, 85, 105, 0.28);
+  border-top-color: rgba(71, 85, 105, 0.4);
+  background: var(--mach-terminal-tape-bg);
+  color: var(--mach-terminal-tape-fg);
   font-family: var(--mach-terminal-mono);
   font-size: 0.82rem;
   line-height: 1.35;
-  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.04);
+  box-shadow: none;
 }
 
 .terminal-composer-field:focus {

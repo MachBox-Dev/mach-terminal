@@ -18,6 +18,9 @@ import {
 } from "../core/terminal";
 import { isTauri } from "../core/tauriRuntime";
 import {
+  MACH_MINIMAL_PROMPT_BASH,
+  MACH_MINIMAL_PROMPT_PWSH,
+  MACH_MINIMAL_PROMPT_ZSH,
   MACH_SNIPPET_OSC7_BASH,
   MACH_SNIPPET_OSC7_PWSH,
   MACH_SNIPPET_OSC7_ZSH,
@@ -25,14 +28,9 @@ import {
 
 export const ONBOARDING_STORAGE_KEY = "mach-terminal.onboarding.v1";
 
-const SNIPPET_PWSH =
-  "# Mach Terminal: paste into $PROFILE when Minimal shell prompt is enabled in Mach.\nif ($env:MACH_TERMINAL_MINIMAL_PROMPT -eq '1') { function prompt { '> ' } }";
-
-const SNIPPET_BASH = `# Mach Terminal: paste into ~/.bashrc when Minimal shell prompt is enabled.
-if [ "$MACH_TERMINAL_MINIMAL_PROMPT" = "1" ]; then PS1='> '; fi`;
-
-const SNIPPET_ZSH = `# Mach Terminal: paste into ~/.zshrc when Minimal shell prompt is enabled.
-[[ "$MACH_TERMINAL_MINIMAL_PROMPT" == "1" ]] && PROMPT='> '`;
+const SNIPPET_PWSH = MACH_MINIMAL_PROMPT_PWSH;
+const SNIPPET_BASH = MACH_MINIMAL_PROMPT_BASH;
+const SNIPPET_ZSH = MACH_MINIMAL_PROMPT_ZSH;
 
 type Props = {
   open: boolean;
