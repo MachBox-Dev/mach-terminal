@@ -53,6 +53,18 @@ try {
 
   runStep("UX smoke tests", "npm run test:ux:smoke");
 
+  if (process.platform !== "win32") {
+    runStep("Shell integration invoke (strict)", "npm run test:invoke:strict");
+  } else {
+    report.steps.push({
+      name: "Shell integration invoke (strict)",
+      command: "npm run test:invoke:strict",
+      status: "skipped",
+      reason: "Windows mock-webview can return STATUS_ENTRYPOINT_NOT_FOUND; run strict invoke on Linux/macOS CI",
+      elapsed_ms: 0,
+    });
+  }
+
   runStep("Frontend build", "npm run build");
   report.ga_cutline.frontend_build = true;
 

@@ -166,6 +166,9 @@ pub fn apply_profile_patch(profile: &mut TerminalProfile, patch: &ProfilePatch) 
     if let Some(minimal_shell_prompt) = patch.minimal_shell_prompt {
         profile.minimal_shell_prompt = minimal_shell_prompt;
     }
+    if let Some(show_composer_assist_metrics) = patch.show_composer_assist_metrics {
+        profile.show_composer_assist_metrics = show_composer_assist_metrics;
+    }
 }
 
 pub fn apply_provider_endpoint_patch(providers: &mut [ProviderSettings], provider_id: &str, endpoint: Option<String>) {

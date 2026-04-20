@@ -193,6 +193,11 @@ fn invoke_shell_status_reports_top_level_shape_order_and_cross_shell_capabilitie
     assert_allowed_health(pwsh);
     assert_allowed_health(bash);
     assert_allowed_health(zsh);
+    for row in rows {
+      assert!(row.get("markerPresent").is_some_and(Value::is_boolean));
+      assert!(row.get("profileResolved").is_some_and(Value::is_boolean));
+      assert!(row.get("capabilities").is_some_and(Value::is_object));
+    }
     assert!(matches!(
         bash.get("profilePathSource").and_then(Value::as_str),
         Some("auto") | None

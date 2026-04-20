@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { composerOutputScrollIntentFromKeyboardEvent } from "./composerOutputScroll";
 import {
   canAcceptPrediction,
   createComposerHistoryState,
@@ -45,5 +46,28 @@ describe("composer prediction/completion smoke contracts", () => {
     expect(up.draft).toBe("npm run build");
     const down = nextHistoryDraft(up.state, HISTORY, "npm r", "next");
     expect(down.draft).toBe("npm r");
+  });
+});
+
+describe("composer output scroll (unified composer)", () => {
+  it("reserves ctrl+alt+page keys for xterm scroll while the composer stays focused", () => {
+    expect(
+      composerOutputScrollIntentFromKeyboardEvent({
+        key: "PageUp",
+        ctrlKey: true,
+        altKey: true,
+        shiftKey: false,
+        metaKey: false,
+      }),
+    ).toBe("up");
+    expect(
+      composerOutputScrollIntentFromKeyboardEvent({
+        key: "PageDown",
+        ctrlKey: true,
+        altKey: true,
+        shiftKey: false,
+        metaKey: false,
+      }),
+    ).toBe("down");
   });
 });

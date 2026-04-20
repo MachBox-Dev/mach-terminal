@@ -32,6 +32,7 @@ describe("onboarding quick-start helpers", () => {
     expect(normalizeQuickStartProfile(profile)).toEqual({
       ...profile,
       minimal_shell_prompt: false,
+      show_composer_assist_metrics: false,
     });
   });
 });

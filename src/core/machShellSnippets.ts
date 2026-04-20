@@ -56,3 +56,21 @@ if [ "$MACH_TERMINAL_MINIMAL_PROMPT" = "1" ]; then PS1='> '; fi`;
 
 export const MACH_MINIMAL_PROMPT_ZSH = `# Mach Terminal: paste into ~/.zshrc when Minimal shell prompt is enabled.
 [[ "$MACH_TERMINAL_MINIMAL_PROMPT" == "1" ]] && PROMPT='> '`;
+
+/** Optional OSC 133 prompt marker so Mach can show read-only block hints (advanced). */
+export const MACH_SNIPPET_OSC133_BASH = [
+  "# Mach Terminal — optional OSC 133; paste after OSC 7 hook if you want status-strip hints.",
+  "__mach_terminal_osc133_prompt() { printf '\\033]133;A\\007'; }",
+  'PROMPT_COMMAND="__mach_terminal_osc133_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"',
+].join("\n");
+
+export const MACH_SNIPPET_OSC133_ZSH = [
+  "# Mach Terminal — optional OSC 133; paste after OSC 7 hook if you want status-strip hints.",
+  "autoload -Uz add-zsh-hook",
+  "__mach_terminal_osc133_prompt() { printf '\\033]133;A\\007'; }",
+  "add-zsh-hook precmd __mach_terminal_osc133_prompt",
+].join("\n");
+
+export const MACH_SNIPPET_OSC133_PWSH = `# Mach Terminal — optional OSC 133 prompt marker (advanced).
+function __machOsc133Prompt { [Console]::Out.Write([char]27 + ']133;A' + [char]7) }
+# Call __machOsc133Prompt from your prompt function or PSReadLine hook as appropriate.`;

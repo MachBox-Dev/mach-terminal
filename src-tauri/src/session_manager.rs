@@ -1,8 +1,9 @@
 use crate::history_store;
 use crate::models::{
-    AiContextEvent, HistoryEntry, HistoryQueryRequest, PtyCwdChangedEvent, PtyLifecycleEvent,
-    PtyOutputEvent, PtySessionInfo, PtySpawnRequest, RuntimeMetricsSnapshot, TerminalProfile,
+    AiContextEvent, HistoryEntry, HistoryQueryRequest, PtyCommandMarkerEvent, PtyCommandMarkerPhase, PtyCwdChangedEvent,
+    PtyLifecycleEvent, PtyOutputEvent, PtySessionInfo, PtySpawnRequest, RuntimeMetricsSnapshot, TerminalProfile,
 };
+use crate::osc133::{Osc133Kind, Osc133Parser};
 use crate::osc7::Osc7Parser;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::{HashMap, VecDeque};
@@ -18,6 +19,7 @@ use tracing::{debug, instrument, warn};
 const PTY_OUTPUT_EVENT: &str = "pty-output";
 const PTY_LIFECYCLE_EVENT: &str = "pty-lifecycle";
 const PTY_CWD_CHANGED_EVENT: &str = "pty-cwd-changed";
+const PTY_COMMAND_MARKER_EVENT: &str = "pty-command-marker";
 const AI_CONTEXT_EVENT: &str = "ai-context";
 const MAX_HISTORY: usize = 3000;
 const MAX_CHUNK: usize = 2048;
@@ -181,6 +183,7 @@ impl SessionManager {
             let mut last_emitted_sequence = chunk_sequence;
             let mut buffer = [0_u8; 8192];
             let mut osc7_parser = Osc7Parser::new();
+            let mut osc133_parser = Osc133Parser::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
@@ -236,6 +239,34 @@ impl SessionManager {
                                         "failed to emit pty-cwd-changed event"
                                     );
                                 }
+                            }
+                        }
+                        for kind in osc133_parser.feed(&buffer[..bytes_read]) {
+                            let (phase, exit_code) = match kind {
+                                Osc133Kind::PromptStart => (PtyCommandMarkerPhase::PromptStart, None),
+                                Osc133Kind::CommandStart => (PtyCommandMarkerPhase::CommandStart, None),
+                                Osc133Kind::OutputStart => (PtyCommandMarkerPhase::OutputStart, None),
+                                Osc133Kind::OutputEnd { exit_code } => {
+                                    (PtyCommandMarkerPhase::OutputEnd, exit_code)
+                                }
+                            };
+                            let emit_result = app_for_thread.emit(
+                                PTY_COMMAND_MARKER_EVENT,
+                                PtyCommandMarkerEvent {
+                                    session_id: session_id_for_thread.clone(),
+                                    phase,
+                                    exit_code,
+                                    timestamp_ms: unix_timestamp_ms(),
+                                },
+                            );
+                            if emit_result.is_err() {
+                                counters_for_thread
+                                    .emit_failures
+                                    .fetch_add(1, Ordering::Relaxed);
+                                warn!(
+                                    session_id = %session_id_for_thread,
+                                    "failed to emit pty-command-marker event"
+                                );
                             }
                         }
                         let output = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();

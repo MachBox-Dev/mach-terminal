@@ -16,6 +16,8 @@ export interface TerminalProfile {
   font_size: number;
   /** When true, spawns set `MACH_TERMINAL_MINIMAL_PROMPT=1` for optional shell profile snippets. */
   minimal_shell_prompt?: boolean;
+  /** When true, show completion assist metrics in the composer (in addition to dev builds). */
+  show_composer_assist_metrics?: boolean;
 }
 
 export interface ProfilePatch {
@@ -23,6 +25,7 @@ export interface ProfilePatch {
   cwd?: string | null;
   font_size?: number;
   minimal_shell_prompt?: boolean;
+  show_composer_assist_metrics?: boolean;
 }
 
 export interface PtySpawnRequest {
@@ -71,6 +74,15 @@ export interface PtyLifecycleEvent {
 export interface PtyCwdChangedEvent {
   session_id: string;
   cwd: string;
+  timestamp_ms: number;
+}
+
+export type PtyCommandMarkerPhase = "promptStart" | "commandStart" | "outputStart" | "outputEnd";
+
+export interface PtyCommandMarkerEvent {
+  session_id: string;
+  phase: PtyCommandMarkerPhase;
+  exit_code?: number;
   timestamp_ms: number;
 }
 
@@ -518,6 +530,12 @@ export function onPtyCwdChanged(
   handler: (event: PtyCwdChangedEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<PtyCwdChangedEvent>("pty-cwd-changed", ({ payload }) => handler(payload));
+}
+
+export function onPtyCommandMarker(
+  handler: (event: PtyCommandMarkerEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PtyCommandMarkerEvent>("pty-command-marker", ({ payload }) => handler(payload));
 }
 
 export function onAiContext(handler: (event: AiContextEvent) => void): Promise<UnlistenFn> {

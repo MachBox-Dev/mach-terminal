@@ -76,6 +76,7 @@ Scripted smoke coverage now runs for a focused subset of terminal interaction ch
 19. Spawn two sessions, exit each shell, and confirm both tabs keep the session id but now render a leading status dot (sky for `closed`, red for `error`, slate for `stopped`) with an exit tooltip on hover. Click the inline restart glyph on one tab and verify the overlay clears and a fresh shell lands in the same pane without first navigating to it. Click the other exited tab (dead-tab clicks are no longer blocked) to focus its pane so the overlay becomes visible. Then trigger both **Close all exited sessions** and **Restart all exited sessions** from the command palette against a fresh set of exits and verify batch behavior walks tabs left-to-right.
 20. Exit a shell with a non-zero status (`bash -c "exit 5"`, `sh -c "exit 127"`, or `cmd /c exit 5`) and confirm the exit overlay shows a dedicated monospaced `Exited with code 5` / `Exited with code 127` line between the `Session stopped` title and the detail paragraph, and that the tab tooltip reads `Session stopped (code 5): shell exited`. Repeat with a clean `exit` (code 0) and verify the overlay still renders `Exited with code 0` and the tooltip still includes `(code 0)`. Finally, close the session via **Close active session** instead of letting it exit naturally and verify the overlay keeps its pre-tranche phrasing with no `.terminal-exit-code` line (the `closed` path intentionally reports no code).
 21. Install one of the OSC 7 hooks from the **Shell integration** section below, spawn a fresh session, `cd` into a project directory (e.g. `cd ~/projects/foo` or `cd C:\Users\mike\dev`), then `exit`. Confirm the exit overlay now shows a secondary `Restart will land in <path>` subline under the detail paragraph with the exact cwd you `cd`'d into. Press **Restart**, and confirm the replacement shell boots into that same directory (verify with `pwd` on Unix or `Get-Location` on PowerShell). Then spawn a second session *without* the hook (comment out the PROMPT_COMMAND / precmd / prompt function), `cd` somewhere, exit, and confirm the overlay has **no** `Restart will land in` subline and the restart lands in the profile default cwd exactly like pre-tranche behavior.
+22. Scroll long output while the caret is in the composer: **Ctrl+Alt+Page Up** / **Ctrl+Alt+Page Down** should page the xterm viewport without moving focus to the scrollback canvas. Toggle **Settings → Session & layout → Composer input → Show composer assist metrics**, run a few completions, and confirm the assist metrics line appears in non-dev builds; turn the toggle off and confirm it hides again.
 
 Use the reusable execution log template for team handoff and release notes:
 - `docs/ux-dogfood-log-template.md`
@@ -85,6 +86,8 @@ Use the reusable execution log template for team handoff and release notes:
 - **Typing** happens only in the composer; the xterm viewport is output and selection (stdin to the shell is disabled there on purpose).
 - **Focus** follows the composer when you click the output area or focus the pane, so the caret is not “stuck” in the scrollback view.
 - **Shell prompt noise:** if your profile draws a rich prompt (PSReadLine, posh themes) in the viewport while you type below it, enable **Settings → Session & layout → Composer input → Minimal shell prompt** and paste the matching snippet into your shell rc. That sets `MACH_TERMINAL_MINIMAL_PROMPT` for new sessions and thins the in-scrollback prompt so it does not compete with the composer. Pair with **OSC 7** (Shell integration) so cwd in the status strip matches the session.
+- **Scrollback while typing in the composer:** use **Ctrl+Alt+Page Up** / **Ctrl+Alt+Page Down** to page the output viewport without focus-stealing. The mouse wheel still works when the pointer is over the output column.
+- **Assist metrics:** dev builds always show completion request/accept counts; enable **Show composer assist metrics** in the same settings section to surface them in release builds (support / tuning).
 
 #### Composer assist behavior
 
@@ -134,6 +137,12 @@ Pick the snippet for your shell and drop it in your rc file. Paths are emitted a
   ```
 
 After installing, open a fresh Mach session, `cd` somewhere, then `exit` — the exit overlay should surface a `Restart will land in <path>` subline, and pressing **Restart** will boot the new shell in that directory. If nothing shows up, confirm the hook is loaded (`type __mach_osc7` / `Get-Command prompt`) and that your shell isn't stripping escapes before they hit stdout.
+
+## Shell integration (OSC 133, optional)
+
+Mach can decode **OSC 133** command-boundary markers from the PTY byte stream (same family as iTerm2 / WezTerm). When your shell emits these escapes, the app raises `pty-command-marker` events and shows a short read-only hint on the status strip (latest marker / exit code when `D;<code>` is present). This is a strict enhancement: shells that never emit OSC 133 behave exactly as before.
+
+Copy-paste snippets (`MACH_SNIPPET_OSC133_*` in [`src/core/machShellSnippets.ts`](src/core/machShellSnippets.ts)) emit a minimal `A` (prompt-start) marker so you can verify wiring; fuller `B` / `C` / `D` coverage depends on deeper shell integration (preexec / `DEBUG` trap, etc.) beyond the baseline snippets.
 
 ## Persistence semantics
 

@@ -21,6 +21,8 @@ interface SplitWorkspaceProps {
   sessionCwd: SessionCwdMap;
   terminalFontSize?: number;
   terminalUiRequest?: TerminalUiRequest | null;
+  showComposerAssistMetrics?: boolean;
+  sessionOsc133Hints?: Record<string, string>;
   aiInsightSlot?: ReactNode | null;
   aiAssistEnabled?: boolean;
   onComposerDraftChange?: (paneId: string, draft: string) => void;
@@ -51,6 +53,8 @@ export function SplitWorkspace({
   sessionCwd,
   terminalFontSize,
   terminalUiRequest,
+  showComposerAssistMetrics = false,
+  sessionOsc133Hints = {},
   aiInsightSlot = null,
   aiAssistEnabled = false,
   onComposerDraftChange,
@@ -97,6 +101,8 @@ export function SplitWorkspace({
               isFocused={workspace.activePaneId === pane.id}
               terminalFontSize={terminalFontSize}
               terminalUiRequest={terminalUiRequest}
+              showComposerAssistMetrics={showComposerAssistMetrics}
+              osc133Hint={session ? sessionOsc133Hints[session.id] ?? null : null}
               aiInsightSlot={workspace.activePaneId === pane.id ? aiInsightSlot : null}
               aiAssistEnabled={aiAssistEnabled}
               onComposerDraftChange={

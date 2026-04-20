@@ -51,6 +51,9 @@ pub struct TerminalProfile {
     pub font_size: u8,
     #[serde(default)]
     pub minimal_shell_prompt: bool,
+    /// When true, show composer assist metrics in the UI (not only dev builds).
+    #[serde(default)]
+    pub show_composer_assist_metrics: bool,
 }
 
 impl Default for TerminalProfile {
@@ -61,6 +64,7 @@ impl Default for TerminalProfile {
             env: HashMap::new(),
             font_size: 13,
             minimal_shell_prompt: false,
+            show_composer_assist_metrics: false,
         }
     }
 }
@@ -208,6 +212,8 @@ pub struct ProfilePatch {
     pub font_size: Option<u8>,
     #[serde(default)]
     pub minimal_shell_prompt: Option<bool>,
+    #[serde(default)]
+    pub show_composer_assist_metrics: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -255,6 +261,26 @@ pub struct PtyOutputEvent {
 pub struct PtyCwdChangedEvent {
     pub session_id: String,
     pub cwd: String,
+    pub timestamp_ms: u64,
+}
+
+/// OSC 133 shell integration markers (iTerm2 / WezTerm style command boundaries).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PtyCommandMarkerPhase {
+    PromptStart,
+    CommandStart,
+    OutputStart,
+    OutputEnd,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyCommandMarkerEvent {
+    pub session_id: String,
+    pub phase: PtyCommandMarkerPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     pub timestamp_ms: u64,
 }
 

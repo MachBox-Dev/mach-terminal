@@ -36,6 +36,7 @@ import {
   composerComplete,
   onAiContext,
   onPtyCwdChanged,
+  onPtyCommandMarker,
   onPtyLifecycle,
   onPtyOutput,
   pluginExecute,
@@ -55,6 +56,7 @@ import {
   ptySpawn,
   ptyWrite,
   type HistoryEntry,
+  type PtyCommandMarkerEvent,
   type PtyLifecycleEvent,
   type PtySessionInfo,
   type RuntimeMetricsSnapshot,
@@ -170,6 +172,8 @@ function App() {
   const [aiInsightDismissed, setAiInsightDismissed] = useState(false);
   const [terminalFontSize, setTerminalFontSize] = useState(13);
   const [minimalShellPrompt, setMinimalShellPrompt] = useState(false);
+  const [showComposerAssistMetrics, setShowComposerAssistMetrics] = useState(false);
+  const [sessionOsc133Hints, setSessionOsc133Hints] = useState<Record<string, string>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
   const pendingOutputRef = useRef<Record<string, string[]>>({});
@@ -368,6 +372,7 @@ function App() {
         initializeProviderAiState(providerDescriptors, providerRouting);
         setTerminalFontSize(initialProfile.font_size);
         setMinimalShellPrompt(initialProfile.minimal_shell_prompt ?? false);
+        setShowComposerAssistMetrics(initialProfile.show_composer_assist_metrics ?? false);
         setSessions(existingSessions);
         const existingSessionIds = existingSessions.map((session) => session.id);
         let storedWorkspace: string | null = null;
@@ -473,6 +478,7 @@ function App() {
     let outputUnlisten: (() => void) | undefined;
     let lifecycleUnlisten: (() => void) | undefined;
     let cwdUnlisten: (() => void) | undefined;
+    let markerUnlisten: (() => void) | undefined;
     let contextUnlisten: (() => void) | undefined;
 
     const bindEvents = async () => {
@@ -593,6 +599,22 @@ function App() {
         });
       });
 
+      markerUnlisten = await onPtyCommandMarker((event: PtyCommandMarkerEvent) => {
+        setSessionOsc133Hints((prev) => {
+          const label =
+            event.phase === "outputEnd"
+              ? event.exit_code != null
+                ? `OSC 133 · exit ${event.exit_code}`
+                : "OSC 133 · output end"
+              : event.phase === "promptStart"
+                ? "OSC 133 · prompt"
+                : event.phase === "commandStart"
+                  ? "OSC 133 · command"
+                  : "OSC 133 · output";
+          return { ...prev, [event.session_id]: label };
+        });
+      });
+
       contextUnlisten = await onAiContext((event) => {
         setLastAiContext(event);
         if (event.event_type !== "command_submitted") {
@@ -621,6 +643,7 @@ function App() {
       outputUnlisten?.();
       lifecycleUnlisten?.();
       cwdUnlisten?.();
+      markerUnlisten?.();
       contextUnlisten?.();
     };
   }, []);
@@ -629,6 +652,15 @@ function App() {
     const aliveIds = sessions.map((session) => session.id);
     setSessionExited((current) => pruneExitedForSessions(current, aliveIds));
     setSessionCwd((current) => pruneCwdForSessions(current, aliveIds));
+    setSessionOsc133Hints((current) => {
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!aliveIds.includes(id)) {
+          delete next[id];
+        }
+      }
+      return next;
+    });
   }, [sessions]);
 
   /**
@@ -855,12 +887,22 @@ function App() {
     initializeProviderAiState(providerDescriptors, providerRouting);
     setTerminalFontSize(profile.font_size);
     setMinimalShellPrompt(profile.minimal_shell_prompt ?? false);
+    setShowComposerAssistMetrics(profile.show_composer_assist_metrics ?? false);
   }, [initializeProviderAiState]);
 
   const setMinimalShellPromptPreference = useCallback(async (enabled: boolean) => {
     try {
       const updated = await profilePatch({ minimal_shell_prompt: enabled });
       setMinimalShellPrompt(updated.minimal_shell_prompt ?? enabled);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Failed to update profile.");
+    }
+  }, []);
+
+  const setShowComposerAssistMetricsPreference = useCallback(async (enabled: boolean) => {
+    try {
+      const updated = await profilePatch({ show_composer_assist_metrics: enabled });
+      setShowComposerAssistMetrics(updated.show_composer_assist_metrics ?? enabled);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to update profile.");
     }
@@ -1184,6 +1226,8 @@ function App() {
             sessionCwd={sessionCwd}
             terminalFontSize={terminalFontSize}
             terminalUiRequest={terminalUiRequest}
+            showComposerAssistMetrics={showComposerAssistMetrics}
+            sessionOsc133Hints={sessionOsc133Hints}
             aiInsightSlot={aiInsightSlot}
             aiAssistEnabled={aiAssistEnabled}
             onComposerDraftChange={(paneId, draft) => {
@@ -1310,6 +1354,8 @@ function App() {
           runPluginDemo={runPluginDemo}
           minimalShellPrompt={minimalShellPrompt}
           onMinimalShellPromptChange={setMinimalShellPromptPreference}
+          showComposerAssistMetrics={showComposerAssistMetrics}
+          onShowComposerAssistMetricsChange={setShowComposerAssistMetricsPreference}
         />
         <CommandPalette
           open={paletteOpen}

@@ -16,6 +16,7 @@ export function normalizeQuickStartProfile(profile: TerminalProfile): TerminalPr
     env: profile.env ?? {},
     font_size: profile.font_size,
     minimal_shell_prompt: profile.minimal_shell_prompt ?? false,
+    show_composer_assist_metrics: profile.show_composer_assist_metrics ?? false,
   };
 }
 

@@ -11,12 +11,18 @@ execution path.
 ## Current Repo State
 
 - Branch: `master`
-- Working tree: clean after composer roadmap tranche 2 commits
 - Stack: Tauri v2 + Rust backend, React/TypeScript frontend, xterm.js renderer
-- Latest completed tranche: composer completion + prediction/history tranche 2 (`58bc84a`)
-- Invoke transport status: strict path exists (`test:invoke:strict`) but is not yet promoted to blocking gates due to Windows `STATUS_ENTRYPOINT_NOT_FOUND` runtime instability
+- Latest completed tranche: enhancement tranche 3 (unified UX follow-through + OSC 133 + invoke signoff wiring) — see git log for commit hash
+- Invoke transport: `npm run test:invoke:strict` is part of **`npm run stability:signoff`** on Linux and macOS only; Windows still skips strict invoke in that script because mock-webview runs can hit `STATUS_ENTRYPOINT_NOT_FOUND`
 
 ## Recently Shipped Slices
+
+### Enhancement tranche 3 (composer scroll, assist metrics, OSC 133, CI)
+
+- **Composer scroll:** `Ctrl+Alt+Page Up` / `Page Down` pages xterm output while the composer stays focused; pure helper in [`src/core/composerOutputScroll.ts`](../src/core/composerOutputScroll.ts) + smoke in [`src/core/composerInput.smoke.test.ts`](../src/core/composerInput.smoke.test.ts).
+- **Assist metrics profile flag:** `show_composer_assist_metrics` on [`TerminalProfile`](../src-tauri/src/models.rs) / [`profilePatch`](../src/core/terminal.ts) + Settings toggle; [`TerminalSurface.tsx`](../src/components/TerminalSurface.tsx) shows metrics when `import.meta.env.DEV` **or** the flag is set.
+- **OSC 133:** Incremental decoder [`src-tauri/src/osc133.rs`](../src-tauri/src/osc133.rs), PTY reader emits `pty-command-marker` (see [`docs/runtime-contracts.md`](runtime-contracts.md)); UI shows latest hint on [`MachStatusStrip.tsx`](../src/components/MachStatusStrip.tsx). Optional copy-paste snippets in [`src/core/machShellSnippets.ts`](../src/core/machShellSnippets.ts).
+- **Invoke / signoff:** [`scripts/stability-signoff.mjs`](../scripts/stability-signoff.mjs) runs strict invoke off Windows; expanded wire assertions in [`src-tauri/tests/shell_integration_invoke_smoke.rs`](../src-tauri/tests/shell_integration_invoke_smoke.rs).
 
 ### Shell Integration P3 (Windows-first)
 
@@ -370,8 +376,8 @@ Goal: continue P5 by promoting invoke-level command tests for `shell_integration
 
 Potential tasks:
 
-- clear Windows mock/webview `STATUS_ENTRYPOINT_NOT_FOUND` runtime failures so strict invoke path becomes reliable
-- promote strict invoke path into `stability:signoff` / CI only after repeatable multi-OS passes (Windows + at least one Unix target)
+- clear Windows mock/webview `STATUS_ENTRYPOINT_NOT_FOUND` runtime failures so strict invoke can run on Windows the same way it already runs on Linux/macOS signoff
+- optional: add `test:invoke:strict` to the main **matrix** CI job (currently strict invoke is only in `stability:signoff` off Windows)
 - continue expanding invoke coverage to additional shell-status edge cases while preserving payload contract keys/casing
 
 ## Next Session Startup Checklist

@@ -3,6 +3,7 @@ pub mod composer_completion;
 pub mod history_store;
 pub mod input_sanitize;
 pub mod osc7;
+pub mod osc133;
 pub mod shell_integration;
 pub mod shell_context;
 mod plugin_host;

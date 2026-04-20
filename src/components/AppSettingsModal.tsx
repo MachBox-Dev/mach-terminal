@@ -114,6 +114,9 @@ export type AppSettingsModalProps = {
   /** When true, new sessions set `MACH_TERMINAL_MINIMAL_PROMPT=1` (thin shell prompt in scrollback; pair with rc snippets). */
   minimalShellPrompt: boolean;
   onMinimalShellPromptChange: (enabled: boolean) => void | Promise<void>;
+  /** Show composer completion assist metrics outside dev builds. */
+  showComposerAssistMetrics: boolean;
+  onShowComposerAssistMetricsChange: (enabled: boolean) => void | Promise<void>;
 };
 
 export function buildHistoryPanelHandlers(
@@ -212,6 +215,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     runPluginDemo,
     minimalShellPrompt,
     onMinimalShellPromptChange,
+    showComposerAssistMetrics,
+    onShowComposerAssistMetricsChange,
   } = props;
   const historyHandlers = buildHistoryPanelHandlers(onReplayCommand, onExplainCommand, onFixCommand);
 
@@ -434,6 +439,14 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                   onChange={(event) => void onMinimalShellPromptChange(event.currentTarget.checked)}
                 />
                 Minimal shell prompt (recommended with composer input)
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={showComposerAssistMetrics}
+                  onChange={(event) => void onShowComposerAssistMetricsChange(event.currentTarget.checked)}
+                />
+                Show composer assist metrics (request/accept counts and latency)
               </label>
               <div className="minimal-prompt-snippet-block mach-osc7-block">
                 <div className="minimal-prompt-snippet-row">

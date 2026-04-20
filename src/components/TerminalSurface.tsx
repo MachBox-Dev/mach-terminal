@@ -37,6 +37,7 @@ import {
   predictionForDraft,
   type ComposerHistoryDirection,
 } from "../core/composerHistory";
+import { composerOutputScrollIntentFromKeyboardEvent } from "../core/composerOutputScroll";
 import { canFocusComposerWhenPaneActive } from "../core/terminalComposerFocus";
 import { MACH_TERMINAL_MONO_FONT } from "../core/terminalUiFont";
 import { MachStatusStrip } from "./MachStatusStrip";
@@ -132,6 +133,10 @@ interface TerminalSurfaceProps {
   terminalFontSize?: number;
   /** Palette-driven UI intents; only the focused pane consumes a new `seq`. */
   terminalUiRequest?: TerminalUiRequest | null;
+  /** When true (or in dev), show composer completion assist metrics. */
+  showComposerAssistMetrics?: boolean;
+  /** Latest OSC 133 marker hint for this session (read-only status). */
+  osc133Hint?: string | null;
   aiInsightSlot?: ReactNode | null;
   aiAssistEnabled?: boolean;
   onComposerDraftChange?: (draft: string) => void;
@@ -161,6 +166,8 @@ export function TerminalSurface({
   isFocused,
   terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE,
   terminalUiRequest = null,
+  showComposerAssistMetrics = false,
+  osc133Hint = null,
   aiInsightSlot = null,
   aiAssistEnabled = false,
   onComposerDraftChange,
@@ -1277,7 +1284,7 @@ export function TerminalSurface({
           </div>
           <div className="terminal-input-chrome">
             {aiInsightSlot}
-            <MachStatusStrip liveCwd={liveCwd} shellExe={activeSession?.shell ?? null} />
+            <MachStatusStrip liveCwd={liveCwd} shellExe={activeSession?.shell ?? null} osc133Hint={osc133Hint} />
             <div className="terminal-composer" onContextMenu={(event) => event.stopPropagation()}>
               <div className="terminal-composer-input-row">
                 <textarea
@@ -1292,6 +1299,17 @@ export function TerminalSurface({
                     setComposerDraft(e.target.value);
                   }}
                   onKeyDown={(e) => {
+                    const scrollIntent = composerOutputScrollIntentFromKeyboardEvent(e);
+                    if (scrollIntent) {
+                      e.preventDefault();
+                      const t = terminalRef.current;
+                      if (t) {
+                        const step = Math.max(1, t.rows - 1);
+                        t.scrollLines(scrollIntent === "up" ? -step : step);
+                        stickToBottomRef.current = isViewportAtBottom(t);
+                      }
+                      return;
+                    }
                     if (e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
                       e.preventDefault();
                       stepComposerHistory("prev");
@@ -1372,7 +1390,7 @@ export function TerminalSurface({
                   Completion {completionState.selectedIndex + 1}/{completionState.response.candidates.length}
                 </p>
               ) : null}
-              {import.meta.env.DEV && completionMetricsTick >= 0 ? (
+              {(import.meta.env.DEV || showComposerAssistMetrics) && completionMetricsTick >= 0 ? (
                 <p className="terminal-composer-completion-metrics" aria-live="polite">
                   Assist metrics: {completionMetricsRef.current.requests} requests · {completionMetricsRef.current.accepted} accepts ·
                   avg{" "}
@@ -1407,7 +1425,8 @@ export function TerminalSurface({
                 </div>
               ) : null}
               <p className="terminal-composer-footer-hint">
-                Enter send · Shift+Enter newline · Tab complete/cycle · Up/Down history · RightArrow accept suggestion
+                Enter send · Shift+Enter newline · Tab complete/cycle · Up/Down history · RightArrow accept suggestion ·
+                Ctrl+Alt+PgUp/PgDn scroll output
               </p>
             </div>
           </div>

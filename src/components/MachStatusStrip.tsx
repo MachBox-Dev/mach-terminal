@@ -23,9 +23,11 @@ interface MachStatusStripProps {
   liveCwd: string | null;
   /** Shell executable path or name (e.g. pwsh.exe) for quick env identification */
   shellExe?: string | null;
+  /** Latest OSC 133 marker summary when the shell emits markers (read-only). */
+  osc133Hint?: string | null;
 }
 
-export function MachStatusStrip({ liveCwd, shellExe }: MachStatusStripProps) {
+export function MachStatusStrip({ liveCwd, shellExe, osc133Hint = null }: MachStatusStripProps) {
   const [settings, setSettings] = useState<StatusStripSettings>(() => loadStatusStripSettings());
   const [shellCtx, setShellCtx] = useState<ShellContextSnapshot | null>(null);
   const [metrics, setMetrics] = useState<RuntimeMetricsSnapshot | null>(null);
@@ -157,6 +159,11 @@ export function MachStatusStrip({ liveCwd, shellExe }: MachStatusStripProps) {
           <span className="mach-status-chip mach-status-chip-muted" title="PTY host counters">
             <StatusStripGlyph kind="metrics" />
             out {metrics.output_chunks_emitted} · drop {metrics.output_chunks_dropped}
+          </span>
+        ) : null}
+        {osc133Hint ? (
+          <span className="mach-status-chip mach-status-chip-muted" title="OSC 133 shell integration marker">
+            {osc133Hint}
           </span>
         ) : null}
       </div>
