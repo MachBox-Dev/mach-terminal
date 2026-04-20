@@ -181,7 +181,11 @@ This document defines the first stable contract between the frontend shell and R
   - remove
   - backups list
   - backup restore
-- The P5 dispatch refactor does not change shell integration payload shapes; it reduces repeated backend branching only.
+- Shell status rows are built through shared backend derivation/builders for `pwsh`, `bash`, and `zsh`:
+  - marker + expected-line matching feed `health` (`healthy` / `stale` / `missing` / `error`)
+  - resolved profile rows preserve per-shell capability and backup-count semantics
+  - unresolved/error rows preserve `profilePathSource` semantics (`override`, `auto`, or omitted)
+- The P5/P5-followup refactors do not change shell integration payload shapes; they reduce repeated backend branching only.
 
 ## Cross-Platform PTY Behavior
 

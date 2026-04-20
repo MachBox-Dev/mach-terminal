@@ -175,6 +175,26 @@ Primary files:
 - `src/core/exitLifecycle.smoke.test.ts`
 - `README.md`
 
+### Shell status consolidation (P5 follow-up)
+
+- Refactored shell status construction to use shared backend derivation/builders across `pwsh`, `bash`, and `zsh`.
+- Consolidated duplicate marker/expected-line/health logic used by:
+  - `pwsh_shell_status`
+  - `unix_profile_shell_status`
+- Consolidated resolved/unresolved row construction while preserving payload semantics:
+  - `profilePathSource` (`override` / `auto` / omitted)
+  - `backupCount` optionality
+  - `health` values and error/null behavior
+- Added parity-focused backend tests covering:
+  - expected-line match vs stale mismatch
+  - resolved/unresolved source semantics
+  - cross-shell row invariants for status composition
+
+Primary files:
+
+- `src-tauri/src/shell_integration.rs`
+- `docs/runtime-contracts.md`
+
 ## Important Contracts
 
 ### Shell integration status contract
@@ -225,13 +245,13 @@ Anchor files:
 
 ### 2) Shell Integration P5 follow-up (status-path consolidation)
 
-Goal: continue P5 by reducing duplication inside `shell_integration_status` builders (`pwsh_shell_status` / `unix_profile_shell_status`) without changing payload contracts.
+Goal: continue P5 by adding command-level/status-level integration tests that exercise `shell_integration_status` through Tauri command boundaries (beyond current unit parity coverage) without changing payload contracts.
 
 Potential tasks:
 
-- unify marker/expected-line health derivation into a shared status builder helper
-- keep profile-source semantics (`override` / `auto`) unchanged
-- add parity tests for status rows across `pwsh`, `bash`, `zsh`
+- add Tauri-command tests for override-invalid / unresolved-path rows
+- assert serialized JSON field null/omission semantics at command boundary
+- verify frontend consumers remain contract-compatible under serialized payloads
 
 ## Next Session Startup Checklist
 

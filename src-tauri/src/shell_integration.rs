@@ -390,6 +390,123 @@ fn classify_shell_health(error: Option<&str>, marker: bool, expected_matches: Op
     "healthy"
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ShellMarkerHealth {
+    marker_present: bool,
+    matches_expected: Option<bool>,
+    health: &'static str,
+}
+
+fn derive_shell_marker_health(content: &str, expected_line: Option<&str>) -> ShellMarkerHealth {
+    let marker = marker_present(content);
+    let matches_expected = if marker {
+        match (expected_line, marker_inner_line(content)) {
+            (Some(expected), Some(inner)) => Some(inner == expected),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    ShellMarkerHealth {
+        marker_present: marker,
+        matches_expected,
+        health: classify_shell_health(None, marker, matches_expected),
+    }
+}
+
+fn build_shell_status_row(
+    kind: &str,
+    profile_path: Option<String>,
+    profile_resolved: bool,
+    marker_present: bool,
+    health: &'static str,
+    backup_count: Option<u32>,
+    profile_path_source: Option<&str>,
+    error: Option<String>,
+) -> ShellIntegrationShellStatus {
+    ShellIntegrationShellStatus {
+        shell_kind: kind.to_string(),
+        profile_path,
+        profile_resolved,
+        marker_present,
+        health: health.to_string(),
+        backup_count,
+        capabilities: shell_capabilities(kind),
+        profile_path_source: profile_path_source.map(str::to_string),
+        error,
+    }
+}
+
+fn resolved_profile_shell_status(
+    kind: &str,
+    profile_path: &Path,
+    profile_path_source: Option<&str>,
+    expected_line: Option<&str>,
+) -> ShellIntegrationShellStatus {
+    let path = profile_path.to_string_lossy().to_string();
+    let backup_count = Some(count_backups_for_profile(profile_path));
+    if profile_path.exists() {
+        match read_profile_capped(profile_path) {
+            Ok(content) => {
+                let derived = derive_shell_marker_health(&content, expected_line);
+                build_shell_status_row(
+                    kind,
+                    Some(path),
+                    true,
+                    derived.marker_present,
+                    derived.health,
+                    backup_count,
+                    profile_path_source,
+                    None,
+                )
+            }
+            Err(error) => {
+                let health = classify_shell_health(Some(error.as_str()), false, None);
+                build_shell_status_row(
+                    kind,
+                    Some(path),
+                    true,
+                    false,
+                    health,
+                    backup_count,
+                    profile_path_source,
+                    Some(error),
+                )
+            }
+        }
+    } else {
+        build_shell_status_row(
+            kind,
+            Some(path),
+            true,
+            false,
+            classify_shell_health(None, false, None),
+            backup_count,
+            profile_path_source,
+            None,
+        )
+    }
+}
+
+fn unresolved_profile_shell_status(
+    kind: &str,
+    profile_path: Option<String>,
+    profile_path_source: Option<&str>,
+    error: String,
+) -> ShellIntegrationShellStatus {
+    let health = classify_shell_health(Some(error.as_str()), false, None);
+    build_shell_status_row(
+        kind,
+        profile_path,
+        false,
+        false,
+        health,
+        None,
+        profile_path_source,
+        Some(error),
+    )
+}
+
 fn backup_dir_for_profile(profile_path: &Path) -> Result<PathBuf, String> {
     let parent = profile_path
         .parent()
@@ -453,57 +570,7 @@ fn count_backups_for_profile(profile_path: &Path) -> u32 {
 }
 
 fn pwsh_shell_status(pb: &Path, source: &'static str, expected_line: Option<&str>) -> ShellIntegrationShellStatus {
-    let ps = pb.to_string_lossy().to_string();
-    let backup_count = Some(count_backups_for_profile(pb));
-    if pb.exists() {
-        match read_profile_capped(pb) {
-            Ok(c) => {
-                let marker = marker_present(&c);
-                let matches_expected = if marker {
-                    match (expected_line, marker_inner_line(&c)) {
-                        (Some(expected), Some(inner)) => Some(inner == expected),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                ShellIntegrationShellStatus {
-                    shell_kind: "pwsh".to_string(),
-                    profile_path: Some(ps),
-                    profile_resolved: true,
-                    marker_present: marker,
-                    health: classify_shell_health(None, marker, matches_expected).to_string(),
-                    backup_count,
-                    capabilities: shell_capabilities("pwsh"),
-                    profile_path_source: Some(source.to_string()),
-                    error: None,
-                }
-            }
-            Err(e) => ShellIntegrationShellStatus {
-                shell_kind: "pwsh".to_string(),
-                profile_path: Some(ps),
-                profile_resolved: true,
-                marker_present: false,
-                health: classify_shell_health(Some(e.as_str()), false, None).to_string(),
-                backup_count,
-                capabilities: shell_capabilities("pwsh"),
-                profile_path_source: Some(source.to_string()),
-                error: Some(e),
-            },
-        }
-    } else {
-        ShellIntegrationShellStatus {
-            shell_kind: "pwsh".to_string(),
-            profile_path: Some(ps),
-            profile_resolved: true,
-            marker_present: false,
-            health: "missing".to_string(),
-            backup_count,
-            capabilities: shell_capabilities("pwsh"),
-            profile_path_source: Some(source.to_string()),
-            error: None,
-        }
-    }
+    resolved_profile_shell_status("pwsh", pb, Some(source), expected_line)
 }
 
 const MAX_SIDE_CAR_PROFILE_BACKUPS: usize = 3;
@@ -555,70 +622,8 @@ fn map_profile_io_error(op: &str, e: std::io::Error) -> String {
 
 fn unix_profile_shell_status(kind: &str, resolve: Option<PathBuf>, expected_line: Option<&str>) -> ShellIntegrationShellStatus {
     match resolve {
-        None => ShellIntegrationShellStatus {
-            shell_kind: kind.to_string(),
-            profile_path: None,
-            profile_resolved: false,
-            marker_present: false,
-            health: "error".to_string(),
-            backup_count: None,
-            capabilities: shell_capabilities(kind),
-            profile_path_source: None,
-            error: Some("could not resolve home directory".to_string()),
-        },
-        Some(path) => {
-            let ps = path.to_string_lossy().to_string();
-            let backup_count = Some(count_backups_for_profile(&path));
-            if path.exists() {
-                match read_profile_capped(&path) {
-                    Ok(c) => {
-                        let marker = marker_present(&c);
-                        let matches_expected = if marker {
-                            match (expected_line, marker_inner_line(&c)) {
-                                (Some(expected), Some(inner)) => Some(inner == expected),
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
-                        ShellIntegrationShellStatus {
-                            shell_kind: kind.to_string(),
-                            profile_path: Some(ps),
-                            profile_resolved: true,
-                            marker_present: marker,
-                            health: classify_shell_health(None, marker, matches_expected).to_string(),
-                            backup_count,
-                            capabilities: shell_capabilities(kind),
-                            profile_path_source: Some("auto".to_string()),
-                            error: None,
-                        }
-                    }
-                    Err(e) => ShellIntegrationShellStatus {
-                        shell_kind: kind.to_string(),
-                        profile_path: Some(ps),
-                        profile_resolved: true,
-                        marker_present: false,
-                        health: "error".to_string(),
-                        backup_count,
-                        capabilities: shell_capabilities(kind),
-                        profile_path_source: Some("auto".to_string()),
-                        error: Some(e),
-                    },
-                }
-            } else {
-                ShellIntegrationShellStatus {
-                    shell_kind: kind.to_string(),
-                    profile_path: Some(ps),
-                    profile_resolved: true,
-                    marker_present: false,
-                    health: "missing".to_string(),
-                    backup_count,
-                    capabilities: shell_capabilities(kind),
-                    profile_path_source: Some("auto".to_string()),
-                    error: None,
-                }
-            }
-        }
+        None => unresolved_profile_shell_status(kind, None, None, "could not resolve home directory".to_string()),
+        Some(path) => resolved_profile_shell_status(kind, &path, Some("auto"), expected_line),
     }
 }
 
@@ -639,32 +644,17 @@ pub fn shell_integration_status(app: AppHandle) -> Result<ShellIntegrationStatus
     if let Some(raw) = pwsh_trimmed_override(&si) {
         match validate_pwsh_profile_override(raw) {
             Ok(pb) => shells.push(pwsh_shell_status(&pb, "override", expected_pwsh_line.as_deref())),
-            Err(e) => shells.push(ShellIntegrationShellStatus {
-                shell_kind: "pwsh".to_string(),
-                profile_path: Some(normalize_pwsh_display_path(raw)),
-                profile_resolved: false,
-                marker_present: false,
-                health: "error".to_string(),
-                backup_count: None,
-                capabilities: shell_capabilities("pwsh"),
-                profile_path_source: Some("override".to_string()),
-                error: Some(e),
-            }),
+            Err(e) => shells.push(unresolved_profile_shell_status(
+                "pwsh",
+                Some(normalize_pwsh_display_path(raw)),
+                Some("override"),
+                e,
+            )),
         }
     } else {
         match resolve_powershell_profile(shell_hint) {
             Ok(pb) => shells.push(pwsh_shell_status(&pb, "auto", expected_pwsh_line.as_deref())),
-            Err(e) => shells.push(ShellIntegrationShellStatus {
-                shell_kind: "pwsh".to_string(),
-                profile_path: None,
-                profile_resolved: false,
-                marker_present: false,
-                health: "error".to_string(),
-                backup_count: None,
-                capabilities: shell_capabilities("pwsh"),
-                profile_path_source: None,
-                error: Some(e),
-            }),
+            Err(e) => shells.push(unresolved_profile_shell_status("pwsh", None, None, e)),
         }
     }
 
@@ -940,6 +930,91 @@ mod tests {
         assert_eq!(stale, "stale");
         assert_eq!(healthy, "healthy");
         assert_eq!(missing, "missing");
+    }
+
+    #[test]
+    fn derive_shell_marker_health_tracks_expected_line_match() {
+        let expected = ". '/tmp/mach-init.ps1'";
+        let matching = format!("x\n{MARKER_BEGIN}\n{expected}\n{MARKER_END}\n");
+        let mismatch = format!("x\n{MARKER_BEGIN}\n. '/tmp/other.ps1'\n{MARKER_END}\n");
+
+        let healthy = derive_shell_marker_health(&matching, Some(expected));
+        assert!(healthy.marker_present);
+        assert_eq!(healthy.matches_expected, Some(true));
+        assert_eq!(healthy.health, "healthy");
+
+        let stale = derive_shell_marker_health(&mismatch, Some(expected));
+        assert!(stale.marker_present);
+        assert_eq!(stale.matches_expected, Some(false));
+        assert_eq!(stale.health, "stale");
+    }
+
+    #[test]
+    fn pwsh_resolved_status_row_preserves_override_source_and_health() {
+        let temp = tempdir().expect("tempdir");
+        let profile = temp.path().join("Microsoft.PowerShell_profile.ps1");
+        let expected = ". '/tmp/mach-init.ps1'";
+        let profile_content = format!("prelude\n{MARKER_BEGIN}\n{expected}\n{MARKER_END}\n");
+        fs::write(&profile, profile_content).expect("write profile");
+
+        let healthy = resolved_profile_shell_status("pwsh", &profile, Some("override"), Some(expected));
+        assert_eq!(healthy.shell_kind, "pwsh");
+        assert!(healthy.profile_resolved);
+        assert!(healthy.marker_present);
+        assert_eq!(healthy.health, "healthy");
+        assert_eq!(healthy.profile_path_source.as_deref(), Some("override"));
+        assert_eq!(healthy.backup_count, Some(0));
+        assert_eq!(healthy.error, None);
+
+        let stale = resolved_profile_shell_status("pwsh", &profile, Some("override"), Some(". '/tmp/other.ps1'"));
+        assert_eq!(stale.health, "stale");
+        assert_eq!(stale.profile_path_source.as_deref(), Some("override"));
+    }
+
+    #[test]
+    fn unix_status_rows_preserve_auto_and_unresolved_source_semantics() {
+        let temp = tempdir().expect("tempdir");
+        let bash_profile = temp.path().join(".bashrc");
+        let expected = ". \"/tmp/mach-init.bash\"";
+        let profile_content = format!("p\n{MARKER_BEGIN}\n{expected}\n{MARKER_END}\n");
+        fs::write(&bash_profile, profile_content).expect("write bash profile");
+
+        let bash = unix_profile_shell_status("bash", Some(bash_profile.clone()), Some(expected));
+        assert_eq!(bash.shell_kind, "bash");
+        assert!(bash.profile_resolved);
+        assert!(bash.marker_present);
+        assert_eq!(bash.health, "healthy");
+        assert_eq!(bash.profile_path_source.as_deref(), Some("auto"));
+        assert_eq!(bash.error, None);
+
+        let zsh = resolved_profile_shell_status("zsh", &bash_profile, Some("auto"), Some(expected));
+        assert_eq!(zsh.shell_kind, "zsh");
+        assert_eq!(zsh.health, "healthy");
+        assert_eq!(zsh.profile_path_source.as_deref(), Some("auto"));
+
+        let unresolved = unix_profile_shell_status("bash", None, Some(expected));
+        assert_eq!(unresolved.shell_kind, "bash");
+        assert!(!unresolved.profile_resolved);
+        assert_eq!(unresolved.health, "error");
+        assert_eq!(unresolved.profile_path_source, None);
+        assert!(unresolved.error.is_some());
+    }
+
+    #[test]
+    fn unresolved_pwsh_override_status_keeps_override_source() {
+        let status = unresolved_profile_shell_status(
+            "pwsh",
+            Some("C:\\Users\\mike\\Documents\\profile.ps1".to_string()),
+            Some("override"),
+            "invalid profile path".to_string(),
+        );
+        assert_eq!(status.shell_kind, "pwsh");
+        assert!(!status.profile_resolved);
+        assert_eq!(status.health, "error");
+        assert_eq!(status.profile_path_source.as_deref(), Some("override"));
+        assert_eq!(status.backup_count, None);
+        assert_eq!(status.marker_present, false);
+        assert!(status.error.as_deref().unwrap_or_default().contains("invalid profile path"));
     }
 
     #[test]
