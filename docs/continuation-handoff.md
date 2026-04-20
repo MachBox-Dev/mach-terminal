@@ -175,6 +175,23 @@ Primary files:
 - `src/core/exitLifecycle.smoke.test.ts`
 - `README.md`
 
+### UX smoke tranche (pane focus + follow output contracts)
+
+- Added deterministic smoke coverage for pane-focus and follow-output behavior:
+  - focused-only terminal UI request consumption with seq fast-forward semantics
+  - no deferred command replay when a previously unfocused pane later gains focus
+  - follow-output toggle contract (`setFollowOutput`) and scroll-to-bottom coupling
+  - deterministic split/close active-pane fallback under rapid close transitions
+- Expanded workspace unit coverage by extracting active-pane fallback selection into a pure helper used by `closePane`.
+- `test:ux:smoke` auto-discovers this tranche via `*.smoke.test.ts` naming; no gate rewiring required.
+
+Primary files:
+
+- `src/core/paneFocus.smoke.test.ts`
+- `src/state/workspace.ts`
+- `src/state/workspace.test.ts`
+- `README.md`
+
 ### Shell status consolidation (P5 follow-up)
 
 - Refactored shell status construction to use shared backend derivation/builders across `pwsh`, `bash`, and `zsh`.
@@ -291,7 +308,7 @@ Do not set this flag from general onboarding Save/Quick start/Skip flows.
 
 ### 1) Scripted UX smoke coverage (expand beyond current smoke batch)
 
-Goal: extend scripted smoke coverage from the current palette/find + link-safety + exit-lifecycle batch to additional UX dogfood checklist items.
+Goal: extend scripted smoke coverage from the current palette/find + link-safety + exit-lifecycle + pane-focus/follow-output batch to additional UX dogfood checklist items.
 
 Anchor files:
 

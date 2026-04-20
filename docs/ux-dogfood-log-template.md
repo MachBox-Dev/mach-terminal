@@ -2,6 +2,8 @@
 
 Use this for daily or per-PR UX validation runs. Copy this block into your issue, PR comment, or release notes.
 
+Scripted smoke currently covers command-palette/find contracts, link-safety, exit lifecycle, and pane-focus/follow-output request routing (`npm run test:ux:smoke`). Use this template to capture the remaining manual checks and any regressions found alongside scripted output.
+
 ## Session Metadata
 
 - Date:

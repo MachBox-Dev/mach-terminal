@@ -3,6 +3,7 @@ import {
   closePane,
   createWorkspaceState,
   reconcileWorkspace,
+  resolveNextActivePaneIdAfterClose,
   removeSessionFromWorkspace,
   restoreWorkspaceFromSnapshot,
   setSplitDirection,
@@ -46,6 +47,43 @@ describe("workspace reconciliation", () => {
     workspace = closePane(workspace, activeBeforeClose);
     expect(workspace.activePaneId).not.toBe(activeBeforeClose);
     expect(workspace.panes).toHaveLength(2);
+  });
+
+  it("keeps active pane unchanged when closing a non-active pane", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, workspace.activePaneId, "session-a");
+    workspace = splitActivePane(workspace, "session-b", "column");
+    const activePane = workspace.activePaneId;
+    const firstPaneId = workspace.panes[0]?.id ?? activePane;
+    workspace = closePane(workspace, firstPaneId);
+    expect(workspace.activePaneId).toBe(activePane);
+  });
+
+  it("resolves deterministic active-pane fallback for rapid close sequences", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, workspace.activePaneId, "session-a");
+    workspace = splitActivePane(workspace, "session-b", "row");
+    workspace = splitActivePane(workspace, "session-c", "row");
+    workspace = splitActivePane(workspace, "session-d", "row");
+    const paneIds = workspace.panes.map((pane) => pane.id);
+    expect(paneIds).toHaveLength(4);
+
+    const nextAfterLastClose = resolveNextActivePaneIdAfterClose(
+      workspace.panes,
+      workspace.activePaneId,
+      workspace.activePaneId,
+    );
+    expect(nextAfterLastClose).toBe(paneIds[2]);
+
+    workspace = closePane(workspace, workspace.activePaneId);
+    expect(workspace.activePaneId).toBe(paneIds[2]);
+    workspace = closePane(workspace, workspace.activePaneId);
+    expect(workspace.activePaneId).toBe(paneIds[1]);
+    workspace = closePane(workspace, workspace.activePaneId);
+    expect(workspace.activePaneId).toBe(paneIds[0]);
+    workspace = closePane(workspace, workspace.activePaneId);
+    expect(workspace.activePaneId).toBe(paneIds[0]);
+    expect(workspace.panes).toHaveLength(1);
   });
 });
 

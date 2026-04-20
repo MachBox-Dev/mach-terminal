@@ -53,7 +53,7 @@ Current executable provider path is `ollama`; other providers remain visible as 
 
 Run this checklist before calling a UX slice complete:
 
-Scripted smoke coverage now runs for a focused subset of terminal interaction checks (`test:ux:smoke`): command-palette keyboard lifecycle, focused terminal-find intent/counter flow, link activation safety contracts, exited-session lifecycle contracts, plus BEL visual flash and context-menu/safe-paste contracts. Remaining checklist items below still require manual dogfood verification.
+Scripted smoke coverage now runs for a focused subset of terminal interaction checks (`test:ux:smoke`): command-palette keyboard lifecycle, focused terminal-find intent/counter flow, link activation safety contracts, exited-session lifecycle contracts, pane-focus/follow-output command routing contracts (focused-only consume semantics + deterministic split/close fallback), plus BEL visual flash and context-menu/safe-paste contracts. Remaining checklist items below still require manual dogfood verification.
 
 1. Open command palette with `Ctrl/Cmd+K`, navigate with arrow keys, execute with Enter, dismiss with Escape.
 2. Split and resize panes rapidly; verify active-pane focus ring and stable terminal resize behavior.

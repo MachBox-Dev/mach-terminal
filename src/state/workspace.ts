@@ -80,6 +80,26 @@ export function splitActivePane(
   };
 }
 
+export function resolveNextActivePaneIdAfterClose(
+  panes: PaneNode[],
+  activePaneId: string,
+  closingPaneId: string,
+): string {
+  if (panes.length <= 1 || activePaneId !== closingPaneId) {
+    return activePaneId;
+  }
+  const paneIndex = panes.findIndex((pane) => pane.id === closingPaneId);
+  if (paneIndex < 0) {
+    return activePaneId;
+  }
+  const nextPanes = panes.filter((pane) => pane.id !== closingPaneId);
+  if (nextPanes.length === 0) {
+    return activePaneId;
+  }
+  const fallbackActiveIndex = Math.max(0, Math.min(paneIndex, nextPanes.length - 1));
+  return nextPanes[fallbackActiveIndex].id;
+}
+
 export function closePane(state: WorkspaceState, paneId: string): WorkspaceState {
   if (state.panes.length <= 1) {
     return state;
@@ -89,8 +109,7 @@ export function closePane(state: WorkspaceState, paneId: string): WorkspaceState
     return state;
   }
   const nextPanes = state.panes.filter((pane) => pane.id !== paneId);
-  const fallbackActiveIndex = Math.max(0, Math.min(paneIndex, nextPanes.length - 1));
-  const nextActive = state.activePaneId === paneId ? nextPanes[fallbackActiveIndex].id : state.activePaneId;
+  const nextActive = resolveNextActivePaneIdAfterClose(state.panes, state.activePaneId, paneId);
   return { ...state, panes: nextPanes, activePaneId: nextActive };
 }
 
