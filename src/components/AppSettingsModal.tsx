@@ -108,6 +108,18 @@ export type AppSettingsModalProps = {
   runPluginDemo: () => void | Promise<void>;
 };
 
+export function buildHistoryPanelHandlers(
+  onReplayCommand: AppSettingsModalProps["onReplayCommand"],
+  onExplainCommand: AppSettingsModalProps["onExplainCommand"],
+  onFixCommand: AppSettingsModalProps["onFixCommand"],
+) {
+  return {
+    onReplay: (command: string) => void onReplayCommand(command),
+    onExplain: (command: string) => void onExplainCommand(command),
+    onFix: (command: string) => void onFixCommand(command),
+  };
+}
+
 export function AppSettingsModal(props: AppSettingsModalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeSectionId, setActiveSectionId] = useState(
@@ -191,6 +203,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     pluginTelemetry,
     runPluginDemo,
   } = props;
+  const historyHandlers = buildHistoryPanelHandlers(onReplayCommand, onExplainCommand, onFixCommand);
 
   return (
     <div
@@ -507,9 +520,9 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               aiBusy={aiRequestInFlight}
               error={historyError}
               actionStatus={historyActionStatus}
-              onReplay={(command) => void onReplayCommand(command)}
-              onExplain={(command) => void onExplainCommand(command)}
-              onFix={(command) => void onFixCommand(command)}
+              onReplay={historyHandlers.onReplay}
+              onExplain={historyHandlers.onExplain}
+              onFix={historyHandlers.onFix}
             />
 
             <section id="settings-section-shortcuts">

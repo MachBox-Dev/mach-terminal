@@ -52,6 +52,38 @@ interface UseProviderAiStateParams {
   buildAiPromptContext?: () => AiPromptContextPayload | undefined;
 }
 
+export type HistoryAiAction = "explain" | "fix";
+
+export interface HistoryAiContract {
+  prompt: string;
+  intent: AiExecuteIntent;
+  pendingStatus: string;
+  successStatus: string;
+  historyFailureStatus: string;
+  fallbackErrorMessage: string;
+}
+
+export function historyAiContract(action: HistoryAiAction, command: string): HistoryAiContract {
+  if (action === "explain") {
+    return {
+      prompt: `Explain this shell command:\n${command}`,
+      intent: "explain_command",
+      pendingStatus: "Generating AI explanation...",
+      successStatus: "AI explanation ready.",
+      historyFailureStatus: "AI explanation failed.",
+      fallbackErrorMessage: "AI explain failed.",
+    };
+  }
+  return {
+    prompt: `Provide a safer or corrected version of this command, with a short explanation:\n${command}`,
+    intent: "fix_command",
+    pendingStatus: "Generating safer command suggestion...",
+    successStatus: "AI fix suggestion ready.",
+    historyFailureStatus: "AI fix failed.",
+    fallbackErrorMessage: "AI fix failed.",
+  };
+}
+
 function composeAiContext(
   buildAiPromptContext: UseProviderAiStateParams["buildAiPromptContext"],
   extras: Partial<AiPromptContextPayload> = {},
@@ -327,30 +359,31 @@ export function useProviderAiState({
     const requestId = latestAiRequestRef.current + 1;
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
-    onHistoryActionStatus("Generating AI explanation...");
-    const prompt = `Explain this shell command:\n${command}`;
+    const contract = historyAiContract("explain", command);
+    onHistoryActionStatus(contract.pendingStatus);
+    const prompt = contract.prompt;
     setAiPrompt(prompt);
     try {
       const response = await aiExecute({
         session_id: activeSession.id,
         prompt,
         provider_id: routing.default_provider,
-        intent: "explain_command" satisfies AiExecuteIntent,
+        intent: contract.intent,
         context: composeAiContext(buildAiPromptContext, { command_text: command }),
       });
       if (latestAiRequestRef.current !== requestId) {
         return;
       }
       setAiResponse(response.output);
-      onHistoryActionStatus("AI explanation ready.");
-      setAiRequestStatus("AI explanation ready.");
+      onHistoryActionStatus(contract.successStatus);
+      setAiRequestStatus(contract.successStatus);
     } catch (error) {
       if (latestAiRequestRef.current !== requestId) {
         return;
       }
-      const message = error instanceof Error ? error.message : "AI explain failed.";
+      const message = error instanceof Error ? error.message : contract.fallbackErrorMessage;
       onRuntimeError(message);
-      onHistoryActionStatus("AI explanation failed.");
+      onHistoryActionStatus(contract.historyFailureStatus);
       setAiRequestStatus(aiErrorStatusMessage(message));
     } finally {
       if (latestAiRequestRef.current === requestId) {
@@ -370,30 +403,31 @@ export function useProviderAiState({
     const requestId = latestAiRequestRef.current + 1;
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
-    onHistoryActionStatus("Generating safer command suggestion...");
-    const prompt = `Provide a safer or corrected version of this command, with a short explanation:\n${command}`;
+    const contract = historyAiContract("fix", command);
+    onHistoryActionStatus(contract.pendingStatus);
+    const prompt = contract.prompt;
     setAiPrompt(prompt);
     try {
       const response = await aiExecute({
         session_id: activeSession.id,
         prompt,
         provider_id: routing.default_provider,
-        intent: "fix_command" satisfies AiExecuteIntent,
+        intent: contract.intent,
         context: composeAiContext(buildAiPromptContext, { command_text: command }),
       });
       if (latestAiRequestRef.current !== requestId) {
         return;
       }
       setAiResponse(response.output);
-      onHistoryActionStatus("AI fix suggestion ready.");
-      setAiRequestStatus("AI fix suggestion ready.");
+      onHistoryActionStatus(contract.successStatus);
+      setAiRequestStatus(contract.successStatus);
     } catch (error) {
       if (latestAiRequestRef.current !== requestId) {
         return;
       }
-      const message = error instanceof Error ? error.message : "AI fix failed.";
+      const message = error instanceof Error ? error.message : contract.fallbackErrorMessage;
       onRuntimeError(message);
-      onHistoryActionStatus("AI fix failed.");
+      onHistoryActionStatus(contract.historyFailureStatus);
       setAiRequestStatus(aiErrorStatusMessage(message));
     } finally {
       if (latestAiRequestRef.current === requestId) {

@@ -522,36 +522,16 @@ impl SessionManager {
     #[instrument(skip(self, app, request))]
     pub fn history_query(&self, app: &AppHandle, request: HistoryQueryRequest) -> Result<Vec<HistoryEntry>, String> {
         self.ensure_history_hydrated(app)?;
-        let query = request.query.unwrap_or_default().to_lowercase();
         let history = self
             .history
             .lock()
             .map_err(|error| format!("failed to lock history: {error}"))?;
-        let mut output = Vec::new();
-        for entry in history.iter().rev() {
-            if let Some(session_id) = &request.session_id {
-                if &entry.session_id != session_id {
-                    continue;
-                }
-            }
-            if !query.is_empty() && !entry.command.to_lowercase().contains(&query) {
-                continue;
-            }
-            output.push(entry.clone());
-            if output.len() >= request.limit.unwrap_or(100) {
-                break;
-            }
-        }
-        Ok(output)
+        Ok(query_history_entries(&history, &request))
     }
 
     #[instrument(skip(self, app, command))]
     pub fn history_replay(&self, app: &AppHandle, session_id: &str, command: &str) -> Result<(), String> {
-        let normalized = if command.ends_with('\n') {
-            command.to_string()
-        } else {
-            format!("{command}\n")
-        };
+        let normalized = normalize_history_replay_command(command);
         self.write_input(app, session_id, &normalized)
     }
 
@@ -650,6 +630,34 @@ impl SessionManager {
             active_sessions,
             max_chunk_size: MAX_CHUNK,
         })
+    }
+}
+
+fn query_history_entries(history: &VecDeque<HistoryEntry>, request: &HistoryQueryRequest) -> Vec<HistoryEntry> {
+    let query = request.query.as_deref().unwrap_or_default().to_lowercase();
+    let mut output = Vec::new();
+    for entry in history.iter().rev() {
+        if let Some(session_id) = &request.session_id {
+            if &entry.session_id != session_id {
+                continue;
+            }
+        }
+        if !query.is_empty() && !entry.command.to_lowercase().contains(&query) {
+            continue;
+        }
+        output.push(entry.clone());
+        if output.len() >= request.limit.unwrap_or(100) {
+            break;
+        }
+    }
+    output
+}
+
+fn normalize_history_replay_command(command: &str) -> String {
+    if command.ends_with('\n') {
+        command.to_string()
+    } else {
+        format!("{command}\n")
     }
 }
 
@@ -790,7 +798,10 @@ pub fn default_shell() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{history_store, split_chunk, SessionManager};
+    use super::{
+        history_store, normalize_history_replay_command, query_history_entries, split_chunk, SessionManager,
+    };
+    use crate::models::{HistoryEntry, HistoryQueryRequest};
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     use std::collections::VecDeque;
     use std::io::Read;
@@ -885,5 +896,58 @@ mod tests {
         }
         assert!(reader_thread.is_finished(), "expected reader thread to finish after kill");
         reader_thread.join().expect("join reader thread");
+    }
+
+    fn history_entry(id: u64, session_id: &str, command: &str, timestamp_ms: u64) -> HistoryEntry {
+        HistoryEntry {
+            id,
+            session_id: session_id.to_string(),
+            command: command.to_string(),
+            timestamp_ms,
+        }
+    }
+
+    #[test]
+    fn history_query_entries_preserves_newest_first_order_and_limit() {
+        let history = VecDeque::from(vec![
+            history_entry(1, "session-a", "echo first", 1000),
+            history_entry(2, "session-a", "echo second", 2000),
+            history_entry(3, "session-a", "echo third", 3000),
+        ]);
+        let output = query_history_entries(
+            &history,
+            &HistoryQueryRequest {
+                query: None,
+                session_id: None,
+                limit: Some(2),
+            },
+        );
+        let commands: Vec<&str> = output.iter().map(|entry| entry.command.as_str()).collect();
+        assert_eq!(commands, vec!["echo third", "echo second"]);
+    }
+
+    #[test]
+    fn history_query_entries_filters_case_insensitively_and_by_session() {
+        let history = VecDeque::from(vec![
+            history_entry(1, "session-a", "npm run test:ux", 1000),
+            history_entry(2, "session-b", "git status --short", 2000),
+            history_entry(3, "session-a", "NPM run build", 3000),
+        ]);
+        let output = query_history_entries(
+            &history,
+            &HistoryQueryRequest {
+                query: Some("npm RUN".to_string()),
+                session_id: Some("session-a".to_string()),
+                limit: None,
+            },
+        );
+        let commands: Vec<&str> = output.iter().map(|entry| entry.command.as_str()).collect();
+        assert_eq!(commands, vec!["NPM run build", "npm run test:ux"]);
+    }
+
+    #[test]
+    fn history_replay_normalization_appends_single_newline_when_missing() {
+        assert_eq!(normalize_history_replay_command("echo hello"), "echo hello\n");
+        assert_eq!(normalize_history_replay_command("echo hello\n"), "echo hello\n");
     }
 }

@@ -11,8 +11,10 @@ execution path.
 ## Current Repo State
 
 - Branch: `master`
-- Working tree: expected clean after latest commits
+- Working tree: clean after latest UX smoke tranche
 - Stack: Tauri v2 + Rust backend, React/TypeScript frontend, xterm.js renderer
+- Latest completed tranche: pane-focus/follow-output UX smoke contracts (`52e12cc`)
+- Invoke transport status: strict path exists (`test:invoke:strict`) but is not yet promoted to blocking gates due to Windows `STATUS_ENTRYPOINT_NOT_FOUND` runtime instability
 
 ## Recently Shipped Slices
 
@@ -41,7 +43,7 @@ Primary files:
 - Generalized backup list/restore parity across `pwsh`, `bash`, `zsh`.
 - Added health diagnostics parity for `bash` and `zsh`.
 - Refactored settings UI to render backup/recovery controls from capabilities
-  instead of pwsh-only branches.
+instead of pwsh-only branches.
 - Updated frontend and backend tests for capability-driven behavior.
 
 Primary files:
@@ -192,6 +194,31 @@ Primary files:
 - `src/state/workspace.test.ts`
 - `README.md`
 
+### UX smoke tranche (history replay + AI explain/fix contracts)
+
+- Added deterministic smoke coverage for checklist items `3` and `4` behavior contracts:
+  - case-insensitive history search filtering
+  - dual empty-state messaging (`no history` vs `no search matches`)
+  - replay/explain/fix handlers receiving full command text (not truncated display text)
+  - explain/fix wiring from settings modal callbacks into history panel handlers
+- Added AI orchestration contract tests for history actions:
+  - explain/fix intent mapping (`explain_command`, `fix_command`)
+  - prompt shaping and stable pending/success/failure status strings
+- Strengthened backend history semantics guards:
+  - newest-first query ordering with limit enforcement
+  - case-insensitive + session-scoped filtering
+  - replay newline normalization contract
+
+Primary files:
+
+- `src/components/HistoryPanel.tsx`
+- `src/components/HistoryPanel.smoke.test.ts`
+- `src/components/AppSettingsModal.tsx`
+- `src/hooks/useProviderAiState.ts`
+- `src/hooks/useProviderAiState.test.ts`
+- `src-tauri/src/session_manager.rs`
+- `README.md`
+
 ### Shell status consolidation (P5 follow-up)
 
 - Refactored shell status construction to use shared backend derivation/builders across `pwsh`, `bash`, and `zsh`.
@@ -300,9 +327,9 @@ Do not set this flag from general onboarding Save/Quick start/Skip flows.
 ## Known Observations
 
 - `settings_persistence` concurrent-write test can fail transiently on Windows
-  due to filesystem timing/race behavior; rerun has historically passed.
+due to filesystem timing/race behavior; rerun has historically passed.
 - PowerShell profile warnings in local shell startup can appear in tool output
-  and are unrelated to app tests.
+and are unrelated to app tests.
 
 ## Open Backlog (Recommended Priority)
 
@@ -316,6 +343,12 @@ Anchor files:
 - `docs/ux-dogfood-log-template.md`
 - relevant UX test targets under `src/*`
 
+Remaining high-signal checklist gaps (recommended next UX slices):
+
+- find-bar toggle/control interaction contracts (`README` checklist items `10` and `12`)
+- context-menu copy/select-all + safe-paste parity refinements (`README` checklist item `11` plus deeper item `17` paths)
+- richer scroll/follow-output behavioral matrix under sustained output (`README` checklist item `14`)
+
 ### 2) Shell Integration P5 follow-up (status-path consolidation)
 
 Goal: continue P5 by promoting invoke-level command tests for `shell_integration_status` from non-blocking smoke to stable blocking coverage once runtime entrypoint issues are resolved.
@@ -323,7 +356,7 @@ Goal: continue P5 by promoting invoke-level command tests for `shell_integration
 Potential tasks:
 
 - clear Windows mock/webview `STATUS_ENTRYPOINT_NOT_FOUND` runtime failures so strict invoke path becomes reliable
-- promote strict invoke path into `stability:signoff` / CI only after repeatable multi-OS passes
+- promote strict invoke path into `stability:signoff` / CI only after repeatable multi-OS passes (Windows + at least one Unix target)
 - continue expanding invoke coverage to additional shell-status edge cases while preserving payload contract keys/casing
 
 ## Next Session Startup Checklist
@@ -331,18 +364,20 @@ Potential tasks:
 1. Read this file and `README.md` "Next Build Steps".
 2. Pick one slice and define todo ids before coding.
 3. Run baseline verification:
-   - `npm run test:types`
-   - `npm run test:ux`
-   - `npm run test:ux:smoke`
-   - `cargo test --manifest-path src-tauri/Cargo.toml`
-4. Implement in small commits by logical behavior boundary.
-5. Re-run the same verification suite before final commit.
+  - `npm run test:types`
+  - `npm run test:ux`
+  - `npm run test:ux:smoke`
+  - `cargo test --manifest-path src-tauri/Cargo.toml`
+4. If touching invoke transport, run both modes and record behavior:
+  - `npm run test:invoke:smoke`
+  - `npm run test:invoke:strict`
+5. Implement in small commits by logical behavior boundary.
+6. Re-run the same verification suite before final commit.
 
 ## Recent Commits (most relevant)
 
-- `59f1cef` `:sparkles: feat(shell-integration): add capability-driven cross-shell recovery parity`
-- `4c6adc7` `:see_no_evil: chore(git): ignore .cursor workspace metadata`
-- `bc82297` `:sparkles: feat(ui): add AI insight workflow and bundled status glyph assets`
-- `9e602e8` `:bug: fix(shell-integration): include runtime hook resources and missing settings wiring`
-- `3e3721f` `:sparkles: feat(shell-integration): ship P3 onboarding gating and backup recovery`
-
+- `52e12cc` `:white_check_mark: test(ux-smoke): add pane focus and follow-output contracts`
+- `c49ccd6` `:white_check_mark: test(shell-integration): add strict invoke promotion path and parity guards`
+- `30f7896` `:white_check_mark: test(shell-integration): scaffold non-blocking invoke transport smoke`
+- `5737453` `:white_check_mark: test(shell-integration): lock shell status wire-shape and error-path contracts`
+- `26ab423` `:recycle: refactor(shell-integration): consolidate shell status builders and parity guards`

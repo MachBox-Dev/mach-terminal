@@ -19,11 +19,30 @@ function formatTimestamp(timestampMs: number): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function truncateCommand(command: string, maxLength: number): string {
+export function truncateCommand(command: string, maxLength: number): string {
   if (command.length <= maxLength) {
     return command;
   }
   return `${command.slice(0, maxLength - 1)}…`;
+}
+
+export function filterHistoryEntries(entries: HistoryEntry[], query: string): HistoryEntry[] {
+  if (!query.trim()) {
+    return entries;
+  }
+  const normalizedQuery = query.toLowerCase();
+  return entries.filter((entry) => entry.command.toLowerCase().includes(normalizedQuery));
+}
+
+export function historyEmptyStateMessage(query: string): string {
+  return query.trim() ? "No commands matched your search." : "No command history yet.";
+}
+
+/**
+ * Keep row actions bound to the full command text even when display is truncated.
+ */
+export function historyActionCommand(entry: HistoryEntry): string {
+  return entry.command;
 }
 
 export function HistoryPanel({
@@ -38,12 +57,7 @@ export function HistoryPanel({
   onFix,
 }: HistoryPanelProps) {
   const [query, setQuery] = useState("");
-  const filtered = useMemo(() => {
-    if (!query.trim()) {
-      return entries;
-    }
-    return entries.filter((entry) => entry.command.toLowerCase().includes(query.toLowerCase()));
-  }, [entries, query]);
+  const filtered = useMemo(() => filterHistoryEntries(entries, query), [entries, query]);
 
   return (
     <section id={sectionId}>
@@ -59,7 +73,7 @@ export function HistoryPanel({
         {actionStatus ? <p className="muted-block">{actionStatus}</p> : null}
         <div className="history-list">
           {!loading && filtered.length === 0 ? (
-            <p className="muted-block">{query.trim() ? "No commands matched your search." : "No command history yet."}</p>
+            <p className="muted-block">{historyEmptyStateMessage(query)}</p>
           ) : null}
           {filtered.map((entry) => (
             <div className="history-row" key={entry.id}>
@@ -69,13 +83,13 @@ export function HistoryPanel({
               </div>
               <code title={entry.command}>{truncateCommand(entry.command, 140)}</code>
               <div className="history-actions">
-                <button type="button" className="inline-btn" onClick={() => onReplay(entry.command)}>
+                <button type="button" className="inline-btn" onClick={() => onReplay(historyActionCommand(entry))}>
                   replay
                 </button>
-                <button type="button" className="inline-btn" onClick={() => onExplain(entry.command)} disabled={aiBusy}>
+                <button type="button" className="inline-btn" onClick={() => onExplain(historyActionCommand(entry))} disabled={aiBusy}>
                   explain
                 </button>
-                <button type="button" className="inline-btn" onClick={() => onFix(entry.command)} disabled={aiBusy}>
+                <button type="button" className="inline-btn" onClick={() => onFix(historyActionCommand(entry))} disabled={aiBusy}>
                   fix
                 </button>
               </div>
