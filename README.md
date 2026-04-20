@@ -53,7 +53,7 @@ Current executable provider path is `ollama`; other providers remain visible as 
 
 Run this checklist before calling a UX slice complete:
 
-Scripted smoke coverage now runs for a focused subset of terminal interaction checks (`test:ux:smoke`): command-palette keyboard lifecycle, focused terminal-find intent/counter flow, link activation safety contracts, exited-session lifecycle contracts, pane-focus/follow-output command routing contracts (focused-only consume semantics + deterministic split/close fallback), history replay search/empty-state contracts, AI explain/fix history-action status contracts, plus BEL visual flash and context-menu/safe-paste contracts. Remaining checklist items below still require manual dogfood verification.
+Scripted smoke coverage now runs for a focused subset of terminal interaction checks (`test:ux:smoke`): command-palette keyboard lifecycle, focused terminal-find intent/counter flow, link activation safety contracts, exited-session lifecycle contracts, pane-focus/follow-output command routing contracts (focused-only consume semantics + deterministic split/close fallback), history replay search/empty-state contracts, AI explain/fix history-action status contracts, composer completion/prediction/history acceptance contracts, plus BEL visual flash and context-menu/safe-paste contracts. Remaining checklist items below still require manual dogfood verification.
 
 1. Open command palette with `Ctrl/Cmd+K`, navigate with arrow keys, execute with Enter, dismiss with Escape.
 2. Split and resize panes rapidly; verify active-pane focus ring and stable terminal resize behavior.
@@ -79,6 +79,14 @@ Scripted smoke coverage now runs for a focused subset of terminal interaction ch
 
 Use the reusable execution log template for team handoff and release notes:
 - `docs/ux-dogfood-log-template.md`
+
+### Composer Input Contracts
+
+- Composer remains the only interactive input surface; xterm viewport typing is intentionally disabled.
+- `Tab` requests completion and cycles candidates; when no completion candidates exist, `Tab` accepts inline prediction if the caret is at draft end.
+- `Escape` dismisses active completion metadata without mutating the draft.
+- `Up` / `Down` browse bounded recent history (newest-first) and restore the pre-browse draft when leaving history mode.
+- Completion fallback status shows `Completions unavailable` when backend completion probing fails.
 
 ## Shell integration (OSC 7)
 

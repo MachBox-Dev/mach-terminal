@@ -1366,6 +1366,13 @@ body {
   color: #64748b;
 }
 
+.terminal-composer-completion-metrics {
+  margin: 0;
+  font-size: 0.62rem;
+  color: #525f73;
+  font-family: var(--mach-terminal-mono);
+}
+
 .split-single {
   display: grid;
   grid-template-columns: 1fr;

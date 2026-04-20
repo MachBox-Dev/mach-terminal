@@ -42,6 +42,7 @@ import { MachStatusStrip } from "./MachStatusStrip";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const SCROLLBACK_LINES = 8000;
+const COMPOSER_HISTORY_WINDOW = 250;
 /** Max composer height as a fraction of the terminal pane height; textarea scrolls internally beyond this. */
 const COMPOSER_MAX_HEIGHT_RATIO = 0.3;
 
@@ -232,8 +233,15 @@ export function TerminalSurface({
   const historyStateRef = useRef(createComposerHistoryState());
   const [completionState, setCompletionState] = useState(createComposerCompletionState);
   const [prediction, setPrediction] = useState<string | null>(null);
+  const completionMetricsRef = useRef({
+    requests: 0,
+    accepted: 0,
+    totalLatencyMs: 0,
+  });
+  const [completionMetricsTick, setCompletionMetricsTick] = useState(0);
   const terminalPanelRef = useRef<HTMLElement | null>(null);
   const composerLocked = !activeSession || Boolean(exitedInfo);
+  const boundedHistoryEntries = useMemo(() => historyEntries.slice(0, COMPOSER_HISTORY_WINDOW), [historyEntries]);
 
   pendingPasteRef.current = pendingPaste;
   pasteBypassForSessionRef.current = pasteBypassForSession;
@@ -323,6 +331,8 @@ export function TerminalSurface({
     const requestKey = completionRequestKey(composerDraft, cursor);
     const nextSeq = completionRequestSeqRef.current + 1;
     completionRequestSeqRef.current = nextSeq;
+    const requestStartedAt = performance.now();
+    completionMetricsRef.current.requests += 1;
     try {
       const response = await onRequestComposerCompletion({
         draft: composerDraft,
@@ -339,6 +349,9 @@ export function TerminalSurface({
       }
       const applied = applyCompletionCandidate(composerDraft, response, 0);
       setComposerDraft(applied.draft);
+      completionMetricsRef.current.accepted += 1;
+      completionMetricsRef.current.totalLatencyMs += Math.max(0, performance.now() - requestStartedAt);
+      setCompletionMetricsTick((tick) => tick + 1);
       setCompletionState({
         response,
         selectedIndex: 0,
@@ -353,6 +366,8 @@ export function TerminalSurface({
       });
       return true;
     } catch (error) {
+      completionMetricsRef.current.totalLatencyMs += Math.max(0, performance.now() - requestStartedAt);
+      setCompletionMetricsTick((tick) => tick + 1);
       if (completionRequestSeqRef.current === nextSeq) {
         resetCompletionState("Completions unavailable");
       }
@@ -374,6 +389,8 @@ export function TerminalSurface({
     }
     const nextIndex = nextCompletionIndex(current.response, current.selectedIndex);
     const applied = applyCompletionCandidate(composerDraft, current.response, nextIndex);
+    completionMetricsRef.current.accepted += 1;
+    setCompletionMetricsTick((tick) => tick + 1);
     setCompletionState((prev) => ({
       ...prev,
       selectedIndex: nextIndex,
@@ -394,7 +411,7 @@ export function TerminalSurface({
       if (composerLocked) {
         return false;
       }
-      const next = nextHistoryDraft(historyStateRef.current, historyEntries, composerDraft, direction);
+      const next = nextHistoryDraft(historyStateRef.current, boundedHistoryEntries, composerDraft, direction);
       historyStateRef.current = next.state;
       if (next.draft === null) {
         return false;
@@ -411,7 +428,7 @@ export function TerminalSurface({
       });
       return true;
     },
-    [composerDraft, composerLocked, historyEntries, resetCompletionState],
+    [boundedHistoryEntries, composerDraft, composerLocked, resetCompletionState],
   );
 
   const syncComposerHeight = useCallback(() => {
@@ -1049,9 +1066,9 @@ export function TerminalSurface({
   }, [exitedInfo]);
 
   useEffect(() => {
-    const nextPrediction = predictionForDraft(composerDraft, historyEntries);
+    const nextPrediction = predictionForDraft(composerDraft, boundedHistoryEntries);
     setPrediction(nextPrediction);
-  }, [composerDraft, historyEntries]);
+  }, [boundedHistoryEntries, composerDraft]);
 
   useEffect(() => {
     onComposerDraftChange?.(composerDraft);
@@ -1288,6 +1305,8 @@ export function TerminalSurface({
                       if (canAcceptPrediction(composerDraft, prediction, selectionStart, selectionEnd)) {
                         e.preventDefault();
                         setComposerDraft(prediction);
+                        completionMetricsRef.current.accepted += 1;
+                        setCompletionMetricsTick((tick) => tick + 1);
                         return;
                       }
                     }
@@ -1316,6 +1335,8 @@ export function TerminalSurface({
                         }
                         if (prediction && canAcceptPrediction(composerDraft, prediction, selectionStart, selectionEnd)) {
                           setComposerDraft(prediction);
+                          completionMetricsRef.current.accepted += 1;
+                          setCompletionMetricsTick((tick) => tick + 1);
                         }
                       });
                       return;
@@ -1345,6 +1366,16 @@ export function TerminalSurface({
               {completionState.response && completionState.response.candidates.length > 1 ? (
                 <p className="terminal-composer-completion-meta" aria-live="polite">
                   Completion {completionState.selectedIndex + 1}/{completionState.response.candidates.length}
+                </p>
+              ) : null}
+              {completionMetricsTick >= 0 ? (
+                <p className="terminal-composer-completion-metrics" aria-live="polite">
+                  Assist metrics: {completionMetricsRef.current.requests} requests · {completionMetricsRef.current.accepted} accepts ·
+                  avg{" "}
+                  {completionMetricsRef.current.requests > 0
+                    ? Math.round(completionMetricsRef.current.totalLatencyMs / completionMetricsRef.current.requests)
+                    : 0}
+                  ms
                 </p>
               ) : null}
               {aiAssistEnabled && isFocused && (onAiExplainComposer || onAiFixComposer) ? (

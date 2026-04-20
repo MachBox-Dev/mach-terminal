@@ -11,9 +11,9 @@ execution path.
 ## Current Repo State
 
 - Branch: `master`
-- Working tree: clean after latest UX smoke tranche
+- Working tree: clean after composer roadmap tranche 2 commits
 - Stack: Tauri v2 + Rust backend, React/TypeScript frontend, xterm.js renderer
-- Latest completed tranche: pane-focus/follow-output UX smoke contracts (`52e12cc`)
+- Latest completed tranche: composer completion + prediction/history tranche 2 (`58bc84a`)
 - Invoke transport status: strict path exists (`test:invoke:strict`) but is not yet promoted to blocking gates due to Windows `STATUS_ENTRYPOINT_NOT_FOUND` runtime instability
 
 ## Recently Shipped Slices
@@ -219,6 +219,37 @@ Primary files:
 - `src-tauri/src/session_manager.rs`
 - `README.md`
 
+### Composer roadmap tranche 1+2 (completion + prediction/history)
+
+- Composer-first input model is now fully enforced in UI behavior:
+  - xterm pane remains non-interactive for stdin (`disableStdin=true`)
+  - completion/prediction/history live in the composer only
+- Added backend completion command (`composer_complete`) with:
+  - cwd-aware path completion (relative, absolute, quoted, `~` expansion)
+  - command-name completion from PATH executable scan + shell builtin index
+  - cache invalidation for PATH command index (time + PATH-key aware)
+- Added frontend completion/prediction/history engines and deterministic tests:
+  - pure completion state/cycle helpers
+  - pure history navigation + prediction acceptance guards
+  - smoke contracts covering completion cycling + prediction/history acceptance semantics
+- Added composer discoverability/hardening hooks:
+  - fallback message when completion probing fails
+  - bounded history window for prediction/history browsing
+  - lightweight assist metrics line (request count, accept count, avg completion latency)
+
+Primary files:
+
+- `src-tauri/src/composer_completion.rs`
+- `src-tauri/src/lib.rs`
+- `src/core/composerCompletion.ts`
+- `src/core/composerHistory.ts`
+- `src/core/composerInput.smoke.test.ts`
+- `src/components/TerminalSurface.tsx`
+- `src/App.tsx`
+- `src/components/SplitWorkspace.tsx`
+- `src/core/terminal.ts`
+- `README.md`
+
 ### Shell status consolidation (P5 follow-up)
 
 - Refactored shell status construction to use shared backend derivation/builders across `pwsh`, `bash`, and `zsh`.
@@ -333,23 +364,7 @@ and are unrelated to app tests.
 
 ## Open Backlog (Recommended Priority)
 
-### 1) Scripted UX smoke coverage (expand beyond current smoke batch)
-
-Goal: extend scripted smoke coverage from the current palette/find + link-safety + exit-lifecycle + pane-focus/follow-output batch to additional UX dogfood checklist items.
-
-Anchor files:
-
-- `scripts/*`
-- `docs/ux-dogfood-log-template.md`
-- relevant UX test targets under `src/*`
-
-Remaining high-signal checklist gaps (recommended next UX slices):
-
-- find-bar toggle/control interaction contracts (`README` checklist items `10` and `12`)
-- context-menu copy/select-all + safe-paste parity refinements (`README` checklist item `11` plus deeper item `17` paths)
-- richer scroll/follow-output behavioral matrix under sustained output (`README` checklist item `14`)
-
-### 2) Shell Integration P5 follow-up (status-path consolidation)
+### 1) Shell Integration P5 follow-up (status-path consolidation)
 
 Goal: continue P5 by promoting invoke-level command tests for `shell_integration_status` from non-blocking smoke to stable blocking coverage once runtime entrypoint issues are resolved.
 
@@ -376,6 +391,8 @@ Potential tasks:
 
 ## Recent Commits (most relevant)
 
+- `58bc84a` `:sparkles: feat(composer): tighten prediction and history acceptance model`
+- `817b5d1` `:sparkles: feat(composer): add completion engine and composer assist flows`
 - `52e12cc` `:white_check_mark: test(ux-smoke): add pane focus and follow-output contracts`
 - `c49ccd6` `:white_check_mark: test(shell-integration): add strict invoke promotion path and parity guards`
 - `30f7896` `:white_check_mark: test(shell-integration): scaffold non-blocking invoke transport smoke`
