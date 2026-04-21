@@ -149,12 +149,15 @@ describe("findAbsoluteFilePathsInLine", () => {
     const win = hits.filter((h) => h.path.startsWith("C:"));
     expect(win).toHaveLength(1);
     expect(win[0].path).toBe("C:\\src\\main.ts");
+    expect(line.slice(win[0].start, win[0].endExclusive)).toBe("C:\\src\\main.ts");
   });
 
   it("trims compiler-style line info for unix paths", () => {
     const line = "at /src/main.ts:42:7 while compiling";
     const hits = findAbsoluteFilePathsInLine(line);
-    expect(hits.some((h) => h.path === "/src/main.ts")).toBe(true);
+    const unix = hits.find((h) => h.path === "/src/main.ts");
+    expect(unix).toBeDefined();
+    expect(line.slice(unix!.start, unix!.endExclusive)).toBe("/src/main.ts");
   });
 
   it("stops on double space even with a later separator", () => {

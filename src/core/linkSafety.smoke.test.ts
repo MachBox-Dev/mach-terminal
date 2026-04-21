@@ -52,4 +52,30 @@ describe("Terminal link safety smoke contracts", () => {
     expect(openUrl).toHaveBeenCalledTimes(1);
     expect(openPath).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * Compiler-style diagnostics append `:line:col`. The clickable span must be path-only so the
+   * opener receives a real filesystem path (`normalizeFilePathForOpen` strips the suffix).
+   */
+  it("limits merged file-link spans to path-only for compiler-style Windows paths", () => {
+    const line = "error in C:\\src\\main.ts:42:7 missing semicolon";
+    const merged = mergeHttpAndFileLinksForLine(line);
+    const file = merged.find((m) => m.kind === "file");
+    expect(file).toBeDefined();
+    expect(file!.path).toBe("C:\\src\\main.ts");
+    const underline = line.slice(file!.start, file!.endExclusive);
+    expect(underline).toBe("C:\\src\\main.ts");
+    expect(underline.includes(":42")).toBe(false);
+  });
+
+  it("limits merged file-link spans to path-only for compiler-style Unix paths", () => {
+    const line = "at /src/main.ts:42:7 while compiling";
+    const merged = mergeHttpAndFileLinksForLine(line);
+    const file = merged.find((m) => m.kind === "file");
+    expect(file).toBeDefined();
+    expect(file!.path).toBe("/src/main.ts");
+    const underline = line.slice(file!.start, file!.endExclusive);
+    expect(underline).toBe("/src/main.ts");
+    expect(underline).not.toMatch(/:\d+/);
+  });
 });

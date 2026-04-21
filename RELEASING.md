@@ -15,6 +15,23 @@ This document defines the production release process for Mach Terminal.
 | Signing secrets | **Required** in CI (`TAURI_SIGNING_PRIVATE_KEY`, `UPDATER_PUBLIC_KEY`) — workflow fails if missing | Optional; build still runs if validation job is skipped |
 | Updater manifest | Shipped in artifacts when signing is configured; users on stable channel pick up `latest.json` after promotion | Pre-release builds are suitable for testers; point testers at the RC asset or a separate manifest if needed |
 
+## What CI already enforces
+
+Before any release artifacts ship, automation covers overlapping checks:
+
+| Surface | Where | What runs |
+|---------|-------|-----------|
+| Matrix PR/push CI | `.github/workflows/ci.yml` — job `matrix-build-and-test` | `npm run build`, `npm run test` (includes `npm run test:pty`), `npm run test:invoke:strict`, `cargo check` |
+| Stability gate | `.github/workflows/ci.yml` — job `stability-signoff` on PR/master | `npm run stability:signoff` (`check:versions`, full tests, UX smoke, strict invoke, frontend build) |
+| Security | `.github/workflows/ci.yml` — job `security-baseline` | `npm run security:baseline` |
+| Release bundle smoke | `.github/workflows/ci.yml` — job `release-smoke` | `npm run release:smoke` (matches part of release preflight; uses placeholder `UPDATER_PUBLIC_KEY` like local smoke) |
+| Tagged release | `.github/workflows/release.yml` — job `preflight-release-quality` | `check:versions`, `npm run test`, `npm run stability:signoff`, `npm run release:smoke`, `npm run security:baseline` |
+| Post-build checksums | `.github/workflows/release.yml` — job `publish-checksums` | Downloads release assets, writes `SHA256SUMS.txt`, uploads to the GitHub Release |
+
+Stable tags additionally require signing secrets (`validate-stable-signing` job). **Code signing** for macOS/Windows still depends on platform certificates in that workflow; **artifact integrity for downloaders** is the SHA256 file published next to installers. Before promoting a draft stable release, open the release on GitHub and confirm `SHA256SUMS.txt` is present and matches expectations.
+
+Local dry run (`npm run release:dry-run`) hashes debug-bundle outputs into `artifacts/release-dry-run-checksums.txt`; it does not replace `release:smoke` or signing.
+
 ## Preflight Checklist
 
 1. Run local validation (matches CI/release enforcement):

@@ -1,6 +1,6 @@
 # Continuation Handoff
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21
 
 ## Purpose
 
@@ -12,17 +12,29 @@ execution path.
 
 - Branch: `master`
 - Stack: Tauri v2 + Rust backend, React/TypeScript frontend, xterm.js renderer
-- Latest completed tranche: enhancement tranche 3 (unified UX follow-through + OSC 133 + invoke signoff wiring) — see git log for commit hash
-- Invoke transport: `npm run test:invoke:strict` is part of **`npm run stability:signoff`** on Linux and macOS only; Windows still skips strict invoke in that script because mock-webview runs can hit `STATUS_ENTRYPOINT_NOT_FOUND`
+- Latest completed tranche: enhancement **tranche 5** — docs truth refresh (`README`/handoff/release docs), scripted compiler-style path-link smoke coverage, and release-readiness CI/checksum guidance; see git log for the tranche 5 commit.
+- Invoke transport: `npm run test:invoke:strict` runs as part of **`npm run stability:signoff` on all platforms.** On Windows the runner exercises the serialization contract via filtered lib tests (MockRuntime/linking avoids `STATUS_ENTRYPOINT_NOT_FOUND`); on Unix run `cargo test --manifest-path src-tauri/Cargo.toml --features invoke-smoke --test shell_integration_invoke_smoke` for full transport assertions ([`docs/runtime-contracts.md`](runtime-contracts.md)).
 
 ## Recently Shipped Slices
+
+### Enhancement tranche 5 (docs truth, link smoke depth, release-readiness notes)
+
+- Updated `README` Next Build Steps to reflect shipped provider adapters and current focus (provider UX/reliability, scripted smoke depth, release hardening).
+- Refreshed this handoff to remove stale invoke-platform caveats and consolidate invoke transport history/current behavior.
+- Added compiler-style link-span smoke assertions (`C:\src\main.ts:42:7`, `/src/main.ts:42:7`) and aligned file-link ranges to underline path-only spans.
+- Expanded `RELEASING.md` with a CI enforcement map (`ci.yml` matrix/signoff/security/release-smoke + `release.yml` preflight/checksum publish).
+
+### Enhancement tranche 4 (invoke spine, OSC 133 depth, scripted smoke)
+
+- Windows-safe invoke harness: nested include [`tests/shell_integration_invoke_smoke/body.rs`](../src-tauri/tests/shell_integration_invoke_smoke/body.rs) so Cargo does not compile MockRuntime-backed sources as a stray integration crate on Windows.
+- OSC 133: [`tests/pty_behavior.rs`](../src-tauri/tests/pty_behavior.rs) drains real PTY output through the decoder; Settings manual snippets + README cross-links for OSC 133 adoption.
+- Atomic `settings.json` saves retry on `NotFound` as well as permission races ([`settings.rs`](../src-tauri/src/settings.rs)).
 
 ### Enhancement tranche 3 (composer scroll, assist metrics, OSC 133, CI)
 
 - **Composer scroll:** `Ctrl+Alt+Page Up` / `Page Down` pages xterm output while the composer stays focused; pure helper in [`src/core/composerOutputScroll.ts`](../src/core/composerOutputScroll.ts) + smoke in [`src/core/composerInput.smoke.test.ts`](../src/core/composerInput.smoke.test.ts).
 - **Assist metrics profile flag:** `show_composer_assist_metrics` on [`TerminalProfile`](../src-tauri/src/models.rs) / [`profilePatch`](../src/core/terminal.ts) + Settings toggle; [`TerminalSurface.tsx`](../src/components/TerminalSurface.tsx) shows metrics when `import.meta.env.DEV` **or** the flag is set.
 - **OSC 133:** Incremental decoder [`src-tauri/src/osc133.rs`](../src-tauri/src/osc133.rs), PTY reader emits `pty-command-marker` (see [`docs/runtime-contracts.md`](runtime-contracts.md)); UI shows latest hint on [`MachStatusStrip.tsx`](../src/components/MachStatusStrip.tsx). Optional copy-paste snippets in [`src/core/machShellSnippets.ts`](../src/core/machShellSnippets.ts).
-- **Invoke / signoff:** [`scripts/stability-signoff.mjs`](../scripts/stability-signoff.mjs) runs strict invoke on all platforms; [`scripts/invoke-smoke.mjs`](../scripts/invoke-smoke.mjs) uses Unix integration tests vs Windows lib-test fallback (see [`docs/runtime-contracts.md`](runtime-contracts.md)).
 
 ### Shell Integration P3 (Windows-first)
 
@@ -291,46 +303,18 @@ Primary files:
 - `src-tauri/src/settings.rs`
 - `docs/runtime-contracts.md`
 
-### Shell invoke transport bootstrap (non-blocking phased rollout)
+### Shell invoke transport (history → current behavior)
 
-- Added initial invoke-transport smoke spec for `shell_integration_status`:
-  - `src-tauri/tests/shell_integration_invoke_smoke.rs`
-  - assertions cover canonical shell row ordering and key pwsh error/null/source semantics.
-- Added non-blocking invoke runner:
-  - `npm run test:invoke:smoke` (`scripts/invoke-smoke.mjs`)
-  - executes feature-gated (`invoke-smoke`) ignored invoke smoke tests with failure-tolerant behavior for phased adoption.
-- Current environment caveat: Windows mock-webview runtime can fail with `STATUS_ENTRYPOINT_NOT_FOUND`; runner is intentionally non-blocking until transport stability is proven.
+Historical rollout: bootstrap smoke → strict promotion → expanded JSON assertions at the transport boundary. Older Windows setups could hit **`STATUS_ENTRYPOINT_NOT_FOUND`** when linking `tauri::test` / MockRuntime into the wrong test binary; **tranche 4** addressed this by splitting Unix integration tests (dev-dependency `tauri` + `test` feature, feature-gated `shell_integration_invoke_smoke`) from a **Windows lib-test fallback** that still pins the wire contract without MockRuntime.
+
+Current scripts: `npm run test:invoke:smoke`, `npm run test:invoke:strict` ([`scripts/invoke-smoke.mjs`](../scripts/invoke-smoke.mjs)); details in [`docs/runtime-contracts.md`](runtime-contracts.md).
 
 Primary files:
 
-- `src-tauri/tests/shell_integration_invoke_smoke.rs`
-- `scripts/invoke-smoke.mjs`
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `docs/runtime-contracts.md`
-
-### Shell invoke promotion wiring (strict path + expanded contracts)
-
-- Hardened invoke harness gating and diagnostics:
-  - `invoke-smoke` now enables `tauri/test` only when requested, so baseline `cargo test` stays unaffected.
-  - invoke runner now reports structured failure details (exit status/signal + entrypoint caveat hints).
-- Expanded invoke transport assertions:
-  - top-level payload shape (`scriptVersion`, `shellDir`, `shells`)
-  - canonical row order remains `pwsh`, `bash`, `zsh`
-  - cross-shell capability + allowed-health invariants now asserted at transport boundary
-- Added staged invoke scripts:
-  - `npm run test:invoke:smoke` (non-blocking, failure-tolerant)
-  - `npm run test:invoke:strict` (opt-in strict, failure-propagating)
-- Added backend guard parity coverage for top-level shell integration status serialization to reduce transport-vs-backend drift.
-
-Primary files:
-
-- `src-tauri/tests/shell_integration_invoke_smoke.rs`
+- `src-tauri/tests/shell_integration_invoke_smoke.rs`, `src-tauri/tests/shell_integration_invoke_smoke/body.rs`
 - `src-tauri/src/shell_integration.rs`
-- `scripts/invoke-smoke.mjs`
-- `package.json`
+- `scripts/invoke-smoke.mjs`, `scripts/stability-signoff.mjs`
 - `src-tauri/Cargo.toml`
-- `docs/runtime-contracts.md`
 
 ## Important Contracts
 
@@ -363,8 +347,7 @@ Do not set this flag from general onboarding Save/Quick start/Skip flows.
 
 ## Known Observations
 
-- `settings_persistence` concurrent-write test can fail transiently on Windows
-due to filesystem timing/race behavior; rerun has historically passed.
+- `settings_persistence` concurrent-write coverage relies on atomic-save retries for `PermissionDenied` and transient **`NotFound`** races on Windows renames; if a failure persists after retries, treat it as a real regression (not a flake).
 - PowerShell profile warnings in local shell startup can appear in tool output
 and are unrelated to app tests.
 

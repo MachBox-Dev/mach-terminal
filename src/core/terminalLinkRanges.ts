@@ -127,6 +127,12 @@ function stripCompilerLocationSuffix(path: string): string {
   return path.replace(/:(\d+)(?::(\d+))?$/u, "");
 }
 
+/** Bytes of `raw` that should underline as the file link (path only; not `:line:col`). */
+function clickableFileSpanLength(raw: string): number {
+  const trimmed = stripCompilerLocationSuffix(trimTrailingSpaceAndPunct(raw));
+  return trimmed.length;
+}
+
 function normalizeFilePathForOpen(raw: string): string {
   const trimmed = stripCompilerLocationSuffix(trimTrailingSpaceAndPunct(raw));
   if (/^(?:[A-Za-z]:[/\\]|\\\\)/.test(trimmed)) {
@@ -170,9 +176,10 @@ function collectRegexMatches(
     if (!isSafeLocalPathForOpener(path)) {
       continue;
     }
+    const spanLen = clickableFileSpanLength(raw);
     out.push({
       start,
-      endExclusive: start + raw.length,
+      endExclusive: start + spanLen,
       path,
     });
   }
@@ -279,9 +286,10 @@ function scanWindowsDriveLetterPaths(line: string): FilePathRange[] {
     if (!isSafeLocalPathForOpener(path)) {
       continue;
     }
+    const spanLen = clickableFileSpanLength(raw);
     out.push({
       start,
-      endExclusive: start + raw.length,
+      endExclusive: start + spanLen,
       path,
     });
   }
@@ -340,9 +348,10 @@ function scanUncPaths(line: string): FilePathRange[] {
     if (!isSafeLocalPathForOpener(path)) {
       continue;
     }
+    const spanLen = clickableFileSpanLength(raw);
     out.push({
       start,
-      endExclusive: start + raw.length,
+      endExclusive: start + spanLen,
       path,
     });
   }
@@ -365,9 +374,10 @@ function findQuotedWindowsPaths(line: string): FilePathRange[] {
     if (!isSafeLocalPathForOpener(path)) {
       continue;
     }
+    const spanLen = clickableFileSpanLength(inner);
     out.push({
       start: innerStart,
-      endExclusive: innerStart + inner.length,
+      endExclusive: innerStart + spanLen,
       path,
     });
   }
@@ -388,9 +398,10 @@ function findQuotedUnixPaths(line: string): FilePathRange[] {
     if (!isSafeLocalPathForOpener(path)) {
       continue;
     }
+    const spanLen = clickableFileSpanLength(inner);
     out.push({
       start: innerStart,
-      endExclusive: innerStart + inner.length,
+      endExclusive: innerStart + spanLen,
       path,
     });
   }
