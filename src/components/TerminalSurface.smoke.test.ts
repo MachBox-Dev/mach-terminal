@@ -3,8 +3,12 @@ import {
   BELL_FLASH_DURATION_MS,
   canPasteFromContextMenu,
   clampContextMenuPosition,
+  contextMenuDismissActionForKey,
+  contextMenuPasteActionState,
   evaluatePendingPasteState,
+  shouldKeepContextMenuOpenForPointerTarget,
 } from "./TerminalSurface";
+import { pendingPasteGuardActionForKey } from "../core/terminalPasteGuard";
 
 describe("TerminalSurface smoke contracts", () => {
   it("keeps context menu within viewport bounds", () => {
@@ -33,6 +37,8 @@ describe("TerminalSurface smoke contracts", () => {
   it("requires an active session for context-menu paste", () => {
     expect(canPasteFromContextMenu(undefined)).toBe(false);
     expect(canPasteFromContextMenu({ id: "session-1" })).toBe(true);
+    expect(contextMenuPasteActionState(undefined).enabled).toBe(false);
+    expect(contextMenuPasteActionState({ id: "session-1" }).enabled).toBe(true);
   });
 
   it("opens safe-paste guard only for risky payloads", () => {
@@ -41,6 +47,19 @@ describe("TerminalSurface smoke contracts", () => {
     expect(risky).not.toBeNull();
     expect(risky?.reasons.length).toBeGreaterThan(0);
     expect(risky?.summary.lineCount).toBe(2);
+  });
+
+  it("keeps pending-paste guard key handling stable", () => {
+    expect(pendingPasteGuardActionForKey("Enter")).toBe("confirm");
+    expect(pendingPasteGuardActionForKey("Escape")).toBe("cancel");
+    expect(pendingPasteGuardActionForKey("Tab")).toBeNull();
+  });
+
+  it("keeps context-menu dismissal key contract stable", () => {
+    expect(contextMenuDismissActionForKey("Escape")).toBe("dismiss");
+    expect(contextMenuDismissActionForKey("Enter")).toBeNull();
+    expect(shouldKeepContextMenuOpenForPointerTarget(true)).toBe(true);
+    expect(shouldKeepContextMenuOpenForPointerTarget(false)).toBe(false);
   });
 
   it("keeps bell flash duration contract stable", () => {

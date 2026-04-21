@@ -16,6 +16,12 @@ export interface PastePayloadSummary {
   truncated: boolean;
 }
 
+export interface PendingPasteState {
+  text: string;
+  reasons: string[];
+  summary: PastePayloadSummary;
+}
+
 export type PasteDecision =
   | { kind: "send" }
   | { kind: "confirm"; risk: PasteRiskResult };
@@ -70,4 +76,53 @@ export function decidePasteAction(input: PasteDecisionInput): PasteDecision {
     return { kind: "send" };
   }
   return { kind: "confirm", risk };
+}
+
+export function createPendingPasteState(
+  text: string,
+  bypassForSession: boolean,
+): PendingPasteState | null {
+  const decision = decidePasteAction({ text, bypassForSession });
+  if (decision.kind === "send") {
+    return null;
+  }
+  return {
+    text,
+    reasons: decision.risk.reasons,
+    summary: summarizePastePayload(text),
+  };
+}
+
+export function pendingPasteGuardActionForKey(key: string): "confirm" | "cancel" | null {
+  if (key === "Enter") {
+    return "confirm";
+  }
+  if (key === "Escape") {
+    return "cancel";
+  }
+  return null;
+}
+
+export interface PendingPasteResolution {
+  sendText: string | null;
+  nextPending: PendingPasteState | null;
+}
+
+export function resolvePendingPasteAction(
+  pending: PendingPasteState | null,
+  action: "confirm" | "cancel",
+): PendingPasteResolution {
+  if (!pending) {
+    return { sendText: null, nextPending: null };
+  }
+  if (action === "confirm") {
+    return {
+      sendText: pending.text,
+      nextPending: null,
+    };
+  }
+  return {
+    sendText: null,
+    nextPending: null,
+  };
 }

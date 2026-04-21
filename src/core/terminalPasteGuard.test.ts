@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  createPendingPasteState,
   classifyPasteRisk,
   decidePasteAction,
+  pendingPasteGuardActionForKey,
+  resolvePendingPasteAction,
   summarizePastePayload,
 } from "./terminalPasteGuard";
 
@@ -95,5 +98,47 @@ describe("decidePasteAction", () => {
     expect(decidePasteAction({ text: "", bypassForSession: false })).toEqual({
       kind: "send",
     });
+  });
+});
+
+describe("createPendingPasteState", () => {
+  it("returns null for safe payloads", () => {
+    expect(createPendingPasteState("echo hello", false)).toBeNull();
+  });
+
+  it("builds preview metadata for risky payloads", () => {
+    const pending = createPendingPasteState("rm -rf tmp && ls\npwd", false);
+    expect(pending).not.toBeNull();
+    expect(pending?.text).toContain("rm -rf");
+    expect(pending?.reasons.length).toBeGreaterThan(0);
+    expect(pending?.summary.lineCount).toBe(2);
+  });
+
+  it("respects bypass and skips pending state", () => {
+    expect(createPendingPasteState("rm -rf tmp && ls\npwd", true)).toBeNull();
+  });
+});
+
+describe("pendingPasteGuardActionForKey", () => {
+  it("maps Enter/Escape keys to confirmation actions", () => {
+    expect(pendingPasteGuardActionForKey("Enter")).toBe("confirm");
+    expect(pendingPasteGuardActionForKey("Escape")).toBe("cancel");
+    expect(pendingPasteGuardActionForKey("a")).toBeNull();
+  });
+});
+
+describe("resolvePendingPasteAction", () => {
+  it("returns no write on cancel", () => {
+    const pending = createPendingPasteState("rm tmp && ls\npwd", false);
+    const resolved = resolvePendingPasteAction(pending, "cancel");
+    expect(resolved.sendText).toBeNull();
+    expect(resolved.nextPending).toBeNull();
+  });
+
+  it("returns one write payload on confirm", () => {
+    const pending = createPendingPasteState("rm tmp && ls\npwd", false);
+    const resolved = resolvePendingPasteAction(pending, "confirm");
+    expect(resolved.sendText).toBe("rm tmp && ls\npwd");
+    expect(resolved.nextPending).toBeNull();
   });
 });

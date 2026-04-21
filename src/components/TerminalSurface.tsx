@@ -13,9 +13,10 @@ import {
 } from "../core/terminalLinkRanges";
 import { activateTerminalLink } from "../core/terminalLinkActivation";
 import {
-  decidePasteAction,
-  summarizePastePayload,
-  type PastePayloadSummary,
+  createPendingPasteState,
+  pendingPasteGuardActionForKey,
+  resolvePendingPasteAction,
+  type PendingPasteState,
 } from "../core/terminalPasteGuard";
 import type { SessionExitedInfo } from "../core/sessionLifecycle";
 import { summarizeExitedInfo } from "../core/sessionExitSummary";
@@ -65,31 +66,29 @@ function isViewportAtBottom(terminal: Terminal): boolean {
   return b.viewportY >= b.baseY;
 }
 
-interface PendingPasteState {
-  text: string;
-  reasons: string[];
-  summary: PastePayloadSummary;
-}
-
 export const BELL_FLASH_DURATION_MS = 200;
 
 export function canPasteFromContextMenu(activeSession?: Pick<PtySessionInfo, "id">): boolean {
   return Boolean(activeSession?.id);
 }
 
+export function contextMenuDismissActionForKey(key: string): "dismiss" | null {
+  return key === "Escape" ? "dismiss" : null;
+}
+
+export function shouldKeepContextMenuOpenForPointerTarget(isInsideMenu: boolean): boolean {
+  return isInsideMenu;
+}
+
+export function contextMenuPasteActionState(activeSession?: Pick<PtySessionInfo, "id">): { enabled: boolean } {
+  return { enabled: canPasteFromContextMenu(activeSession) };
+}
+
 export function evaluatePendingPasteState(
   text: string,
   bypassForSession: boolean,
 ): PendingPasteState | null {
-  const decision = decidePasteAction({ text, bypassForSession });
-  if (decision.kind === "send") {
-    return null;
-  }
-  return {
-    text,
-    reasons: decision.risk.reasons,
-    summary: summarizePastePayload(text),
-  };
+  return createPendingPasteState(text, bypassForSession);
 }
 
 export function clampContextMenuPosition(args: {
@@ -514,22 +513,19 @@ export function TerminalSurface({
   );
 
   const commitPendingPaste = useCallback(() => {
-    const pending = pendingPasteRef.current;
-    if (!pending) {
-      return;
+    const resolved = resolvePendingPasteAction(pendingPasteRef.current, "confirm");
+    if (resolved.sendText) {
+      sendTextToPty(resolved.sendText);
     }
-    sendTextToPty(pending.text);
     if (pasteBypassForSessionRef.current) {
       // Keep the bypass flag; caller opted in via the checkbox before committing.
     }
-    setPendingPaste(null);
+    setPendingPaste(resolved.nextPending);
   }, [sendTextToPty]);
 
   const cancelPendingPaste = useCallback(() => {
-    if (!pendingPasteRef.current) {
-      return;
-    }
-    setPendingPaste(null);
+    const resolved = resolvePendingPasteAction(pendingPasteRef.current, "cancel");
+    setPendingPaste(resolved.nextPending);
   }, []);
 
   const requestClipboardPaste = useCallback(() => {
@@ -722,13 +718,13 @@ export function TerminalSurface({
     }
     const dismiss = (event: PointerEvent) => {
       const t = event.target as Node;
-      if (t instanceof Element && t.closest?.("[data-terminal-context-menu]")) {
+      if (t instanceof Element && shouldKeepContextMenuOpenForPointerTarget(Boolean(t.closest?.("[data-terminal-context-menu]")))) {
         return;
       }
       setCtxMenu(null);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (contextMenuDismissActionForKey(event.key) === "dismiss") {
         setCtxMenu(null);
       }
     };
@@ -1253,13 +1249,14 @@ export function TerminalSurface({
             role="dialog"
             aria-label="Confirm terminal paste"
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              const action = pendingPasteGuardActionForKey(e.key);
+              if (action === "confirm") {
                 e.preventDefault();
                 e.stopPropagation();
                 commitPendingPaste();
                 return;
               }
-              if (e.key === "Escape") {
+              if (action === "cancel") {
                 e.preventDefault();
                 e.stopPropagation();
                 cancelPendingPaste();
@@ -1561,7 +1558,7 @@ export function TerminalSurface({
             <button
               type="button"
               role="menuitem"
-              disabled={!canPasteFromContextMenu(activeSession)}
+              disabled={!contextMenuPasteActionState(activeSession).enabled}
               onClick={() => {
                 requestClipboardPaste();
                 setCtxMenu(null);
