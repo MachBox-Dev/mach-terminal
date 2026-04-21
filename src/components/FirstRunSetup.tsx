@@ -48,6 +48,18 @@ export function shouldShowOnboardingPwshCta(args: {
   return args.tauri && !args.promptSeen && !args.alreadyInstalled && !args.hardStatusError;
 }
 
+export function onboardingFailureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export function shouldDisablePwshPromptActions(args: {
+  loading: boolean;
+  pwshHookBusy: boolean;
+  pwshPromptDismissBusy: boolean;
+}): boolean {
+  return args.loading || args.pwshHookBusy || args.pwshPromptDismissBusy;
+}
+
 export function FirstRunSetup({ open, onClose, onSaved }: Props) {
   const [profile, setProfile] = useState<TerminalProfile>({ env: {}, font_size: 13 });
   const [providers, setProviders] = useState<ProviderSettings[]>([]);
@@ -160,7 +172,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
       await onSaved();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(onboardingFailureMessage(e, "Save failed"));
     } finally {
       setLoading(false);
     }
@@ -197,7 +209,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
       await onSaved();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Quick start failed");
+      setError(onboardingFailureMessage(e, "Quick start failed"));
     } finally {
       setLoading(false);
     }
@@ -255,6 +267,11 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
     promptSeen: pwshOnboardingPromptSeen,
     alreadyInstalled: pwshHookAlreadyInstalled,
     hardStatusError: pwshHardStatusError,
+  });
+  const disablePwshPromptActions = shouldDisablePwshPromptActions({
+    loading,
+    pwshHookBusy,
+    pwshPromptDismissBusy,
   });
 
   return (
@@ -320,7 +337,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
                   <button
                     type="button"
                     className="inline-btn"
-                    disabled={loading || pwshHookBusy || pwshPromptDismissBusy}
+                    disabled={disablePwshPromptActions}
                     onClick={() => void installPwshHookFromOnboarding()}
                   >
                     {pwshHookBusy ? "Installing…" : "Install PowerShell hook now"}
@@ -328,7 +345,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
                   <button
                     type="button"
                     className="inline-btn ghost"
-                    disabled={loading || pwshHookBusy || pwshPromptDismissBusy}
+                    disabled={disablePwshPromptActions}
                     onClick={() => void dismissPwshInstallPrompt()}
                   >
                     {pwshPromptDismissBusy ? "Saving…" : "Not now"}

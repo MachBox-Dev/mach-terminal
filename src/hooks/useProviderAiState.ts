@@ -26,6 +26,30 @@ type RoutingDraft = {
   custom_openai_model: string;
 };
 
+/**
+ * Preserve user-entered API key drafts while refreshing descriptors from runtime.
+ * Unknown provider ids are dropped; known ids keep existing drafts.
+ */
+export function mergeProviderApiKeyDrafts(
+  providerDescriptors: ProviderDescriptor[],
+  currentDrafts: Record<string, string>,
+): Record<string, string> {
+  return providerDescriptors.reduce<Record<string, string>>((drafts, provider) => {
+    drafts[provider.id] = currentDrafts[provider.id] ?? "";
+    return drafts;
+  }, {});
+}
+
+/** Request ids are monotonic; newer requests supersede older async completions. */
+export function nextAiRequestId(current: number): number {
+  return current + 1;
+}
+
+/** Guard writes from stale async responses after a newer request has started. */
+export function shouldApplyAiResult(latestRequestId: number, requestId: number): boolean {
+  return latestRequestId === requestId;
+}
+
 function endpointDraftsFromProviders(providers: ProviderDescriptor[]): Record<string, string> {
   return providers.reduce<Record<string, string>>((drafts, provider) => {
     drafts[provider.id] = provider.endpoint ?? "";
@@ -168,12 +192,7 @@ export function useProviderAiState({
   const applyProviderDescriptors = useCallback((providerDescriptors: ProviderDescriptor[]) => {
     setProviders(providerDescriptors);
     setProviderEndpointDrafts(endpointDraftsFromProviders(providerDescriptors));
-    setProviderApiKeyDrafts((current) =>
-      providerDescriptors.reduce<Record<string, string>>((drafts, provider) => {
-        drafts[provider.id] = current[provider.id] ?? "";
-        return drafts;
-      }, {}),
-    );
+    setProviderApiKeyDrafts((current) => mergeProviderApiKeyDrafts(providerDescriptors, current));
   }, []);
 
   const toggleProvider = useCallback(async (providerId: string, enabled: boolean) => {
@@ -316,7 +335,7 @@ export function useProviderAiState({
       setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
       return;
     }
-    const requestId = latestAiRequestRef.current + 1;
+    const requestId = nextAiRequestId(latestAiRequestRef.current);
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
     setAiRequestStatus("Running AI prompt...");
@@ -328,13 +347,13 @@ export function useProviderAiState({
         intent: "freeform" satisfies AiExecuteIntent,
         context: composeAiContext(buildAiPromptContext),
       });
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       setAiResponse(response.output);
       setAiRequestStatus("AI response ready.");
     } catch (error) {
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       const message = error instanceof Error ? error.message : "AI execution failed.";
@@ -342,7 +361,7 @@ export function useProviderAiState({
       onRuntimeError(message);
       setAiRequestStatus(aiErrorStatusMessage(message));
     } finally {
-      if (latestAiRequestRef.current === requestId) {
+      if (shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         setAiRequestInFlight(false);
       }
     }
@@ -356,7 +375,7 @@ export function useProviderAiState({
       setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
       return;
     }
-    const requestId = latestAiRequestRef.current + 1;
+    const requestId = nextAiRequestId(latestAiRequestRef.current);
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
     const contract = historyAiContract("explain", command);
@@ -371,14 +390,14 @@ export function useProviderAiState({
         intent: contract.intent,
         context: composeAiContext(buildAiPromptContext, { command_text: command }),
       });
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       setAiResponse(response.output);
       onHistoryActionStatus(contract.successStatus);
       setAiRequestStatus(contract.successStatus);
     } catch (error) {
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       const message = error instanceof Error ? error.message : contract.fallbackErrorMessage;
@@ -386,7 +405,7 @@ export function useProviderAiState({
       onHistoryActionStatus(contract.historyFailureStatus);
       setAiRequestStatus(aiErrorStatusMessage(message));
     } finally {
-      if (latestAiRequestRef.current === requestId) {
+      if (shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         setAiRequestInFlight(false);
       }
     }
@@ -400,7 +419,7 @@ export function useProviderAiState({
       setAiRequestStatus(`Provider ${routing.default_provider} is not executable yet.`);
       return;
     }
-    const requestId = latestAiRequestRef.current + 1;
+    const requestId = nextAiRequestId(latestAiRequestRef.current);
     latestAiRequestRef.current = requestId;
     setAiRequestInFlight(true);
     const contract = historyAiContract("fix", command);
@@ -415,14 +434,14 @@ export function useProviderAiState({
         intent: contract.intent,
         context: composeAiContext(buildAiPromptContext, { command_text: command }),
       });
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       setAiResponse(response.output);
       onHistoryActionStatus(contract.successStatus);
       setAiRequestStatus(contract.successStatus);
     } catch (error) {
-      if (latestAiRequestRef.current !== requestId) {
+      if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         return;
       }
       const message = error instanceof Error ? error.message : contract.fallbackErrorMessage;
@@ -430,7 +449,7 @@ export function useProviderAiState({
       onHistoryActionStatus(contract.historyFailureStatus);
       setAiRequestStatus(aiErrorStatusMessage(message));
     } finally {
-      if (latestAiRequestRef.current === requestId) {
+      if (shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
         setAiRequestInFlight(false);
       }
     }

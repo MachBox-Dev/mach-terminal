@@ -83,3 +83,30 @@ pub fn provider_api_key(provider_id: &str) -> Result<Option<String>, ProviderSec
         Err(error) => Err(ProviderSecretError::KeyringReadFailure(error.to_string())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{set_provider_api_key, ProviderSecretError};
+
+    #[test]
+    fn rejects_empty_provider_id_before_keyring_access() {
+        let error = set_provider_api_key("   ", "sk-test").expect_err("empty provider id should reject");
+        assert!(matches!(error, ProviderSecretError::InvalidProviderId));
+        assert_eq!(error.to_string(), "provider id cannot be empty");
+    }
+
+    #[test]
+    fn rejects_empty_api_key_before_keyring_access() {
+        let error = set_provider_api_key("openai", "   ").expect_err("empty api key should reject");
+        assert!(matches!(error, ProviderSecretError::InvalidApiKey));
+        assert_eq!(error.to_string(), "api key cannot be empty");
+    }
+
+    #[test]
+    fn keeps_keyring_unavailable_error_prefix_stable() {
+        let error = ProviderSecretError::KeyringUnavailable("service unavailable".to_string());
+        assert!(error
+            .to_string()
+            .starts_with("secure key storage is unavailable."));
+    }
+}
