@@ -4,10 +4,19 @@ interface AiInsightPanelProps {
   statusLine: string | null;
   onDismiss: () => void;
   onOpenSettings?: () => void;
+  /** When true, show the panel shell even before a response arrives (AI input mode). */
+  showWhenIdle?: boolean;
 }
 
-export function AiInsightPanel({ text, inFlight, statusLine, onDismiss, onOpenSettings }: AiInsightPanelProps) {
-  if (!inFlight && !text?.trim()) {
+export function AiInsightPanel({
+  text,
+  inFlight,
+  statusLine,
+  onDismiss,
+  onOpenSettings,
+  showWhenIdle = false,
+}: AiInsightPanelProps) {
+  if (!showWhenIdle && !inFlight && !text?.trim()) {
     return null;
   }
 
@@ -40,6 +49,12 @@ export function AiInsightPanel({ text, inFlight, statusLine, onDismiss, onOpenSe
         </div>
       </div>
       {text ? <pre className="ai-insight-panel-body">{text}</pre> : null}
+      {!text && showWhenIdle && !inFlight ? (
+        <p className="ai-insight-panel-idle">
+          Prefix with <code>?</code> for AI-only questions, or run shell commands — everything stays in this session
+          tape and history.
+        </p>
+      ) : null}
       {inFlight ? <p className="ai-insight-panel-status">{statusLine ?? "Working…"}</p> : null}
       {!inFlight && statusLine ? <p className="ai-insight-panel-status">{statusLine}</p> : null}
     </aside>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { normalizeQuickStartProfile, QUICKSTART_ROUTING, toQuickStartProviders } from "../core/onboarding";
-import { isExecutableProvider, providerOptionSuffix } from "../core/providerUiState";
+import { buildProviderCards, providerOptionSuffix, type RoutingModelKey } from "../core/providerUiState";
+import { PROVIDER_REGISTRY } from "../core/providers";
 import type { ProviderRoutingSettings, ProviderSettings, TerminalProfile } from "../core/terminal";
 import {
   providerApiKeySet,
@@ -17,6 +18,7 @@ import {
   shellIntegrationStatus,
 } from "../core/terminal";
 import { isTauri } from "../core/tauriRuntime";
+import { ShellProfilePicker } from "./ShellProfilePicker";
 import {
   MACH_MINIMAL_PROMPT_BASH,
   MACH_MINIMAL_PROMPT_PWSH,
@@ -63,14 +65,7 @@ export function shouldDisablePwshPromptActions(args: {
 export function FirstRunSetup({ open, onClose, onSaved }: Props) {
   const [profile, setProfile] = useState<TerminalProfile>({ env: {}, font_size: 13 });
   const [providers, setProviders] = useState<ProviderSettings[]>([]);
-  const [routing, setRouting] = useState<ProviderRoutingSettings>({
-    default_provider: "ollama",
-    ollama_model: "llama3.2",
-    openai_model: "gpt-4o-mini",
-    anthropic_model: "claude-3-5-haiku-latest",
-    custom_openai_model: "gpt-4o-mini",
-    ai_feature_enabled: false,
-  });
+  const [routing, setRouting] = useState<ProviderRoutingSettings>(QUICKSTART_ROUTING);
   const [providerApiKeyDrafts, setProviderApiKeyDrafts] = useState<Record<string, string>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +141,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
     try {
       await profilePatch({
         shell: profile.shell ?? null,
+        args: profile.args ?? [],
         cwd: profile.cwd ?? null,
         font_size: profile.font_size,
         minimal_shell_prompt: profile.minimal_shell_prompt ?? false,
@@ -185,6 +181,7 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
       const quickStartProfile = normalizeQuickStartProfile(profile);
       await profilePatch({
         shell: quickStartProfile.shell ?? null,
+        args: quickStartProfile.args ?? [],
         cwd: quickStartProfile.cwd ?? null,
         font_size: quickStartProfile.font_size,
         minimal_shell_prompt: quickStartProfile.minimal_shell_prompt ?? false,
@@ -274,6 +271,25 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
     pwshPromptDismissBusy,
   });
 
+  // Same canonical provider view-model the Settings modal uses, so onboarding rows
+  // share names/kinds/default badge/model-field mapping. Registry supplies display
+  // metadata; the editable draft (`providers`) supplies enabled/endpoint.
+  const providerCards = buildProviderCards(
+    providers.map((row) => {
+      const meta = PROVIDER_REGISTRY.find((entry) => entry.id === row.id);
+      return {
+        id: row.id,
+        name: meta?.name ?? row.id,
+        kind: meta?.kind ?? "custom",
+        status: row.enabled ? "available" : "disabled",
+        enabled: row.enabled,
+        envHint: row.api_key_env ?? meta?.envHint,
+        hasStoredKey: false,
+      };
+    }),
+    routing.default_provider,
+  );
+
   return (
     <div className="modal-overlay" role="presentation" onClick={() => !loading && !showSkip && onClose()}>
       <div
@@ -292,15 +308,11 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
 
         <section className="setup-section">
           <h3>Terminal profile</h3>
-          <label className="field-row">
-            <span>Shell (optional)</span>
-            <input
-              type="text"
-              placeholder="e.g. pwsh, bash, zsh"
-              value={profile.shell ?? ""}
-              onChange={(e) => setProfile((p) => ({ ...p, shell: e.target.value || undefined }))}
-            />
-          </label>
+          <ShellProfilePicker
+            shell={profile.shell}
+            args={profile.args ?? []}
+            onChange={({ shell, args }) => setProfile((p) => ({ ...p, shell, args }))}
+          />
           <label className="field-row">
             <span>Working directory (optional)</span>
             <input
@@ -454,105 +466,105 @@ export function FirstRunSetup({ open, onClose, onSaved }: Props) {
           </button>
           {showAdvanced ? (
             <>
-              <h3>Providers</h3>
-              <ul className="setup-provider-list">
-                {providers.map((row) => {
-                  const executable = isExecutableProvider(row.id);
+              <h3>AI providers</h3>
+              <p className="muted-block">
+                Optional and off by default. Configure a provider, pick a default, then opt in — all of this can be
+                changed later in Settings.
+              </p>
+              <div className="ai-routing-bar">
+                <label className="toggle-row ai-routing-optin">
+                  <input
+                    type="checkbox"
+                    checked={routing.ai_feature_enabled}
+                    onChange={(e) => setRouting((r) => ({ ...r, ai_feature_enabled: e.target.checked }))}
+                  />
+                  Enable AI features
+                </label>
+                <label className="field-row ai-routing-default">
+                  <span>Default provider</span>
+                  <select
+                    value={routing.default_provider}
+                    onChange={(e) => setRouting((r) => ({ ...r, default_provider: e.target.value }))}
+                  >
+                    {providerCards.map((card) => (
+                      <option key={card.id} value={card.id} disabled={!card.executable}>
+                        {card.name}
+                        {providerOptionSuffix(card.executable)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <ul className="provider-block-list">
+                {providerCards.map((card) => {
+                  const modelKey: RoutingModelKey | null = card.modelKey;
+                  const row = providers.find((entry) => entry.id === card.id);
                   return (
-                    <li key={row.id}>
-                      <label className="toggle-row">
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          onChange={(e) => updateProvider(row.id, { enabled: e.target.checked })}
-                          disabled={!executable && !row.enabled}
-                        />
+                    <li key={card.id}>
+                      <div className="provider-block-head">
                         <span>
-                          {row.id}
-                          {providerOptionSuffix(executable)}
+                          {card.name}
+                          <small>
+                            {card.kind}
+                            {card.isDefault ? " · default" : ""}
+                          </small>
                         </span>
-                      </label>
-                      <input
-                        type="text"
-                        className="endpoint-input"
-                        placeholder="Endpoint URL (if applicable)"
-                        value={row.endpoint ?? ""}
-                        onChange={(e) => updateProvider(row.id, { endpoint: e.target.value || undefined })}
-                        disabled={!executable}
-                      />
-                      <input
-                        type="password"
-                        className="endpoint-input"
-                        placeholder="API key (stored securely)"
-                        value={providerApiKeyDrafts[row.id] ?? ""}
-                        onChange={(e) =>
-                          setProviderApiKeyDrafts((current) => ({ ...current, [row.id]: e.target.value }))
-                        }
-                        disabled={!executable}
-                      />
-                      {row.api_key_env ? (
-                        <small className="muted-block">API key env: {row.api_key_env}</small>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={card.enabled}
+                            onChange={(e) => updateProvider(card.id, { enabled: e.target.checked })}
+                            disabled={!card.executable && !card.enabled}
+                          />
+                          {card.enabled ? "Enabled" : "Disabled"}
+                        </label>
+                      </div>
+                      <div className="provider-block-endpoint">
+                        <input
+                          type="text"
+                          className="inline-input"
+                          placeholder="Endpoint URL"
+                          aria-label={`${card.id} endpoint`}
+                          value={row?.endpoint ?? ""}
+                          onChange={(e) => updateProvider(card.id, { endpoint: e.target.value || undefined })}
+                          disabled={!card.executable}
+                        />
+                      </div>
+                      <div className="provider-block-endpoint">
+                        <input
+                          type="password"
+                          className="inline-input"
+                          placeholder="API key (stored securely)"
+                          aria-label={`${card.id} api key`}
+                          value={providerApiKeyDrafts[card.id] ?? ""}
+                          onChange={(e) =>
+                            setProviderApiKeyDrafts((current) => ({ ...current, [card.id]: e.target.value }))
+                          }
+                          disabled={!card.executable}
+                        />
+                      </div>
+                      {modelKey ? (
+                        <div className="provider-block-endpoint provider-block-model">
+                          <span className="provider-block-model-label">Model</span>
+                          <input
+                            type="text"
+                            className="inline-input"
+                            placeholder="Model id"
+                            aria-label={`${card.id} model`}
+                            value={routing[modelKey]}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setRouting((r) => ({ ...r, [modelKey]: value }));
+                            }}
+                            disabled={!card.executable}
+                          />
+                        </div>
                       ) : null}
+                      <p className="muted-block">{card.authLabel}</p>
                     </li>
                   );
                 })}
               </ul>
-
-              <h3>Routing</h3>
-              <label className="field-row">
-                <span>Default provider id</span>
-                <select
-                  value={routing.default_provider}
-                  onChange={(e) => setRouting((r) => ({ ...r, default_provider: e.target.value }))}
-                >
-                  {providers.map((provider) => (
-                    <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
-                      {provider.id}
-                      {providerOptionSuffix(isExecutableProvider(provider.id))}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-row">
-                <span>Ollama model</span>
-                <input
-                  type="text"
-                  value={routing.ollama_model}
-                  onChange={(e) => setRouting((r) => ({ ...r, ollama_model: e.target.value }))}
-                />
-              </label>
-              <label className="field-row">
-                <span>OpenAI model</span>
-                <input
-                  type="text"
-                  value={routing.openai_model}
-                  onChange={(e) => setRouting((r) => ({ ...r, openai_model: e.target.value }))}
-                />
-              </label>
-              <label className="field-row">
-                <span>Anthropic model</span>
-                <input
-                  type="text"
-                  value={routing.anthropic_model}
-                  onChange={(e) => setRouting((r) => ({ ...r, anthropic_model: e.target.value }))}
-                />
-              </label>
-              <label className="field-row">
-                <span>Custom OpenAI model</span>
-                <input
-                  type="text"
-                  value={routing.custom_openai_model}
-                  onChange={(e) => setRouting((r) => ({ ...r, custom_openai_model: e.target.value }))}
-                />
-              </label>
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={routing.ai_feature_enabled}
-                  onChange={(e) => setRouting((r) => ({ ...r, ai_feature_enabled: e.target.checked }))}
-                />
-                Opt in to AI features (still requires enabled providers)
-              </label>
             </>
           ) : null}
         </section>

@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ComposerSubmitKind } from "../core/composerAiIntent";
+import { composerSubmitKindLabel } from "../core/composerAiIntent";
+import type { SessionInputMode } from "../core/inputMode";
+import { inputModeLabel } from "../core/inputMode";
 import {
   loadStatusStripSettings,
   type StatusStripSettings,
@@ -26,6 +30,11 @@ interface MachStatusStripProps {
   shellExe?: string | null;
   /** Latest OSC 133 marker summary when the shell emits markers (read-only). */
   osc133Hint?: string | null;
+  /** Active input posture for this session. */
+  inputMode?: SessionInputMode;
+  /** Operator composer target: shell command vs AI prompt (`?` toggles). */
+  composerSubmitKind?: ComposerSubmitKind | null;
+  onToggleComposerSubmitKind?: () => void;
   /** Canonical terminal interaction state for this pane/session. */
   uiSurfaceState?: UiSurfaceState | null;
 }
@@ -34,6 +43,9 @@ export function MachStatusStrip({
   liveCwd,
   shellExe,
   osc133Hint = null,
+  inputMode = "operator",
+  composerSubmitKind = null,
+  onToggleComposerSubmitKind,
   uiSurfaceState = null,
 }: MachStatusStripProps) {
   const [settings, setSettings] = useState<StatusStripSettings>(() => loadStatusStripSettings());
@@ -127,6 +139,26 @@ export function MachStatusStrip({
     <div className="mach-status-strip" role="status" aria-label="Session context" title={stripTitle}>
       <span className="mach-status-strip-label">Mach</span>
       <div className="mach-status-strip-segments">
+        <span
+          className={`mach-status-chip mach-status-chip-mode mach-status-chip-mode-${inputMode}`}
+          title="Input mode (Ctrl+` to cycle)"
+        >
+          {inputModeLabel(inputMode)}
+        </span>
+        {composerSubmitKind ? (
+          <button
+            type="button"
+            className={`mach-status-chip mach-status-chip-composer mach-status-chip-composer-${composerSubmitKind}`}
+            title={
+              composerSubmitKind === "ai"
+                ? "AI input (press ? to switch to commands)"
+                : "Command input (press ? to ask AI)"
+            }
+            onClick={() => onToggleComposerSubmitKind?.()}
+          >
+            {composerSubmitKindLabel(composerSubmitKind)}
+          </button>
+        ) : null}
         {settings.showShell && shellLabel ? (
           <span className="mach-status-chip mach-status-chip-muted" title={shellExe ?? undefined}>
             <StatusStripGlyph kind="terminal" />

@@ -34,9 +34,7 @@ export function StatusStripSettingsSection({
     <section id={sectionId}>
       <h2>Status strip</h2>
       <p className="muted-block">
-        Compact row above the input (optional shell, path, clock, git, optional diff stats, elevation, PTY metrics). Toggle
-        &quot;Minimal shell prompt&quot; in Shell &amp; profile plus the copyable snippets there to reduce duplicate
-        prompt clutter in the scrollback stream.
+        Compact row above the input. Pick which chips appear.
       </p>
       <ul className="status-strip-toggle-list">
         <li>

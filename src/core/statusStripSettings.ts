@@ -24,7 +24,7 @@ export const DEFAULT_STATUS_STRIP_SETTINGS: StatusStripSettings = {
   showElevated: true,
   showMetrics: false,
   showGitDiffStats: false,
-  showInteractionState: true,
+  showInteractionState: false,
 };
 
 export function loadStatusStripSettings(): StatusStripSettings {

@@ -1,7 +1,15 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PLUGIN_REGISTRY } from "../core/plugins";
-import { aiOptInRequiredStatus, canRunAiRequest, isExecutableProvider, providerOptionSuffix } from "../core/providerUiState";
+import {
+  aiOptInRequiredStatus,
+  buildProviderCards,
+  canRunAiRequest,
+  isAiAssistReady,
+  isExecutableProvider,
+  providerOptionSuffix,
+  type RoutingModelKey,
+} from "../core/providerUiState";
 import { uiSurfaceFindLabel, uiSurfaceFollowLabel, type UiSurfaceState } from "../core/uiSurfaceState";
 import type { ProviderDescriptor } from "../core/providers";
 import type { RuntimeCapabilities } from "../core/runtime";
@@ -22,18 +30,22 @@ import {
 import { HistoryPanel } from "./HistoryPanel";
 import { ShellIntegrationSection } from "./ShellIntegrationSection";
 import { StatusStripSettingsSection } from "./StatusStripSettingsSection";
+import { TerminalProfileSection } from "./TerminalProfileSection";
+import type { TerminalProfile } from "../core/terminal";
 
-const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+type SettingsSection = { id: string; label: string; devOnly?: boolean };
+
+const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "settings-section-runtime", label: "Runtime" },
-  { id: "settings-section-providers", label: "Providers" },
+  { id: "settings-section-terminal-profile", label: "Terminal profile" },
+  { id: "settings-section-ai-providers", label: "AI providers" },
   { id: "settings-section-status-strip", label: "Status strip" },
   { id: "settings-section-shell-integration", label: "Shell integration" },
   { id: "settings-section-session", label: "Session & layout" },
   { id: "settings-section-updater", label: "Updater" },
-  { id: "settings-section-ai", label: "AI router" },
   { id: "settings-section-history", label: "History" },
   { id: "settings-section-shortcuts", label: "Shortcuts" },
-  { id: "settings-section-plugins", label: "Plugins" },
+  { id: "settings-section-plugins", label: "Plugins", devOnly: true },
 ];
 
 export type SettingsCommandItem = {
@@ -44,6 +56,8 @@ export type SettingsCommandItem = {
 
 export type AppSettingsModalProps = {
   open: boolean;
+  /** When set, this section is selected when the modal opens. */
+  initialSectionId?: string;
   onClose: () => void;
   onOpenProfile: () => void;
   onRefreshMetrics: () => void | Promise<void>;
@@ -84,6 +98,8 @@ export type AppSettingsModalProps = {
     openai_model: string;
     anthropic_model: string;
     custom_openai_model: string;
+    system_prompt: string;
+    ai_context_budget_chars: number;
   };
   setRoutingDraft: Dispatch<
     SetStateAction<{
@@ -92,6 +108,8 @@ export type AppSettingsModalProps = {
       openai_model: string;
       anthropic_model: string;
       custom_openai_model: string;
+      system_prompt: string;
+      ai_context_budget_chars: number;
     }>
   >;
   saveRoutingConfig: () => void | Promise<void>;
@@ -120,9 +138,17 @@ export type AppSettingsModalProps = {
   /** When true, new sessions set `MACH_TERMINAL_MINIMAL_PROMPT=1` (thin shell prompt in scrollback; pair with rc snippets). */
   minimalShellPrompt: boolean;
   onMinimalShellPromptChange: (enabled: boolean) => void | Promise<void>;
+  /** When true, AI prompts are echoed as `# AI: …` shell comments on the session tape. */
+  echoAiPromptToTape: boolean;
+  onEchoAiPromptToTapeChange: (enabled: boolean) => void;
+  /** When true, eligible AI providers may call read-only ops-rail tools. */
+  enableAiTools: boolean;
+  onEnableAiToolsChange: (enabled: boolean) => void;
   /** Show composer completion assist metrics outside dev builds. */
   showComposerAssistMetrics: boolean;
   onShowComposerAssistMetricsChange: (enabled: boolean) => void | Promise<void>;
+  /** Called after the terminal profile is saved so the app can refresh live state (font size, etc.). */
+  onProfileSaved?: (profile: TerminalProfile) => void | Promise<void>;
 };
 
 export function buildHistoryPanelHandlers(
@@ -147,17 +173,19 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     if (!props.open) {
       return;
     }
-    const first = SETTINGS_SECTIONS[0]?.id;
-    if (first) {
-      setActiveSectionId(first);
+    const requested = props.initialSectionId;
+    const valid = requested && SETTINGS_SECTIONS.some((section) => section.id === requested);
+    const target = valid ? requested : SETTINGS_SECTIONS[0]?.id;
+    if (target) {
+      setActiveSectionId(target);
     }
-  }, [props.open]);
+  }, [props.open, props.initialSectionId]);
 
-  const scrollToSection = useCallback((id: string) => {
+  // Tab-style switch: show only the active section and reset scroll to its top.
+  // No more scrolling past every other section to reach the one you want.
+  const selectSection = useCallback((id: string) => {
     setActiveSectionId(id);
-    queueMicrotask(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    scrollRef.current?.scrollTo({ top: 0 });
   }, []);
 
   if (!props.open) {
@@ -228,8 +256,14 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     onMinimalShellPromptChange,
     showComposerAssistMetrics,
     onShowComposerAssistMetricsChange,
+    onProfileSaved,
   } = props;
   const historyHandlers = buildHistoryPanelHandlers(onReplayCommand, onExplainCommand, onFixCommand);
+  const showDevTools = import.meta.env.DEV;
+  const visibleSections = SETTINGS_SECTIONS.filter((section) => showDevTools || !section.devOnly);
+  const paneHidden = (id: string) => activeSectionId !== id;
+  const providerCards = buildProviderCards(providers, routingDraft.default_provider);
+  const aiAssistEnabled = isAiAssistReady(routing.ai_feature_enabled, routing.default_provider, providers);
 
   return (
     <div
@@ -268,15 +302,16 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
         </div>
 
         <div className="settings-modal-body">
-          <nav className="settings-modal-nav" aria-label="Settings sections">
-            <p className="settings-modal-nav-title">Jump to</p>
-            {SETTINGS_SECTIONS.map((section) => (
+          <nav className="settings-modal-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">
+            <p className="settings-modal-nav-title">Sections</p>
+            {visibleSections.map((section) => (
               <button
                 key={section.id}
                 type="button"
+                role="tab"
                 className={activeSectionId === section.id ? "active" : ""}
-                aria-current={activeSectionId === section.id ? "location" : undefined}
-                onClick={() => scrollToSection(section.id)}
+                aria-selected={activeSectionId === section.id}
+                onClick={() => selectSection(section.id)}
               >
                 {section.label}
               </button>
@@ -285,7 +320,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
 
           <div className="settings-modal-scroll" ref={scrollRef}>
             <div className="info-panel settings-modal-panel">
-            <section id="settings-section-runtime">
+            <section id="settings-section-runtime" hidden={paneHidden("settings-section-runtime")}>
               <h2>Runtime</h2>
               {runtimeError ? <p className="error-text">{runtimeError}</p> : null}
               <ul>
@@ -324,86 +359,238 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               ) : null}
             </section>
 
-            <section id="settings-section-providers">
-              <h2>Providers</h2>
+            <div className="settings-pane" hidden={paneHidden("settings-section-terminal-profile")}>
+              <TerminalProfileSection modalOpen={props.open} onProfileSaved={onProfileSaved} />
+            </div>
+
+            <section id="settings-section-ai-providers" hidden={paneHidden("settings-section-ai-providers")}>
+              <h2>AI providers</h2>
+              <p className="muted-block">
+                Bring your own key. AI is optional, off by default, and never required for the terminal — configure a
+                provider, choose a default, then opt in.
+              </p>
               {providerConfigStatus ? <p className="muted-block">{providerConfigStatus}</p> : null}
-              <ul className="provider-block-list">
-                {providers.map((provider) => (
-                  <li key={provider.id}>
-                    <div className="provider-block-head">
-                      <span>
+
+              <div className="ai-routing-bar">
+                <label className="toggle-row ai-routing-optin">
+                  <input
+                    type="checkbox"
+                    checked={routing.ai_feature_enabled}
+                    onChange={(event) => void setAiOptIn(event.currentTarget.checked)}
+                  />
+                  Enable AI features
+                </label>
+                <label className="field-row ai-routing-default">
+                  <span>Default provider</span>
+                  <select
+                    value={routingDraft.default_provider}
+                    onChange={(event) =>
+                      setRoutingDraft((current) => ({ ...current, default_provider: event.target.value }))
+                    }
+                  >
+                    {providers.map((provider) => (
+                      <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
                         {provider.name}
-                        <small>{provider.kind}</small>
-                      </span>
-                      <strong>{isExecutableProvider(provider.id) ? provider.status : "unavailable"}</strong>
-                      <button
-                        type="button"
-                        onClick={() => void toggleProvider(provider.id, !provider.enabled)}
-                        className="inline-btn"
-                        disabled={!isExecutableProvider(provider.id) && !provider.enabled}
-                      >
-                        {provider.enabled ? "disable" : "enable"}
-                      </button>
-                    </div>
-                    <div className="provider-block-endpoint">
-                      <input
-                        value={providerEndpointDrafts[provider.id] ?? ""}
-                        onChange={(event) => updateProviderEndpointDraft(provider.id, event.currentTarget.value)}
-                        placeholder="Endpoint URL"
-                        className="inline-input"
-                        aria-label={`${provider.id} endpoint`}
-                        disabled={!isExecutableProvider(provider.id)}
-                      />
-                      <button
-                        type="button"
-                        className="inline-btn ghost"
-                        onClick={() => void saveProviderEndpoint(provider.id)}
-                        disabled={!isExecutableProvider(provider.id)}
-                      >
-                        save endpoint
-                      </button>
-                    </div>
-                    <div className="provider-block-endpoint">
-                      <input
-                        type="password"
-                        value={providerApiKeyDrafts[provider.id] ?? ""}
-                        onChange={(event) => updateProviderApiKeyDraft(provider.id, event.currentTarget.value)}
-                        placeholder={provider.hasStoredKey ? "API key stored (enter to replace)" : "API key"}
-                        className="inline-input"
-                        aria-label={`${provider.id} api key`}
-                        disabled={!isExecutableProvider(provider.id)}
-                      />
-                      <button
-                        type="button"
-                        className="inline-btn ghost"
-                        onClick={() => void saveProviderApiKey(provider.id)}
-                        disabled={!isExecutableProvider(provider.id)}
-                      >
-                        save key
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-btn ghost"
-                        onClick={() => void clearProviderApiKey(provider.id)}
-                        disabled={!isExecutableProvider(provider.id)}
-                      >
-                        clear key
-                      </button>
-                    </div>
-                    <p className="muted-block">
-                      auth: {provider.hasStoredKey ? "stored in secure keychain" : "no stored key"}{" "}
-                      {provider.envHint ? `(env fallback: ${provider.envHint})` : ""}
-                    </p>
-                  </li>
-                ))}
+                        {providerOptionSuffix(isExecutableProvider(provider.id))}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="toggle-row ai-behavior-echo">
+                <input
+                  type="checkbox"
+                  checked={props.echoAiPromptToTape}
+                  onChange={(event) => props.onEchoAiPromptToTapeChange(event.currentTarget.checked)}
+                />
+                Echo AI prompts to session tape
+                <small className="muted-block">Writes <code># AI: …</code> when you send a prompt (replies stay in the AI panel; on by default).</small>
+              </label>
+
+              <label className="toggle-row ai-behavior-tools">
+                <input
+                  type="checkbox"
+                  checked={props.enableAiTools}
+                  onChange={(event) => props.onEnableAiToolsChange(event.currentTarget.checked)}
+                />
+                Enable AI command-log tools
+                <small className="muted-block">
+                  Lets configured AI providers look up recent command runs and output from the ops rail (read-only).
+                </small>
+              </label>
+
+              <label className="field-row ai-persona-prompt">
+                <span>System prompt / persona</span>
+                <textarea
+                  className="inline-input ai-persona-textarea"
+                  rows={4}
+                  value={routingDraft.system_prompt}
+                  placeholder="Optional instructions for every AI request (e.g. concise ops assistant, prefer ripgrep over grep)…"
+                  onChange={(event) =>
+                    setRoutingDraft((current) => ({ ...current, system_prompt: event.currentTarget.value }))
+                  }
+                />
+              </label>
+              <label className="field-row ai-context-budget">
+                <span>Context budget (characters)</span>
+                <input
+                  type="number"
+                  className="inline-input"
+                  min={4000}
+                  max={120000}
+                  step={1000}
+                  value={routingDraft.ai_context_budget_chars}
+                  onChange={(event) =>
+                    setRoutingDraft((current) => ({
+                      ...current,
+                      ai_context_budget_chars: Number.parseInt(event.currentTarget.value, 10) || current.ai_context_budget_chars,
+                    }))
+                  }
+                />
+                <small className="muted-block">Caps history + scrollback sent per request (default 28,000).</small>
+              </label>
+              <div className="ai-persona-actions">
+                <button type="button" className="inline-btn" onClick={() => void saveRoutingConfig()}>
+                  Save AI behavior
+                </button>
+              </div>
+
+              <ul className="provider-block-list">
+                {providerCards.map((card) => {
+                  const modelKey: RoutingModelKey | null = card.modelKey;
+                  return (
+                    <li key={card.id}>
+                      <div className="provider-block-head">
+                        <span>
+                          {card.name}
+                          <small>
+                            {card.kind}
+                            {card.isDefault ? " · default" : ""}
+                          </small>
+                        </span>
+                        <strong>{card.statusLabel}</strong>
+                        <button
+                          type="button"
+                          onClick={() => void toggleProvider(card.id, !card.enabled)}
+                          className="inline-btn"
+                          disabled={!card.executable && !card.enabled}
+                        >
+                          {card.enabled ? "Disable" : "Enable"}
+                        </button>
+                      </div>
+                      <div className="provider-block-endpoint">
+                        <input
+                          value={providerEndpointDrafts[card.id] ?? ""}
+                          onChange={(event) => updateProviderEndpointDraft(card.id, event.currentTarget.value)}
+                          placeholder="Endpoint URL"
+                          className="inline-input"
+                          aria-label={`${card.id} endpoint`}
+                          disabled={!card.executable}
+                        />
+                        <button
+                          type="button"
+                          className="inline-btn ghost"
+                          onClick={() => void saveProviderEndpoint(card.id)}
+                          disabled={!card.executable}
+                        >
+                          Save endpoint
+                        </button>
+                      </div>
+                      <div className="provider-block-endpoint">
+                        <input
+                          type="password"
+                          value={providerApiKeyDrafts[card.id] ?? ""}
+                          onChange={(event) => updateProviderApiKeyDraft(card.id, event.currentTarget.value)}
+                          placeholder={card.authLabel.startsWith("Key stored") ? "Key stored (enter to replace)" : "API key"}
+                          className="inline-input"
+                          aria-label={`${card.id} api key`}
+                          disabled={!card.executable}
+                        />
+                        <button
+                          type="button"
+                          className="inline-btn ghost"
+                          onClick={() => void saveProviderApiKey(card.id)}
+                          disabled={!card.executable}
+                        >
+                          Save key
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-btn ghost"
+                          onClick={() => void clearProviderApiKey(card.id)}
+                          disabled={!card.executable}
+                        >
+                          Clear key
+                        </button>
+                      </div>
+                      {modelKey ? (
+                        <div className="provider-block-endpoint provider-block-model">
+                          <span className="provider-block-model-label">Model</span>
+                          <input
+                            value={routingDraft[modelKey]}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              setRoutingDraft((current) => ({ ...current, [modelKey]: value }));
+                            }}
+                            placeholder="Model id"
+                            className="inline-input"
+                            aria-label={`${card.id} model`}
+                            disabled={!card.executable}
+                          />
+                        </div>
+                      ) : null}
+                      <p className="muted-block">{card.authLabel}</p>
+                    </li>
+                  );
+                })}
               </ul>
+
+              <div className="inline-controls">
+                <button type="button" className="inline-btn" onClick={() => void saveRoutingConfig()}>
+                  Save models &amp; default
+                </button>
+              </div>
+
+              <h3 className="settings-subsection-title">Test prompt</h3>
+              <div className="stacked-controls">
+                <input
+                  value={aiPrompt}
+                  onChange={(event) => setAiPrompt(event.currentTarget.value)}
+                  aria-label="AI test prompt"
+                />
+                <button
+                  type="button"
+                  className="inline-btn"
+                  onClick={() => void runAiPrompt()}
+                  disabled={!canRunAiRequest(routing.ai_feature_enabled, aiRequestInFlight)}
+                >
+                  {aiRequestInFlight ? "Running…" : "Run AI prompt"}
+                </button>
+                {!routing.ai_feature_enabled ? (
+                  <p className="muted-block">
+                    {aiOptInRequiredStatus()} Provider endpoints, keys, and models can still be configured.
+                  </p>
+                ) : null}
+                {aiRequestStatus ? <p className="muted-block">{aiRequestStatus}</p> : null}
+                {aiResponse ? <p className="muted-block">{aiResponse}</p> : null}
+                {lastAiContext ? (
+                  <p className="muted-block">
+                    context: {lastAiContext.event_type} - {lastAiContext.payload}
+                  </p>
+                ) : null}
+              </div>
             </section>
 
-            <StatusStripSettingsSection modalOpen={props.open} sectionId="settings-section-status-strip" />
+            <div className="settings-pane" hidden={paneHidden("settings-section-status-strip")}>
+              <StatusStripSettingsSection modalOpen={props.open} sectionId="settings-section-status-strip" />
+            </div>
 
-            <ShellIntegrationSection modalOpen={props.open} />
+            <div className="settings-pane" hidden={paneHidden("settings-section-shell-integration")}>
+              <ShellIntegrationSection modalOpen={props.open} />
+            </div>
 
-            <section id="settings-section-session">
+            <section id="settings-section-session" hidden={paneHidden("settings-section-session")}>
               <h2>Session &amp; layout</h2>
               <p className="muted-block">
                 active session: {activeSession?.id ?? "none"} (
@@ -411,19 +598,19 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </p>
               <div className="inline-controls">
                 <button type="button" className="inline-btn" onClick={() => void restartActiveSession()}>
-                  restart session
+                  Restart session
                 </button>
                 <button type="button" className="inline-btn" onClick={() => splitPane()}>
-                  split ({workspaceSplitDirection})
+                  Split ({workspaceSplitDirection})
                 </button>
                 <button type="button" className="inline-btn ghost" onClick={() => splitPaneColumn()}>
-                  split vertical
+                  Split vertical
                 </button>
                 <button type="button" className="inline-btn ghost" onClick={() => splitPaneRow()}>
-                  split horizontal
+                  Split horizontal
                 </button>
                 <button type="button" className="inline-btn" onClick={() => closeActivePane()}>
-                  close pane
+                  Close pane
                 </button>
                 <button
                   type="button"
@@ -433,15 +620,14 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                     onClose();
                   }}
                 >
-                  command palette
+                  Command palette
                 </button>
               </div>
               <h3 className="settings-subsection-title">Composer input</h3>
               <p className="muted-block">
-                Commands are typed in the composer below the terminal. For a unified feel, thin out the shell&apos;s own
-                prompt in scrollback: enable this option (sets <code>MACH_TERMINAL_MINIMAL_PROMPT</code> for new
-                sessions) and paste the matching snippet into your shell profile so the env var actually changes the
-                prompt.
+                Commands are typed in the composer below the terminal. To thin out the shell&apos;s own prompt in
+                scrollback, enable this (sets <code>MACH_TERMINAL_MINIMAL_PROMPT</code> for new sessions) and paste the
+                matching snippet into your shell profile.
               </p>
               <label className="toggle-row">
                 <input
@@ -451,14 +637,16 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 />
                 Minimal shell prompt (recommended with composer input)
               </label>
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={showComposerAssistMetrics}
-                  onChange={(event) => void onShowComposerAssistMetricsChange(event.currentTarget.checked)}
-                />
-                Show composer assist metrics (request/accept counts and latency)
-              </label>
+              {showDevTools ? (
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={showComposerAssistMetrics}
+                    onChange={(event) => void onShowComposerAssistMetricsChange(event.currentTarget.checked)}
+                  />
+                  Show composer assist metrics (request/accept counts and latency)
+                </label>
+              ) : null}
               <div className="minimal-prompt-snippet-block mach-osc7-block">
                 <div className="minimal-prompt-snippet-row">
                   <span className="minimal-prompt-snippet-label">PowerShell</span>
@@ -494,39 +682,43 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 </div>
                 <pre className="minimal-prompt-snippet">{MACH_MINIMAL_PROMPT_ZSH}</pre>
               </div>
-              <h3 className="settings-subsection-title">Terminal interaction state</h3>
-              <p className="muted-block">
-                Palette commands and terminal surfaces share this state model. Use these controls to verify parity
-                across settings, strip hints, and focused terminal behavior.
-              </p>
-              {uiSurfaceState ? (
-                <p className="muted-block">
-                  {uiSurfaceFollowLabel(uiSurfaceState.followOutput)} · {uiSurfaceFindLabel(uiSurfaceState)}
-                </p>
-              ) : (
-                <p className="muted-block">No active session.</p>
-              )}
-              <div className="inline-controls">
-                <button type="button" className="inline-btn ghost" onClick={() => void onToggleFollowOutput()}>
-                  toggle follow output
-                </button>
-                <button type="button" className="inline-btn ghost" onClick={() => void onOpenTerminalFind()}>
-                  open find
-                </button>
-                <button type="button" className="inline-btn ghost" onClick={() => void onFindPreviousMatch()}>
-                  find previous
-                </button>
-                <button type="button" className="inline-btn ghost" onClick={() => void onFindNextMatch()}>
-                  find next
-                </button>
-              </div>
+              {showDevTools ? (
+                <>
+                  <h3 className="settings-subsection-title">Terminal interaction state</h3>
+                  <p className="muted-block">
+                    Mirror of the focused pane&apos;s find/follow-output state, shared with palette commands and the
+                    status strip.
+                  </p>
+                  {uiSurfaceState ? (
+                    <p className="muted-block">
+                      {uiSurfaceFollowLabel(uiSurfaceState.followOutput)} · {uiSurfaceFindLabel(uiSurfaceState)}
+                    </p>
+                  ) : (
+                    <p className="muted-block">No active session.</p>
+                  )}
+                  <div className="inline-controls">
+                    <button type="button" className="inline-btn ghost" onClick={() => void onToggleFollowOutput()}>
+                      Toggle follow output
+                    </button>
+                    <button type="button" className="inline-btn ghost" onClick={() => void onOpenTerminalFind()}>
+                      Open find
+                    </button>
+                    <button type="button" className="inline-btn ghost" onClick={() => void onFindPreviousMatch()}>
+                      Find previous
+                    </button>
+                    <button type="button" className="inline-btn ghost" onClick={() => void onFindNextMatch()}>
+                      Find next
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </section>
 
-            <section id="settings-section-updater">
+            <section id="settings-section-updater" hidden={paneHidden("settings-section-updater")}>
               <h2>Updater</h2>
               <div className="inline-controls">
                 <button type="button" className="inline-btn" onClick={() => void checkForUpdates()} disabled={!updaterEnabled}>
-                  check for updates
+                  Check for updates
                 </button>
                 <p className="muted-block">
                   status: {updateStatus}
@@ -540,102 +732,22 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </div>
             </section>
 
-            <section id="settings-section-ai">
-              <h2>AI Router (v0)</h2>
-              <div className="stacked-controls">
-                <label className="field-row">
-                  <span>Default provider</span>
-                  <select
-                    value={routingDraft.default_provider}
-                    onChange={(event) => setRoutingDraft((current) => ({ ...current, default_provider: event.target.value }))}
-                  >
-                    {providers.map((provider) => (
-                      <option key={provider.id} value={provider.id} disabled={!isExecutableProvider(provider.id)}>
-                        {provider.name} ({provider.id}){providerOptionSuffix(isExecutableProvider(provider.id))}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field-row">
-                  <span>Ollama model</span>
-                  <input
-                    value={routingDraft.ollama_model}
-                    onChange={(event) => setRoutingDraft((current) => ({ ...current, ollama_model: event.target.value }))}
-                  />
-                </label>
-                <label className="field-row">
-                  <span>OpenAI model</span>
-                  <input
-                    value={routingDraft.openai_model}
-                    onChange={(event) => setRoutingDraft((current) => ({ ...current, openai_model: event.target.value }))}
-                  />
-                </label>
-                <label className="field-row">
-                  <span>Anthropic model</span>
-                  <input
-                    value={routingDraft.anthropic_model}
-                    onChange={(event) =>
-                      setRoutingDraft((current) => ({ ...current, anthropic_model: event.target.value }))
-                    }
-                  />
-                </label>
-                <label className="field-row">
-                  <span>Custom OpenAI model</span>
-                  <input
-                    value={routingDraft.custom_openai_model}
-                    onChange={(event) =>
-                      setRoutingDraft((current) => ({ ...current, custom_openai_model: event.target.value }))
-                    }
-                  />
-                </label>
-                <button type="button" className="inline-btn ghost" onClick={() => void saveRoutingConfig()}>
-                  save routing config
-                </button>
-                <label className="toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={routing.ai_feature_enabled}
-                    onChange={(event) => void setAiOptIn(event.currentTarget.checked)}
-                  />
-                  AI opt-in required
-                </label>
-                <input value={aiPrompt} onChange={(event) => setAiPrompt(event.currentTarget.value)} />
-                <button
-                  type="button"
-                  className="inline-btn"
-                  onClick={() => void runAiPrompt()}
-                  disabled={!canRunAiRequest(routing.ai_feature_enabled, aiRequestInFlight)}
-                >
-                  {aiRequestInFlight ? "running..." : "run ai prompt"}
-                </button>
-                {!routing.ai_feature_enabled ? (
-                  <p className="muted-block">
-                    {aiOptInRequiredStatus()} Provider endpoints and routing can still be configured.
-                  </p>
-                ) : null}
-                {aiRequestStatus ? <p className="muted-block">{aiRequestStatus}</p> : null}
-                {aiResponse ? <p className="muted-block">{aiResponse}</p> : null}
-                {lastAiContext ? (
-                  <p className="muted-block">
-                    context: {lastAiContext.event_type} - {lastAiContext.payload}
-                  </p>
-                ) : null}
-              </div>
-            </section>
+            <div className="settings-pane" hidden={paneHidden("settings-section-history")}>
+              <HistoryPanel
+                sectionId="settings-section-history"
+                entries={historyEntries}
+                loading={historyLoading}
+                aiBusy={aiRequestInFlight}
+                aiAssistEnabled={aiAssistEnabled}
+                error={historyError}
+                actionStatus={historyActionStatus}
+                onReplay={historyHandlers.onReplay}
+                onExplain={historyHandlers.onExplain}
+                onFix={historyHandlers.onFix}
+              />
+            </div>
 
-            <HistoryPanel
-              sectionId="settings-section-history"
-              entries={historyEntries}
-              loading={historyLoading}
-              aiBusy={aiRequestInFlight}
-              error={historyError}
-              actionStatus={historyActionStatus}
-              onReplay={historyHandlers.onReplay}
-              onExplain={historyHandlers.onExplain}
-              onFix={historyHandlers.onFix}
-            />
-
-            <section id="settings-section-shortcuts">
+            <section id="settings-section-shortcuts" hidden={paneHidden("settings-section-shortcuts")}>
               <h2>Keyboard shortcuts</h2>
               <ul>
                 {globalShortcutItems.map((command) => (
@@ -656,7 +768,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </ul>
             </section>
 
-            <section id="settings-section-plugins">
+            {showDevTools ? (
+            <section id="settings-section-plugins" hidden={paneHidden("settings-section-plugins")}>
               <h2>Plugin contracts</h2>
               <ul>
                 {PLUGIN_REGISTRY.map((plugin) => (
@@ -668,7 +781,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               </ul>
               <div className="inline-controls">
                 <button type="button" className="inline-btn" onClick={() => void runPluginDemo()}>
-                  run plugin demo
+                  Run plugin demo
                 </button>
                 {pluginResult ? <p className="muted-block">{pluginResult}</p> : null}
                 {pluginPolicyDecision ? <p className="muted-block">{pluginPolicyDecision}</p> : null}
@@ -682,6 +795,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 ) : null}
               </div>
             </section>
+            ) : null}
             </div>
           </div>
         </div>

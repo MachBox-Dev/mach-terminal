@@ -7,6 +7,7 @@ interface HistoryPanelProps {
   entries: HistoryEntry[];
   loading: boolean;
   aiBusy: boolean;
+  aiAssistEnabled?: boolean;
   error: string | null;
   actionStatus: string | null;
   onReplay: (command: string) => void;
@@ -50,6 +51,7 @@ export function HistoryPanel({
   entries,
   loading,
   aiBusy,
+  aiAssistEnabled = false,
   error,
   actionStatus,
   onReplay,
@@ -86,12 +88,26 @@ export function HistoryPanel({
                 <button type="button" className="inline-btn" onClick={() => onReplay(historyActionCommand(entry))}>
                   replay
                 </button>
-                <button type="button" className="inline-btn" onClick={() => onExplain(historyActionCommand(entry))} disabled={aiBusy}>
-                  explain
-                </button>
-                <button type="button" className="inline-btn" onClick={() => onFix(historyActionCommand(entry))} disabled={aiBusy}>
-                  fix
-                </button>
+                {aiAssistEnabled ? (
+                  <>
+                    <button
+                      type="button"
+                      className="inline-btn"
+                      onClick={() => onExplain(historyActionCommand(entry))}
+                      disabled={aiBusy}
+                    >
+                      explain
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-btn"
+                      onClick={() => onFix(historyActionCommand(entry))}
+                      disabled={aiBusy}
+                    >
+                      fix
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
           ))}

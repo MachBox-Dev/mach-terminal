@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import { Terminal as XTerm } from "@xterm/xterm";
@@ -40,6 +39,24 @@ import {
   type ComposerHistoryDirection,
 } from "../core/composerHistory";
 import { composerOutputScrollIntentFromKeyboardEvent } from "../core/composerOutputScroll";
+import {
+  composerPlaceholderForMode,
+  inputModeUsesComposer,
+  inputModeUsesXtermStdin,
+  type SessionInputMode,
+} from "../core/inputMode";
+import {
+  isComposerAiToggleKey,
+  type ComposerSubmitKind,
+} from "../core/composerAiIntent";
+import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
+import { isAskFailureShortcut } from "../core/sessionCommandOutcome";
+import {
+  createAttachmentId,
+  formatSelectionAttachmentLabel,
+  locateSelectionLineRange,
+  type AiContextAttachment,
+} from "../core/aiChatState";
 import { canFocusComposerWhenPaneActive } from "../core/terminalComposerFocus";
 import { MACH_TERMINAL_MONO_FONT } from "../core/terminalUiFont";
 import { MachStatusStrip } from "./MachStatusStrip";
@@ -129,7 +146,16 @@ interface TerminalSurfaceProps {
    */
   liveCwd?: string | null;
   isFocused: boolean;
-  /** Persisted profile `font_size`; falls back to 13 when unset. */
+  /** Input posture for this session: operator or commander (raw PTY). */
+  inputMode?: SessionInputMode;
+  /** Operator-only: command vs AI submit (toggled with `?`). */
+  composerSubmitKind?: ComposerSubmitKind;
+  onToggleComposerSubmitKind?: () => void;
+  commandFailure?: SessionCommandFailure | null;
+  onAskAboutFailure?: () => void;
+  onAiComposerSubmit?: (text: string) => void;
+  onAskAiSelection?: (attachment: AiContextAttachment) => void;
+  aiAssistEnabled?: boolean;
   terminalFontSize?: number;
   /** Palette-driven UI intents; only the focused pane consumes a new `seq`. */
   terminalUiRequest?: TerminalUiRequest | null;
@@ -138,8 +164,6 @@ interface TerminalSurfaceProps {
   showComposerAssistMetrics?: boolean;
   /** Latest OSC 133 marker hint for this session (read-only status). */
   osc133Hint?: string | null;
-  aiInsightSlot?: ReactNode | null;
-  aiAssistEnabled?: boolean;
   onComposerDraftChange?: (draft: string) => void;
   onAiExplainComposer?: () => void;
   onAiFixComposer?: () => void;
@@ -166,12 +190,18 @@ export function TerminalSurface({
   exitedInfo = null,
   liveCwd = null,
   isFocused,
+  inputMode = "operator",
+  composerSubmitKind = "command",
+  onToggleComposerSubmitKind,
+  commandFailure = null,
+  onAskAboutFailure,
+  onAiComposerSubmit,
+  onAskAiSelection,
   terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE,
   terminalUiRequest = null,
   uiSurfaceState = DEFAULT_UI_SURFACE_STATE,
   showComposerAssistMetrics = false,
   osc133Hint = null,
-  aiInsightSlot = null,
   aiAssistEnabled = false,
   onComposerDraftChange,
   onAiExplainComposer,
@@ -222,6 +252,10 @@ export function TerminalSurface({
   const exitRestartButtonRef = useRef<HTMLButtonElement | null>(null);
   const onRequestRestartSessionRef = useRef(onRequestRestartSession);
   const onRequestCloseSessionRef = useRef(onRequestCloseSession);
+  const onAiComposerSubmitRef = useRef(onAiComposerSubmit);
+  const onAskAiSelectionRef = useRef(onAskAiSelection);
+  const composerSubmitKindRef = useRef(composerSubmitKind);
+  const inputModeRef = useRef(inputMode);
   const findResultStateRef = useRef<{ resultIndex: number; resultCount: number }>({
     resultIndex: -1,
     resultCount: 0,
@@ -262,6 +296,10 @@ export function TerminalSurface({
   exitedInfoRef.current = exitedInfo;
   onRequestRestartSessionRef.current = onRequestRestartSession;
   onRequestCloseSessionRef.current = onRequestCloseSession;
+  onAiComposerSubmitRef.current = onAiComposerSubmit;
+  onAskAiSelectionRef.current = onAskAiSelection;
+  composerSubmitKindRef.current = composerSubmitKind;
+  inputModeRef.current = inputMode;
 
   isFocusedRef.current = isFocused;
   findCaseSensitiveRef.current = findCaseSensitive;
@@ -344,12 +382,18 @@ export function TerminalSurface({
     if (!normalized.trim()) {
       return;
     }
-    const payload = `${normalized.replace(/\n/g, "\r\n")}\r`;
-    sendTextToPty(payload);
+    if (composerSubmitKindRef.current === "ai") {
+      onAiComposerSubmitRef.current?.(normalized.trim());
+    } else {
+      const payload = `${normalized.replace(/\n/g, "\r\n")}\r`;
+      sendTextToPty(payload);
+    }
     setComposerDraft("");
     historyStateRef.current = createComposerHistoryState();
     resetCompletionState(null);
-    queueMicrotask(() => composerTextareaRef.current?.focus());
+    if (inputModeUsesComposer(inputModeRef.current)) {
+      queueMicrotask(() => composerTextareaRef.current?.focus());
+    }
   }, [composerDraft, resetCompletionState, sendTextToPty]);
 
   const requestComposerCompletion = useCallback(async (): Promise<boolean> => {
@@ -539,6 +583,20 @@ export function TerminalSurface({
     );
   }, [handleCandidatePasteText]);
 
+  // The xterm instance is created exactly once per mount (init effect runs with
+  // `[]` deps). These refs let that effect call the latest callbacks without
+  // listing them as dependencies — otherwise every render churns their identity
+  // (the parent passes fresh inline handlers) and the terminal would be disposed
+  // and recreated on a loop, which reads as the shell "constantly restarting".
+  const emitUiSurfacePatchRef = useRef(emitUiSurfacePatch);
+  const requestClipboardPasteRef = useRef(requestClipboardPaste);
+  const closeFindRef = useRef(closeFind);
+  const currentFindOptionsRef = useRef(currentFindOptions);
+  emitUiSurfacePatchRef.current = emitUiSurfacePatch;
+  requestClipboardPasteRef.current = requestClipboardPaste;
+  closeFindRef.current = closeFind;
+  currentFindOptionsRef.current = currentFindOptions;
+
   const statusLabel = useMemo(() => activeStatus.toUpperCase(), [activeStatus]);
   const sessionInfoTooltip = useMemo(() => {
     const sid = activeSession?.id ?? "none";
@@ -563,6 +621,16 @@ export function TerminalSurface({
 
   useEffect(() => {
     activeSessionRef.current = activeSession;
+    // Tab close/switch can land while a debounced resize is still queued for the
+    // old session id — cancel it so we never ptyResize a torn-down PTY.
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+    const pending = pendingResizeRef.current;
+    if (pending && pending.sessionId !== activeSession?.id) {
+      pendingResizeRef.current = null;
+    }
   }, [activeSession]);
 
   useEffect(() => {
@@ -804,12 +872,12 @@ export function TerminalSurface({
     terminal.writeln("ready.");
     const atBottom = isViewportAtBottom(terminal);
     setFollowOutput(atBottom);
-    emitUiSurfacePatch({ followOutput: atBottom });
+    emitUiSurfacePatchRef.current({ followOutput: atBottom });
 
     const onScrollDispose = terminal.onScroll(() => {
       const nextFollowOutput = isViewportAtBottom(terminal);
       setFollowOutput(nextFollowOutput);
-      emitUiSurfacePatch({ followOutput: nextFollowOutput });
+      emitUiSurfacePatchRef.current({ followOutput: nextFollowOutput });
     });
 
     const searchResultsDispose = searchAddon.onDidChangeResults((event) => {
@@ -911,17 +979,17 @@ export function TerminalSurface({
         }
         findOpenRef.current = true;
         setFindOpenRef.current(true);
-        emitUiSurfacePatch({ findOpen: true });
+        emitUiSurfacePatchRef.current({ findOpen: true });
         return false;
       }
       if (findOpenRef.current) {
         if (event.key === "Escape") {
-          closeFind();
+          closeFindRef.current();
           return false;
         }
         if (event.key === "Enter") {
           const term = findQueryRef.current;
-          const options = currentFindOptions();
+          const options = currentFindOptionsRef.current();
           if (event.shiftKey) {
             searchAddon.findPrevious(term, options);
           } else {
@@ -939,7 +1007,7 @@ export function TerminalSurface({
         return false;
       }
       if (mod && event.shiftKey && event.key === "V") {
-        requestClipboardPaste();
+        requestClipboardPasteRef.current();
         return false;
       }
       return true;
@@ -955,6 +1023,11 @@ export function TerminalSurface({
       const pending = pendingResizeRef.current;
       resizeTimerRef.current = null;
       if (!pending) {
+        return;
+      }
+      const active = activeSessionRef.current;
+      if (!active || active.id !== pending.sessionId) {
+        pendingResizeRef.current = null;
         return;
       }
       const previous = lastResizeSentRef.current;
@@ -1015,7 +1088,11 @@ export function TerminalSurface({
         window.clearTimeout(resizeTimerRef.current);
       }
     };
-  }, [emitUiSurfacePatch, requestClipboardPaste]);
+    // Create the terminal once per mount; the effect reaches the latest callbacks
+    // through refs (declared above) so churning callback identities never force a
+    // dispose/recreate cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1039,14 +1116,42 @@ export function TerminalSurface({
   }, [terminalFontSize]);
 
   useEffect(() => {
-    if (!isFocused || !canFocusComposerWhenPaneActive(findOpen, composerLocked)) {
+    if (!isFocused || !canFocusComposerWhenPaneActive(findOpen, composerLocked, inputMode)) {
       return;
     }
     const id = window.requestAnimationFrame(() => {
       focusComposerInput();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [composerLocked, findOpen, focusComposerInput, isFocused]);
+  }, [composerLocked, findOpen, focusComposerInput, inputMode, isFocused]);
+
+  useEffect(() => {
+    if (!isFocused || composerLocked) {
+      return;
+    }
+    if (inputMode === "commander") {
+      const id = window.requestAnimationFrame(() => {
+        terminalRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(id);
+    }
+    return undefined;
+  }, [composerLocked, inputMode, isFocused]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.options.disableStdin = !inputModeUsesXtermStdin(inputMode);
+    terminal.options.cursorBlink = inputMode === "commander";
+    if (inputMode === "commander" && isFocused) {
+      queueMicrotask(() => {
+        fitAddonRef.current?.fit();
+        terminal.focus();
+      });
+    }
+  }, [inputMode, isFocused]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1125,7 +1230,7 @@ export function TerminalSurface({
       {sessionMessage ? <p className="terminal-message">{sessionMessage}</p> : null}
       <div
         ref={hostRef}
-        className="terminal-host"
+        className={`terminal-host terminal-input-mode-${inputMode}`}
         onContextMenu={(e) => {
           e.preventDefault();
           setCtxMenu({ x: e.clientX, y: e.clientY });
@@ -1313,6 +1418,10 @@ export function TerminalSurface({
                 if (findOpenRef.current) {
                   return;
                 }
+                if (inputModeRef.current === "commander") {
+                  terminalRef.current?.focus();
+                  return;
+                }
                 focusComposerInput();
               }}
             >
@@ -1320,19 +1429,35 @@ export function TerminalSurface({
             </div>
           </div>
           <div className="terminal-input-chrome">
-            {aiInsightSlot}
             <MachStatusStrip
               liveCwd={liveCwd}
               shellExe={activeSession?.shell ?? null}
               osc133Hint={osc133Hint}
+              inputMode={inputMode}
+              composerSubmitKind={inputModeUsesComposer(inputMode) ? composerSubmitKind : null}
+              onToggleComposerSubmitKind={onToggleComposerSubmitKind}
               uiSurfaceState={{ followOutput, findOpen, findQuery }}
             />
-            <div className="terminal-composer" onContextMenu={(event) => event.stopPropagation()}>
+            {inputModeUsesComposer(inputMode) ? (
+            <div className={`terminal-composer terminal-composer-kind-${composerSubmitKind}`} onContextMenu={(event) => event.stopPropagation()}>
+              {commandFailure && onAskAboutFailure && aiAssistEnabled ? (
+                <div className="terminal-failure-hint">
+                  <span>
+                    Last command failed (exit {commandFailure.exitCode}): <code>{commandFailure.commandText}</code>
+                  </span>
+                  <button type="button" className="inline-btn ghost" onClick={() => onAskAboutFailure()}>
+                    Ask AI
+                  </button>
+                  <span className="terminal-failure-hint-keys">
+                    <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
+                  </span>
+                </div>
+              ) : null}
               <div className="terminal-composer-input-row">
                 <textarea
                   ref={composerTextareaRef}
                   className="terminal-composer-field"
-                  placeholder={composerLocked ? "Session unavailable…" : "Type a command…"}
+                  placeholder={composerPlaceholderForMode(inputMode, composerLocked, composerSubmitKind === "ai")}
                   disabled={composerLocked}
                   value={composerDraft}
                   onChange={(e) => {
@@ -1341,6 +1466,20 @@ export function TerminalSurface({
                     setComposerDraft(e.target.value);
                   }}
                   onKeyDown={(e) => {
+                    if (isComposerAiToggleKey(e)) {
+                      e.preventDefault();
+                      onToggleComposerSubmitKind?.();
+                      return;
+                    }
+                    if (
+                      aiAssistEnabled &&
+                      isAskFailureShortcut(e, composerDraft.trim().length === 0, Boolean(commandFailure)) &&
+                      onAskAboutFailure
+                    ) {
+                      e.preventDefault();
+                      onAskAboutFailure();
+                      return;
+                    }
                     const scrollIntent = composerOutputScrollIntentFromKeyboardEvent(e);
                     if (scrollIntent) {
                       e.preventDefault();
@@ -1382,6 +1521,9 @@ export function TerminalSurface({
                       return;
                     }
                     if (e.key === "Tab") {
+                      if (composerSubmitKind === "ai") {
+                        return;
+                      }
                       e.preventDefault();
                       const ta = composerTextareaRef.current;
                       const selectionStart = ta?.selectionStart ?? composerDraft.length;
@@ -1444,7 +1586,7 @@ export function TerminalSurface({
                   ms
                 </p>
               ) : null}
-              {aiAssistEnabled && isFocused && (onAiExplainComposer || onAiFixComposer) ? (
+              {aiAssistEnabled && inputMode === "operator" && isFocused && (onAiExplainComposer || onAiFixComposer) ? (
                 <div className="terminal-composer-ai-row">
                   {onAiExplainComposer ? (
                     <button
@@ -1468,11 +1610,12 @@ export function TerminalSurface({
                   ) : null}
                 </div>
               ) : null}
-              <p className="terminal-composer-footer-hint">
-                Enter send · Shift+Enter newline · Tab complete/cycle · Up/Down history · RightArrow accept suggestion ·
-                Ctrl+Alt+PgUp/PgDn scroll output
-              </p>
             </div>
+            ) : (
+              <p className="terminal-commander-mode-hint" aria-live="polite">
+                Commander mode — raw PTY input. <kbd>Ctrl</kbd>+<kbd>`</kbd> returns to Operator.
+              </p>
+            )}
           </div>
         </div>
         {exitedInfo ? (
@@ -1554,6 +1697,36 @@ export function TerminalSurface({
               }}
             >
               Copy
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!aiAssistEnabled}
+              onClick={() => {
+                const t = terminalRef.current;
+                const sel = t?.getSelection()?.trim() ?? "";
+                if (!sel || !t) {
+                  setCtxMenu(null);
+                  return;
+                }
+                const buffer = t.buffer.active;
+                const range = locateSelectionLineRange(
+                  buffer.length,
+                  (index) => buffer.getLine(index)?.translateToString(true),
+                  sel,
+                );
+                const label = range
+                  ? formatSelectionAttachmentLabel(range.startLine, range.endLine)
+                  : "selection";
+                onAskAiSelectionRef.current?.({
+                  id: createAttachmentId(),
+                  label,
+                  text: sel,
+                });
+                setCtxMenu(null);
+              }}
+            >
+              Ask AI
             </button>
             <button
               type="button"

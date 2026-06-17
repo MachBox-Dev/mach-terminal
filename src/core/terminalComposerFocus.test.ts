@@ -13,4 +13,8 @@ describe("terminalComposerFocus", () => {
   it("skips composer when session is unavailable or exited", () => {
     expect(canFocusComposerWhenPaneActive(false, true)).toBe(false);
   });
+
+  it("skips composer in commander (raw PTY) mode", () => {
+    expect(canFocusComposerWhenPaneActive(false, false, "commander")).toBe(false);
+  });
 });

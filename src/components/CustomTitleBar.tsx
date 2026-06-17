@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "../core/tauriRuntime";
@@ -7,6 +8,8 @@ export interface CustomTitleBarProps {
   onOpenDiagnostics?: () => void;
   /** Dev-only diagnostics entry; wired from `import.meta.env.DEV` at callsite. */
   showDiagnostics?: boolean;
+  /** Session tab strip, rendered inline between the logo menu and the window controls. */
+  tabs?: ReactNode;
 }
 
 function isMacHost(): boolean {
@@ -14,22 +17,6 @@ function isMacHost(): boolean {
     return false;
   }
   return /Mac|iPhone|iPod|iPad/i.test(navigator.userAgent);
-}
-
-function TitleBarBrandRow() {
-  return (
-    <div className="custom-titlebar-brand-row">
-      <img
-        src="/mach-terminal-logo.png"
-        alt=""
-        className="custom-titlebar-logo"
-        width={22}
-        height={22}
-        decoding="async"
-      />
-      <span className="custom-titlebar-brand">Mach Terminal</span>
-    </div>
-  );
 }
 
 function TitleBarMenu({
@@ -72,15 +59,20 @@ function TitleBarMenu({
     <div ref={wrapRef} className="custom-titlebar-menu-wrap">
       <button
         type="button"
-        className="custom-titlebar-menu-trigger"
+        className="custom-titlebar-menu-trigger custom-titlebar-logo-trigger"
         aria-label="Open app menu"
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((previous) => !previous)}
       >
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path fill="currentColor" d="M4 7h16v2H4V7zm0 4h16v2H4v-2zm0 4h16v2H4v-2z" />
-        </svg>
+        <img
+          src="/mach-terminal-logo.png"
+          alt="Mach Terminal menu"
+          className="custom-titlebar-logo"
+          width={20}
+          height={20}
+          decoding="async"
+        />
       </button>
       {open ? (
         <div className="custom-titlebar-menu-dropdown" role="menu">
@@ -109,6 +101,7 @@ export function CustomTitleBar({
   },
   onOpenDiagnostics = () => {},
   showDiagnostics = false,
+  tabs = null,
 }: CustomTitleBarProps = {}) {
   const [maximized, setMaximized] = useState(false);
 
@@ -146,9 +139,13 @@ export function CustomTitleBar({
     <TitleBarMenu onOpenSettings={onOpenSettings} onOpenDiagnostics={onOpenDiagnostics} showDiagnostics={showDiagnostics} />
   );
 
-  const brand = (
+  const tabStrip = <div className="custom-titlebar-tabs">{tabs}</div>;
+
+  // Empty area to the right of the tabs is the window drag handle (double-click
+  // to maximize); tabs themselves are real buttons and stay clickable.
+  const dragSpacer = (
     <div
-      className="custom-titlebar-drag"
+      className="custom-titlebar-drag custom-titlebar-spacer"
       data-tauri-drag-region={isTauri() ? true : undefined}
       onDoubleClick={(event) => {
         if (!isTauri()) {
@@ -159,18 +156,15 @@ export function CustomTitleBar({
         }
         void onToggleMaximize();
       }}
-    >
-      <TitleBarBrandRow />
-    </div>
+    />
   );
 
   if (!isTauri()) {
     return (
       <header className="custom-titlebar custom-titlebar-web">
         {menu}
-        <div className="custom-titlebar-drag custom-titlebar-drag-web">
-          <TitleBarBrandRow />
-        </div>
+        {tabStrip}
+        <div className="custom-titlebar-drag custom-titlebar-drag-web custom-titlebar-spacer" />
       </header>
     );
   }
@@ -264,12 +258,14 @@ export function CustomTitleBar({
         <>
           {controls}
           {menu}
-          {brand}
+          {tabStrip}
+          {dragSpacer}
         </>
       ) : (
         <>
           {menu}
-          {brand}
+          {tabStrip}
+          {dragSpacer}
           {controls}
         </>
       )}
