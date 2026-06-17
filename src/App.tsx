@@ -7,8 +7,11 @@ import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetu
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
-import { AiInsightPanel } from "./components/AiInsightPanel";
 import { OpsRail, type OpsRailFilter } from "./components/OpsRail";
+import { OpsRailResizeHandle } from "./components/OpsRailResizeHandle";
+import { ExitPersistOverlay } from "./components/ExitPersistOverlay";
+import type { SideRailTab } from "./components/AiChatPanel";
+import { SETTINGS_SECTION_AI_PROVIDERS } from "./components/AiChatPanel";
 import { APP_COMMANDS, DEV_PALETTE_COMMANDS, type AppCommandId } from "./core/commands";
 import {
   clearExitedInfo,
@@ -76,9 +79,11 @@ import {
   type AiPromptContextPayload,
 } from "./core/terminal";
 import {
+  buildRestorableSessions,
   closePane,
   createWorkspaceState,
   reconcileWorkspace,
+  remapLayoutToSnapshot,
   removeSessionFromWorkspace,
   restoreWorkspaceFromSnapshot,
   setActivePane,
@@ -90,8 +95,61 @@ import {
   type WorkspaceSnapshot,
   type WorkspaceState,
 } from "./state/workspace";
-import { isExecutableProvider } from "./core/providerUiState";
-import { useProviderAiState } from "./hooks/useProviderAiState";
+import { buildTabLabels } from "./core/sessionTabStatus";
+import {
+  cycleSessionInputMode,
+  defaultSessionInputMode,
+  isInputModeCycleChord,
+  type SessionInputMode,
+} from "./core/inputMode";
+import {
+  defaultComposerSubmitKind,
+  shellEchoCommandForAiPrompt,
+  toggleComposerSubmitKind,
+  type ComposerSubmitKind,
+} from "./core/composerAiIntent";
+import { loadOpsRailWidth, saveOpsRailWidth } from "./core/opsRailLayout";
+import {
+  flushPersistedStateForExit,
+  yieldForExitOverlayPaint,
+  type ExitPersistPhase,
+} from "./core/exitPersist";
+import {
+  ensureChatKeysForSessionIds,
+  resolveChatKeyForSession,
+  restoreSessionMetadataFromTabs,
+  spawnProfileForRestorableTab,
+} from "./core/sessionRestore";
+import {
+  appendChatMessage,
+  attachmentBlockForContext,
+  createChatMessageId,
+  pruneAiChatForSessions,
+  type AiChatState,
+  type AiContextAttachment,
+} from "./core/aiChatState";
+import {
+  applyCommandMarkerOutcome,
+  buildFailureAiQuestion,
+  failureOutputExcerpt,
+  type SessionCommandFailure,
+} from "./core/sessionCommandOutcome";
+import {
+  buildHistoryForExecute,
+  mergeOutputExcerpts,
+} from "./core/aiContextBudget";
+import {
+  hydrateAiChatStateFromStore,
+  persistAiChatsForSessions,
+  prunePersistedAiChats,
+} from "./core/aiChatPersistence";
+import {
+  loadAiBehaviorSettings,
+  saveAiBehaviorSettings,
+  type AiBehaviorSettings,
+} from "./core/aiBehaviorSettings";
+import { isAiAssistReady } from "./core/providerUiState";
+import { historyAiContract, useProviderAiState } from "./hooks/useProviderAiState";
 import { isTauri } from "./core/tauriRuntime";
 import {
   appendCommandSubmitted,
@@ -110,6 +168,7 @@ const WORKSPACE_STORAGE_KEY = "mach-terminal.workspace.v1";
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 320;
 const OPS_RAIL_COLLAPSED_KEY = "mach-terminal.opsRail.collapsed";
 const OPS_RAIL_PINS_KEY = "mach-terminal.opsRail.pins";
+const AI_CHAT_PERSIST_DEBOUNCE_MS = 400;
 
 const UPDATER_ENABLED = import.meta.env.VITE_ENABLE_UPDATER === "true";
 
@@ -143,11 +202,21 @@ function App() {
   sessionBuffersRef.current = sessionBuffers;
   const composerDraftRef = useRef("");
   const [runLedger, setRunLedger] = useState<RunLedgerState>({});
-  const [opsRailCollapsed, setOpsRailCollapsed] = useState(() =>
-    typeof window !== "undefined" ? window.localStorage.getItem(OPS_RAIL_COLLAPSED_KEY) === "1" : false,
-  );
+  const runLedgerRef = useRef(runLedger);
+  runLedgerRef.current = runLedger;
+  const [opsRailCollapsed, setOpsRailCollapsed] = useState(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    // Default to collapsed so the terminal gets full width on first run; honor the
+    // user's explicit choice once they've toggled it (persisted as "0"/"1").
+    const stored = window.localStorage.getItem(OPS_RAIL_COLLAPSED_KEY);
+    return stored === null ? true : stored === "1";
+  });
+  const [opsRailWidth, setOpsRailWidth] = useState(() => loadOpsRailWidth());
   const [opsFilter, setOpsFilter] = useState<OpsRailFilter>("all");
   const [opsSelectedRunId, setOpsSelectedRunId] = useState<string | null>(null);
+  const [sideRailTab, setSideRailTab] = useState<SideRailTab>("log");
   const [sessionStatus, setSessionStatus] = useState<Record<string, SessionStatus>>({});
   const [sessionMessages, setSessionMessages] = useState<Record<string, string | undefined>>({});
   const [sessionExited, setSessionExited] = useState<Record<string, SessionExitedInfo>>({});
@@ -158,6 +227,20 @@ function App() {
    * profile default, matching pre-tranche behavior.
    */
   const [sessionCwd, setSessionCwd] = useState<SessionCwdMap>({});
+  /** User-set custom tab names by session id; absent = use the numbered shell default. */
+  const [sessionNames, setSessionNames] = useState<Record<string, string>>({});
+  /** Per-session input posture (operator / commander); defaults to operator. */
+  const [sessionInputModes, setSessionInputModes] = useState<Record<string, SessionInputMode>>({});
+  /** Operator-only: command vs AI composer intent (toggled with `?`). */
+  const [composerSubmitKinds, setComposerSubmitKinds] = useState<Record<string, ComposerSubmitKind>>({});
+  /** Last non-zero OSC 133 exit per session for failure → AI shortcuts. */
+  const [sessionCommandFailures, setSessionCommandFailures] = useState<
+    Record<string, SessionCommandFailure | undefined>
+  >({});
+  const [aiChatState, setAiChatState] = useState<AiChatState>({});
+  const [sessionChatKeys, setSessionChatKeys] = useState<Record<string, string>>({});
+  const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
+  const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -170,13 +253,20 @@ function App() {
   const [updateStatus, setUpdateStatus] = useState<string>(UPDATER_ENABLED ? "idle" : "disabled (build flag)");
   const [firstRunModalOpen, setFirstRunModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
+
+  const openSettings = useCallback((sectionId?: string) => {
+    setSettingsInitialSection(sectionId);
+    setSettingsModalOpen(true);
+  }, []);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticsJson, setDiagnosticsJson] = useState<string | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const [diagnosticsCopyStatus, setDiagnosticsCopyStatus] = useState<string | null>(null);
   const [recoveryBanner, setRecoveryBanner] = useState<string | null>(null);
-  const [aiInsightDismissed, setAiInsightDismissed] = useState(false);
+  const [exitPersistPhase, setExitPersistPhase] = useState<ExitPersistPhase | null>(null);
+  const exitCloseInFlightRef = useRef(false);
   const [terminalFontSize, setTerminalFontSize] = useState(13);
   const [minimalShellPrompt, setMinimalShellPrompt] = useState(false);
   const [showComposerAssistMetrics, setShowComposerAssistMetrics] = useState(false);
@@ -189,6 +279,16 @@ function App() {
   const lastSequenceRef = useRef<Record<string, number>>({});
   const resizeThrottleRef = useRef<Record<string, number>>({});
   const layoutPersistBootstrappedRef = useRef(false);
+  const persistSnapshotRef = useRef({
+    workspace,
+    sessions,
+    sessionCwd,
+    sessionNames,
+    sessionInputModes,
+    sessionChatKeys,
+    aiChatState,
+    sessionsById: {} as Record<string, PtySessionInfo>,
+  });
 
   const sessionsById = useMemo(
     () =>
@@ -199,6 +299,19 @@ function App() {
     [sessions],
   );
 
+  useEffect(() => {
+    persistSnapshotRef.current = {
+      workspace,
+      sessions,
+      sessionCwd,
+      sessionNames,
+      sessionInputModes,
+      sessionChatKeys,
+      aiChatState,
+      sessionsById,
+    };
+  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, aiChatState, sessionsById]);
+
   const activeSessionId = useMemo(() => {
     const activePane = workspace.panes.find((pane) => pane.id === workspace.activePaneId);
     return activePane?.sessionId ?? null;
@@ -206,6 +319,36 @@ function App() {
 
   const activeSession = activeSessionId ? sessionsById[activeSessionId] : undefined;
   const activeUiSurfaceState = activeSessionId ? sessionUiSurface[activeSessionId] ?? DEFAULT_UI_SURFACE_STATE : null;
+
+  const tabLabels = useMemo(() => buildTabLabels(sessions, sessionNames), [sessions, sessionNames]);
+
+  const cycleActiveInputMode = useCallback(() => {
+    if (!activeSessionId) {
+      return;
+    }
+    setSessionInputModes((current) => ({
+      ...current,
+      [activeSessionId]: cycleSessionInputMode(current[activeSessionId] ?? defaultSessionInputMode()),
+    }));
+  }, [activeSessionId]);
+
+  const renameSession = useCallback((sessionId: string, name: string) => {
+    const trimmed = name.trim();
+    setSessionNames((current) => {
+      if (trimmed.length === 0) {
+        if (!(sessionId in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      }
+      if (current[sessionId] === trimmed) {
+        return current;
+      }
+      return { ...current, [sessionId]: trimmed };
+    });
+  }, []);
 
   const buildAiPromptContext = useCallback((): AiPromptContextPayload | undefined => {
     if (!activeSession) {
@@ -220,6 +363,53 @@ function App() {
       output_excerpt,
     };
   }, [activeSession, sessionBuffers, sessionCwd]);
+
+  const openAiRail = useCallback(() => {
+    setSideRailTab("ai");
+    setOpsRailCollapsed(false);
+  }, []);
+
+  const ensureChatKey = useCallback((sessionId: string, preferredKey?: string): string => {
+    const resolved = resolveChatKeyForSession(sessionChatKeys, sessionId, preferredKey);
+    if (resolved.nextKeys !== sessionChatKeys) {
+      setSessionChatKeys(resolved.nextKeys);
+    }
+    return resolved.chatKey;
+  }, [sessionChatKeys]);
+
+  const bootstrapSessionChat = useCallback((sessionIds: string[], keys: Record<string, string>) => {
+    const merged = ensureChatKeysForSessionIds(sessionIds, keys);
+    setSessionChatKeys(merged);
+    setAiChatState((current) => ({ ...hydrateAiChatStateFromStore(merged), ...current }));
+  }, []);
+
+  const appendAssistantReply = useCallback((sessionId: string, output: string) => {
+    ensureChatKey(sessionId);
+    setAiChatState((current) =>
+      appendChatMessage(current, sessionId, {
+        id: createChatMessageId(),
+        role: "assistant",
+        content: output,
+        atMs: Date.now(),
+      }),
+    );
+  }, [ensureChatKey]);
+
+  const appendUserChatMessage = useCallback(
+    (sessionId: string, content: string, attachments: AiContextAttachment[] = []) => {
+      ensureChatKey(sessionId);
+      setAiChatState((current) =>
+        appendChatMessage(current, sessionId, {
+          id: createChatMessageId(),
+          role: "user",
+          content,
+          attachments: attachments.length > 0 ? attachments : undefined,
+          atMs: Date.now(),
+        }),
+      );
+    },
+    [ensureChatKey],
+  );
 
   const filteredRunsForOps = useMemo(() => {
     const list = activeSessionId ? (runLedger[activeSessionId] ?? []) : [];
@@ -311,6 +501,18 @@ function App() {
     }
   }, [opsRailCollapsed]);
 
+  useEffect(() => {
+    saveOpsRailWidth(opsRailWidth);
+  }, [opsRailWidth]);
+
+  const handleOpsRailWidthChange = useCallback((width: number) => {
+    setOpsRailWidth(width);
+  }, []);
+
+  const flushPersistedState = useCallback(async (onPhase?: (phase: ExitPersistPhase) => void) => {
+    await flushPersistedStateForExit(persistSnapshotRef.current, layoutPersistBootstrappedRef.current, onPhase);
+  }, []);
+
   const {
     providers,
     routing,
@@ -336,6 +538,7 @@ function App() {
     saveRoutingConfig,
     setAiOptIn,
     runAiPrompt,
+    runAiPromptWithText,
     explainCommand,
     fixCommand,
   } = useProviderAiState({
@@ -343,17 +546,82 @@ function App() {
     onRuntimeError: (message) => setRuntimeError(message),
     onHistoryActionStatus: (status) => setHistoryActionStatus(status),
     buildAiPromptContext,
+    buildAiToolContext: (sessionId: string) => ({
+      sessionId,
+      runLedger,
+      sessionBuffers,
+    }),
+    enableAiTools: aiBehaviorSettings.enableAiTools,
+    onAiAssistantReply: ({ output, sessionId }) => {
+      const sid = sessionId ?? activeSessionId;
+      if (!sid) {
+        return;
+      }
+      appendAssistantReply(sid, output);
+    },
   });
 
-  useEffect(() => {
-    setAiInsightDismissed(false);
-  }, [aiResponse]);
+  const aiAssistEnabled = useMemo(
+    () => isAiAssistReady(routing.ai_feature_enabled, routing.default_provider, providers),
+    [providers, routing.ai_feature_enabled, routing.default_provider],
+  );
+
+  const toggleComposerSubmitKindForSession = useCallback((sessionId: string) => {
+    setComposerSubmitKinds((current) => ({
+      ...current,
+      [sessionId]: toggleComposerSubmitKind(current[sessionId] ?? defaultComposerSubmitKind()),
+    }));
+  }, []);
+
+  const queueAiSelection = useCallback(
+    (sessionId: string, attachment: AiContextAttachment) => {
+      openAiRail();
+      setAiPendingAttachments((current) => ({
+        ...current,
+        [sessionId]: [...(current[sessionId] ?? []), attachment],
+      }));
+      setComposerSubmitKinds((current) => ({
+        ...current,
+        [sessionId]: "ai",
+      }));
+    },
+    [openAiRail],
+  );
+
+  const explainCommandToChat = useCallback(
+    (command: string) => {
+      if (!activeSessionId) {
+        return;
+      }
+      openAiRail();
+      const contract = historyAiContract("explain", command);
+      appendUserChatMessage(activeSessionId, contract.prompt);
+      void explainCommand(command);
+    },
+    [activeSessionId, appendUserChatMessage, explainCommand, openAiRail],
+  );
+
+  const fixCommandToChat = useCallback(
+    (command: string) => {
+      if (!activeSessionId) {
+        return;
+      }
+      openAiRail();
+      const contract = historyAiContract("fix", command);
+      appendUserChatMessage(activeSessionId, contract.prompt);
+      void fixCommand(command);
+    },
+    [activeSessionId, appendUserChatMessage, fixCommand, openAiRail],
+  );
 
   useEffect(() => {
-    if (aiRequestInFlight) {
-      setAiInsightDismissed(false);
+    if (typeof window === "undefined") {
+      return;
     }
-  }, [aiRequestInFlight]);
+    const onAiBehavior = () => setAiBehaviorSettings(loadAiBehaviorSettings());
+    window.addEventListener("mach-terminal-ai-behavior-settings", onAiBehavior);
+    return () => window.removeEventListener("mach-terminal-ai-behavior-settings", onAiBehavior);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -401,7 +669,19 @@ function App() {
             }
           }
         }
+        const persistedTabs = fromDisk?.sessions ?? [];
         if (existingSessions.length > 0) {
+          // Backend still alive (e.g. webview reload): reuse live PTYs and reattach metadata.
+          const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(persistedTabs, (id) =>
+            existingSessionIds.includes(id) ? id : null,
+          );
+          bootstrapSessionChat(existingSessionIds, chatKeys);
+          if (Object.keys(names).length > 0) {
+            setSessionNames(names);
+          }
+          if (Object.keys(modes).length > 0) {
+            setSessionInputModes(modes);
+          }
           setWorkspace((current) => {
             const restored = restoreWorkspaceFromSnapshot(storedWorkspace, existingSessionIds, current);
             const activePane = restored.panes.find((pane) => pane.id === restored.activePaneId);
@@ -410,10 +690,60 @@ function App() {
             }
             return setPaneSession(restored, restored.activePaneId, existingSessions[0].id);
           });
+        } else if (persistedTabs.length > 0) {
+          // True restart: respawn each tab, remap pane layout onto fresh session ids.
+          const restoredInfos: PtySessionInfo[] = [];
+          const idMap: Record<string, string> = {};
+          for (const tab of persistedTabs) {
+            try {
+              const created = await ptySpawn({
+                profile: spawnProfileForRestorableTab(tab, initialProfile),
+              });
+              restoredInfos.push(created);
+              idMap[tab.sessionId] = created.id;
+            } catch (error) {
+              console.warn("failed to restore session", tab.sessionId, error);
+            }
+          }
+          if (restoredInfos.length > 0) {
+            const restoredIds = restoredInfos.map((info) => info.id);
+            const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(persistedTabs, (id) => idMap[id] ?? null);
+            setSessions(restoredInfos);
+            setSessionStatus(
+              restoredInfos.reduce<Record<string, SessionStatus>>((acc, info) => {
+                acc[info.id] = "running";
+                return acc;
+              }, {}),
+            );
+            bootstrapSessionChat(restoredIds, chatKeys);
+            if (Object.keys(names).length > 0) {
+              setSessionNames(names);
+            }
+            if (Object.keys(modes).length > 0) {
+              setSessionInputModes(modes);
+            }
+            const remappedSnapshot = JSON.stringify(remapLayoutToSnapshot(fromDisk!, idMap));
+            setWorkspace((current) => {
+              const restored = restoreWorkspaceFromSnapshot(remappedSnapshot, restoredIds, current);
+              const activePane = restored.panes.find((pane) => pane.id === restored.activePaneId);
+              if (activePane?.sessionId) {
+                return restored;
+              }
+              return setPaneSession(restored, restored.activePaneId, restoredInfos[0].id);
+            });
+          } else {
+            const created = await ptySpawn({ profile: initialProfile });
+            setSessions([created]);
+            bootstrapSessionChat([created.id], {});
+            setWorkspace((current) => {
+              const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
+              return setPaneSession(restored, restored.activePaneId, created.id);
+            });
+          }
         } else {
-          const profile = await profileGet();
-          const created = await ptySpawn({ profile });
+          const created = await ptySpawn({ profile: initialProfile });
           setSessions([created]);
+          bootstrapSessionChat([created.id], {});
           setWorkspace((current) => {
             const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
             return setPaneSession(restored, restored.activePaneId, created.id);
@@ -475,13 +805,88 @@ function App() {
       return;
     }
     const handle = window.setTimeout(() => {
-      const layout = workspaceLayoutFromSnapshot(snapshotWorkspace(workspace));
+      const restorable = buildRestorableSessions(
+        sessions,
+        (id) => sessionCwd[id] ?? sessionsById[id]?.cwd,
+        sessionNames,
+        sessionInputModes,
+        sessionChatKeys,
+      );
+      const layout = workspaceLayoutFromSnapshot(snapshotWorkspace(workspace), restorable);
       void workspaceLayoutSet(layout).catch((error) => {
         console.warn("failed to persist workspace layout", error);
       });
     }, WORKSPACE_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [workspace]);
+  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, sessionsById]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      persistAiChatsForSessions(aiChatState, sessionChatKeys);
+      const aliveKeys = new Set(Object.values(sessionChatKeys));
+      prunePersistedAiChats(aliveKeys);
+    }, AI_CHAT_PERSIST_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [aiChatState, sessionChatKeys]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const onExitFlush = () => {
+      void flushPersistedState();
+    };
+    window.addEventListener("pagehide", onExitFlush);
+    window.addEventListener("beforeunload", onExitFlush);
+    return () => {
+      window.removeEventListener("pagehide", onExitFlush);
+      window.removeEventListener("beforeunload", onExitFlush);
+    };
+  }, [flushPersistedState]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        if (cancelled) {
+          return;
+        }
+        unlisten = await getCurrentWindow().onCloseRequested(async (event) => {
+          if (exitCloseInFlightRef.current) {
+            event.preventDefault();
+            return;
+          }
+          event.preventDefault();
+          exitCloseInFlightRef.current = true;
+          setExitPersistPhase("ai-chats");
+          await yieldForExitOverlayPaint();
+          try {
+            await flushPersistedState((phase) => setExitPersistPhase(phase));
+            await getCurrentWindow().destroy();
+          } catch (error) {
+            console.warn("failed to persist on close", error);
+            setExitPersistPhase(null);
+            exitCloseInFlightRef.current = false;
+            await getCurrentWindow().destroy();
+          }
+        });
+      } catch (error) {
+        console.warn("failed to bind close persist handler", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [flushPersistedState]);
 
   useEffect(() => {
     let outputUnlisten: (() => void) | undefined;
@@ -622,6 +1027,13 @@ function App() {
                   : "OSC 133 · output";
           return { ...prev, [event.session_id]: label };
         });
+        if (event.phase === "outputEnd") {
+          const runs = runLedgerRef.current[event.session_id] ?? [];
+          const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
+          setSessionCommandFailures((prev) =>
+            applyCommandMarkerOutcome(prev, event, lastRun?.commandText),
+          );
+        }
       });
 
       contextUnlisten = await onAiContext((event) => {
@@ -679,6 +1091,67 @@ function App() {
       }
       return next;
     });
+    setSessionInputModes((current) => {
+      const alive = new Set(aliveIds);
+      let changed = false;
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!alive.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setComposerSubmitKinds((current) => {
+      const alive = new Set(aliveIds);
+      let changed = false;
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!alive.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setSessionCommandFailures((current) => {
+      const alive = new Set(aliveIds);
+      let changed = false;
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!alive.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setAiChatState((current) => pruneAiChatForSessions(current, aliveIds));
+    setSessionChatKeys((current) => {
+      const alive = new Set(aliveIds);
+      let changed = false;
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!alive.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    setAiPendingAttachments((current) => {
+      const alive = new Set(aliveIds);
+      let changed = false;
+      const next = { ...current };
+      for (const id of Object.keys(next)) {
+        if (!alive.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
   }, [sessions]);
 
   /**
@@ -706,10 +1179,11 @@ function App() {
         return next;
       });
       setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
+      ensureChatKey(created.id);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to create session.");
     }
-  }, []);
+  }, [ensureChatKey]);
 
   const createSession = useCallback(async () => {
     await createSessionAt(null);
@@ -740,6 +1214,67 @@ function App() {
     });
     setSessionExited((current) => clearExitedInfo(current, sessionId));
     setSessionCwd((current) => clearCwd(current, sessionId));
+    setSessionNames((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionInputModes((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setComposerSubmitKinds((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionCommandFailures((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setAiChatState((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSessionChatKeys((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setAiPendingAttachments((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    if (sessionId in resizeThrottleRef.current) {
+      const nextThrottle = { ...resizeThrottleRef.current };
+      delete nextThrottle[sessionId];
+      resizeThrottleRef.current = nextThrottle;
+    }
     setSessionUiSurface((current) => {
       const next = { ...current };
       delete next[sessionId];
@@ -749,8 +1284,20 @@ function App() {
 
   const updateSessionUiSurfaceState = useCallback((sessionId: string, patch: UiSurfaceStatePatch) => {
     setSessionUiSurface((current) => {
-      const baseline = current[sessionId] ?? DEFAULT_UI_SURFACE_STATE;
+      const existing = current[sessionId];
+      const baseline = existing ?? DEFAULT_UI_SURFACE_STATE;
       const nextState = mergeUiSurfaceState(baseline, patch);
+      // Bail when the patch is a no-op so we don't emit a new state reference (and a
+      // re-render) for every repeated identical surface signal (e.g. scroll events
+      // re-asserting followOutput).
+      if (
+        existing &&
+        existing.followOutput === nextState.followOutput &&
+        existing.findOpen === nextState.findOpen &&
+        existing.findQuery === nextState.findQuery
+      ) {
+        return current;
+      }
       return { ...current, [sessionId]: nextState };
     });
   }, []);
@@ -783,7 +1330,83 @@ function App() {
     }
   }, []);
 
+  const submitAiChat = useCallback(
+    async (sessionId: string, prompt: string, extraAttachments: AiContextAttachment[] = []) => {
+      const trimmed = prompt.trim();
+      if (trimmed.length === 0) {
+        return;
+      }
+      openAiRail();
+      const pending = aiPendingAttachments[sessionId] ?? [];
+      const attachments = [...pending, ...extraAttachments];
+      const priorMessages = aiChatState[sessionId] ?? [];
+      const history = buildHistoryForExecute(
+        priorMessages,
+        trimmed,
+        routing.ai_context_budget_chars,
+      );
+      appendUserChatMessage(sessionId, trimmed, attachments);
+      if (pending.length > 0) {
+        setAiPendingAttachments((current) => {
+          if (!(sessionId in current) || (current[sessionId]?.length ?? 0) === 0) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
+      }
+      if (aiBehaviorSettings.echoAiPromptToTape) {
+        const echo = shellEchoCommandForAiPrompt(trimmed);
+        if (echo) {
+          void handleInput(sessionId, `${echo}\r`);
+        }
+      }
+      const scrollbackExcerpt = trimAiContextExcerpt(sessionBuffers[sessionId] ?? "");
+      const attachmentBlock =
+        attachments.length > 0 ? attachmentBlockForContext(attachments) : undefined;
+      const output_excerpt = mergeOutputExcerpts(scrollbackExcerpt, attachmentBlock);
+      await runAiPromptWithText(trimmed, {
+        sessionId,
+        history,
+        contextExtras: output_excerpt ? { output_excerpt } : undefined,
+      });
+    },
+    [
+      aiBehaviorSettings.echoAiPromptToTape,
+      aiChatState,
+      aiPendingAttachments,
+      appendUserChatMessage,
+      handleInput,
+      openAiRail,
+      routing.ai_context_budget_chars,
+      runAiPromptWithText,
+      sessionBuffers,
+    ],
+  );
+
+  const askAboutCommandFailure = useCallback(
+    (sessionId: string) => {
+      const failure = sessionCommandFailures[sessionId];
+      if (!failure) {
+        return;
+      }
+      const runs = runLedger[sessionId] ?? [];
+      const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
+      const excerpt = failureOutputExcerpt(sessionBuffers[sessionId] ?? "", lastRun);
+      const question = buildFailureAiQuestion(failure, excerpt);
+      void submitAiChat(sessionId, question);
+    },
+    [runLedger, sessionBuffers, sessionCommandFailures, submitAiChat],
+  );
+
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+
   const handleResize = useCallback(async (sessionId: string, cols: number, rows: number) => {
+    if (!sessionsRef.current.some((session) => session.id === sessionId)) {
+      return;
+    }
     const now = Date.now();
     const lastResize = resizeThrottleRef.current[sessionId] ?? 0;
     if (now - lastResize < RESIZE_THROTTLE_MS) {
@@ -793,7 +1416,11 @@ function App() {
     try {
       await ptyResize(sessionId, cols, rows);
     } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : "Failed to resize terminal session.");
+      const message = error instanceof Error ? error.message : "Failed to resize terminal session.";
+      if (message.includes("does not exist")) {
+        return;
+      }
+      setRuntimeError(message);
     }
   }, []);
 
@@ -1091,20 +1718,20 @@ function App() {
           await refreshRuntimeMetrics();
           break;
         case "ai.explainSelection":
-          if (historyEntries.length > 0) {
+          if (aiAssistEnabled && historyEntries.length > 0) {
             await explainCommand(historyEntries[0].command);
           }
           break;
         case "ai.explainComposerDraft": {
           const draft = composerDraftRef.current.trim();
-          if (draft) {
+          if (aiAssistEnabled && draft) {
             await explainCommand(draft);
           }
           break;
         }
         case "ai.fixComposerDraft": {
           const draft = composerDraftRef.current.trim();
-          if (draft) {
+          if (aiAssistEnabled && draft) {
             await fixCommand(draft);
           }
           break;
@@ -1148,11 +1775,18 @@ function App() {
       restartActiveSession,
       restartAllExited,
       splitPane,
+      aiAssistEnabled,
     ],
   );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isInputModeCycleChord(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        cycleActiveInputMode();
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
@@ -1165,20 +1799,31 @@ function App() {
       void executeCommand(binding.command);
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [executeCommand]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [cycleActiveInputMode, executeCommand]);
 
   const commandPaletteItems = useMemo(() => {
     const commands = import.meta.env.DEV ? [...APP_COMMANDS, ...DEV_PALETTE_COMMANDS] : APP_COMMANDS;
-    return commands.map((command) => {
-      const matchingBinding = DEFAULT_KEYMAP.find((binding) => binding.command === command.id);
-      return {
-        ...command,
-        shortcut: matchingBinding ? formatShortcut(matchingBinding) : command.shortcut,
-      };
-    });
-  }, []);
+    return commands
+      .filter((command) => {
+        if (
+          command.id === "ai.explainSelection" ||
+          command.id === "ai.explainComposerDraft" ||
+          command.id === "ai.fixComposerDraft"
+        ) {
+          return aiAssistEnabled;
+        }
+        return true;
+      })
+      .map((command) => {
+        const matchingBinding = DEFAULT_KEYMAP.find((binding) => binding.command === command.id);
+        return {
+          ...command,
+          shortcut: matchingBinding ? formatShortcut(matchingBinding) : command.shortcut,
+        };
+      });
+  }, [aiAssistEnabled]);
 
   const globalShortcutItems = useMemo(
     () => commandPaletteItems.filter((command) => DEFAULT_KEYMAP.some((binding) => binding.command === command.id)),
@@ -1190,25 +1835,20 @@ function App() {
     [commandPaletteItems],
   );
 
-  const aiAssistEnabled = useMemo(
-    () => routing.ai_feature_enabled && isExecutableProvider(routing.default_provider),
-    [routing.ai_feature_enabled, routing.default_provider],
-  );
+  const activeAiMessages = activeSessionId ? aiChatState[activeSessionId] ?? [] : [];
+  const activeAiPendingAttachments = activeSessionId ? aiPendingAttachments[activeSessionId] ?? [] : [];
 
-  const aiInsightSlot = useMemo(() => {
-    if (aiInsightDismissed || (!aiResponse && !aiRequestInFlight)) {
-      return null;
+  const runAiPromptToChat = useCallback(async () => {
+    if (!activeSessionId) {
+      await runAiPrompt();
+      return;
     }
-    return (
-      <AiInsightPanel
-        text={aiResponse}
-        inFlight={aiRequestInFlight}
-        statusLine={aiRequestStatus}
-        onDismiss={() => setAiInsightDismissed(true)}
-        onOpenSettings={() => setSettingsModalOpen(true)}
-      />
-    );
-  }, [aiInsightDismissed, aiRequestInFlight, aiRequestStatus, aiResponse]);
+    const trimmed = aiPrompt.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    await submitAiChat(activeSessionId, trimmed);
+  }, [activeSessionId, aiPrompt, runAiPrompt, submitAiChat]);
 
   const requestComposerCompletion = useCallback(
     async (request: {
@@ -1229,9 +1869,23 @@ function App() {
   return (
     <div className="app-frame">
       <CustomTitleBar
-        onOpenSettings={() => setSettingsModalOpen(true)}
+        onOpenSettings={() => openSettings()}
         onOpenDiagnostics={() => setDiagnosticsOpen(true)}
         showDiagnostics={import.meta.env.DEV}
+        tabs={
+          <TabBar
+            sessions={sessions}
+            sessionStatus={sessionStatus}
+            sessionExited={sessionExited}
+            activeSessionId={activeSessionId}
+            tabLabels={tabLabels}
+            onSelect={(sessionId) => setWorkspace((current) => setPaneSession(current, current.activePaneId, sessionId))}
+            onCreate={() => void createSession()}
+            onClose={(sessionId) => void closeSession(sessionId)}
+            onRestartSession={(sessionId) => void restartSessionById(sessionId)}
+            onRename={renameSession}
+          />
+        }
       />
       <main className="app-shell">
         {transientRuntimeError ? <p className="runtime-toast">{transientRuntimeError}</p> : null}
@@ -1239,7 +1893,7 @@ function App() {
         {runtimeError ? (
           <div className="runtime-error-strip" role="status">
             <span>{runtimeError}</span>
-            <button type="button" className="inline-btn ghost" onClick={() => setSettingsModalOpen(true)}>
+            <button type="button" className="inline-btn ghost" onClick={() => openSettings()}>
               Open settings
             </button>
           </div>
@@ -1248,16 +1902,6 @@ function App() {
         <section className="terminal-surface">
           <div className={`terminal-workspace-split${opsRailCollapsed ? " ops-rail-window-collapsed" : ""}`}>
           <section className="terminal-stack">
-          <TabBar
-            sessions={sessions}
-            sessionStatus={sessionStatus}
-            sessionExited={sessionExited}
-            activeSessionId={activeSessionId}
-            onSelect={(sessionId) => setWorkspace((current) => setPaneSession(current, current.activePaneId, sessionId))}
-            onCreate={() => void createSession()}
-            onClose={(sessionId) => void closeSession(sessionId)}
-            onRestartSession={(sessionId) => void restartSessionById(sessionId)}
-          />
           <SplitWorkspace
             workspace={workspace}
             sessionsById={sessionsById}
@@ -1271,23 +1915,29 @@ function App() {
             showComposerAssistMetrics={showComposerAssistMetrics}
             sessionOsc133Hints={sessionOsc133Hints}
             sessionUiSurface={sessionUiSurface}
-            aiInsightSlot={aiInsightSlot}
+            sessionInputModes={sessionInputModes}
+            composerSubmitKinds={composerSubmitKinds}
+            sessionCommandFailures={sessionCommandFailures}
             aiAssistEnabled={aiAssistEnabled}
             onComposerDraftChange={(paneId, draft) => {
               if (paneId === workspace.activePaneId) {
                 composerDraftRef.current = draft;
               }
             }}
+            onToggleComposerSubmitKind={toggleComposerSubmitKindForSession}
+            onAskAboutFailure={askAboutCommandFailure}
+            onAiComposerSubmit={(sessionId, text) => void submitAiChat(sessionId, text)}
+            onAskAiSelection={queueAiSelection}
             onAiExplainComposer={() => {
               const draft = composerDraftRef.current.trim();
               if (draft) {
-                void explainCommand(draft);
+                void explainCommandToChat(draft);
               }
             }}
             onAiFixComposer={() => {
               const draft = composerDraftRef.current.trim();
               if (draft) {
-                void fixCommand(draft);
+                void fixCommandToChat(draft);
               }
             }}
             historyEntries={historyEntries}
@@ -1318,9 +1968,15 @@ function App() {
             }}
           />
           </section>
+          {!opsRailCollapsed ? (
+            <OpsRailResizeHandle width={opsRailWidth} onWidthChange={handleOpsRailWidthChange} />
+          ) : null}
           <OpsRail
             collapsed={opsRailCollapsed}
+            width={opsRailCollapsed ? undefined : opsRailWidth}
             onToggleCollapsed={() => setOpsRailCollapsed((current) => !current)}
+            activeTab={sideRailTab}
+            onTabChange={setSideRailTab}
             filter={opsFilter}
             onFilterChange={setOpsFilter}
             entries={filteredRunsForOps}
@@ -1331,15 +1987,50 @@ function App() {
             onJump={handleJumpRun}
             aiAssistEnabled={aiAssistEnabled}
             aiBusy={aiRequestInFlight}
-            onExplainEntry={(command) => void explainCommand(command)}
-            onFixEntry={(command) => void fixCommand(command)}
+            onExplainEntry={(command) => void explainCommandToChat(command)}
+            onFixEntry={(command) => void fixCommandToChat(command)}
+            aiMessages={activeAiMessages}
+            aiStatusLine={aiRequestStatus}
+            aiPendingAttachments={activeAiPendingAttachments}
+            onRemoveAiAttachment={(attachmentId) => {
+              if (!activeSessionId) {
+                return;
+              }
+              setAiPendingAttachments((current) => {
+                const list = current[activeSessionId];
+                if (!list) {
+                  return current;
+                }
+                const nextList = list.filter((attachment) => attachment.id !== attachmentId);
+                if (nextList.length === list.length) {
+                  return current;
+                }
+                if (nextList.length === 0) {
+                  const next = { ...current };
+                  delete next[activeSessionId];
+                  return next;
+                }
+                return { ...current, [activeSessionId]: nextList };
+              });
+            }}
+            onAiChatSubmit={(text) => {
+              if (!activeSessionId) {
+                return;
+              }
+              void submitAiChat(activeSessionId, text);
+            }}
+            onOpenAiSettings={() => openSettings(SETTINGS_SECTION_AI_PROVIDERS)}
           />
           </div>
         </section>
 
         <AppSettingsModal
           open={settingsModalOpen}
-          onClose={() => setSettingsModalOpen(false)}
+          initialSectionId={settingsInitialSection}
+          onClose={() => {
+            setSettingsModalOpen(false);
+            setSettingsInitialSection(undefined);
+          }}
           onOpenProfile={() => {
             setSettingsModalOpen(false);
             setFirstRunModalOpen(true);
@@ -1382,7 +2073,7 @@ function App() {
           setAiOptIn={setAiOptIn}
           aiPrompt={aiPrompt}
           setAiPrompt={setAiPrompt}
-          runAiPrompt={runAiPrompt}
+          runAiPrompt={runAiPromptToChat}
           aiRequestInFlight={aiRequestInFlight}
           aiRequestStatus={aiRequestStatus}
           aiResponse={aiResponse}
@@ -1401,10 +2092,27 @@ function App() {
           pluginGrantSummary={pluginGrantSummary}
           pluginTelemetry={pluginTelemetry}
           runPluginDemo={runPluginDemo}
+          onProfileSaved={(savedProfile) => {
+            setTerminalFontSize(savedProfile.font_size);
+            setMinimalShellPrompt(savedProfile.minimal_shell_prompt ?? false);
+            setShowComposerAssistMetrics(savedProfile.show_composer_assist_metrics ?? false);
+          }}
           minimalShellPrompt={minimalShellPrompt}
           onMinimalShellPromptChange={setMinimalShellPromptPreference}
           showComposerAssistMetrics={showComposerAssistMetrics}
           onShowComposerAssistMetricsChange={setShowComposerAssistMetricsPreference}
+          echoAiPromptToTape={aiBehaviorSettings.echoAiPromptToTape}
+          onEchoAiPromptToTapeChange={(enabled) => {
+            const next = { ...aiBehaviorSettings, echoAiPromptToTape: enabled };
+            setAiBehaviorSettings(next);
+            saveAiBehaviorSettings(next);
+          }}
+          enableAiTools={aiBehaviorSettings.enableAiTools}
+          onEnableAiToolsChange={(enabled) => {
+            const next = { ...aiBehaviorSettings, enableAiTools: enabled };
+            setAiBehaviorSettings(next);
+            saveAiBehaviorSettings(next);
+          }}
         />
         <CommandPalette
           open={paletteOpen}
@@ -1472,6 +2180,7 @@ function App() {
         </div>
         ) : null}
       </main>
+      {exitPersistPhase ? <ExitPersistOverlay phase={exitPersistPhase} /> : null}
     </div>
   );
 }
