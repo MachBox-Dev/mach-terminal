@@ -14,9 +14,7 @@
       "active": false,
       "dialog": false,
       "pubkey": "$UPDATER_PUBLIC_KEY",
-      "endpoints": [
-        "https://github.com/whobs/mach-terminal/releases/latest/download/latest.json"
-      ]
+      "endpoints": []
     }
   },
   "app": {

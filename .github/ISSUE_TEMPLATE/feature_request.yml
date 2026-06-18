@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest an improvement (read PRINCIPLES.md first)
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please skim [`PRINCIPLES.md`](../../PRINCIPLES.md) first. Requests that require
+        accounts for core terminal behavior, mandatory telemetry, or cloud lock-in
+        are unlikely to be accepted.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do? What's painful today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing" or workarounds you already use.
+
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Principles check
+      options:
+        - label: Core terminal still works with AI fully disabled
+          required: true
+        - label: No account required for this feature (or it is strictly opt-in hosted service)
+          required: true

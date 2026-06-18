@@ -2,6 +2,10 @@
 
 This document defines the production release process for Mach Terminal.
 
+**Canonical repository:** [`MachBox-Dev/mach-terminal`](https://github.com/MachBox-Dev/mach-terminal)  
+**Updater manifest (stable):** `https://github.com/MachBox-Dev/mach-terminal/releases/latest/download/latest.json`  
+(injected at release build time via `MACH_UPDATER_ENDPOINT` — see `scripts/enable-updater-build.mjs`)
+
 ## Release Channels
 
 - **Stable tags:** `vX.Y.Z` (semver, no prerelease suffix)
@@ -42,7 +46,7 @@ Local dry run (`npm run release:dry-run`) hashes debug-bundle outputs into `arti
    - `npm run security:baseline`
 2. Verify `CHANGELOG.md` has an entry for the target version.
 3. Confirm latest nightly burn-in is green and threshold gate passed.
-4. Confirm updater manifest endpoint is reachable (GitHub `latest.json` for your repo).
+4. Confirm updater manifest endpoint is reachable (`MACH_UPDATER_ENDPOINT` / GitHub `latest.json` for your repo).
 
 ## Required GitHub Secrets
 
@@ -91,7 +95,7 @@ The promote workflow refuses tags that look like RC (`-rc.`) so stable promotion
 
 - **Dev / local builds:** `plugins.updater.active` is `false` in `src-tauri/tauri.conf.json`; the UI shows updater as disabled unless the frontend is built with `VITE_ENABLE_UPDATER=true` (release workflow sets this).
 - **CI release builds:** `scripts/enable-updater-build.mjs` enables the updater plugin before `tauri build`.
-- **Channels:** End users consume updates via the manifest URL in `tauri.conf.json` (default: `.../releases/latest/download/latest.json`). Stable users should only follow **promoted** stable releases; RC testers can install RC assets manually or use a separate endpoint if you maintain one.
+- **Channels:** Committed `tauri.conf.json` ships with `endpoints: []` so OSS clones do not phone a maintainer release URL. Official release CI sets `MACH_UPDATER_ENDPOINT` (see `scripts/enable-updater-build.mjs` and `.github/workflows/release.yml`) before building signed packages. Stable users should only follow **promoted** stable releases; RC testers can install RC assets manually or use a separate endpoint if you maintain one.
 
 ## Rollback Procedure
 

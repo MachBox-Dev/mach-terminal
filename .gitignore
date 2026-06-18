@@ -25,3 +25,6 @@ dist-ssr
 artifacts/
 .aider*
 .cursor/
+# Maintainer-only agent handoff (not shipped in public OSS)
+docs/continuation-handoff.md
+

@@ -1,6 +1,6 @@
 {
   "name": "mach-terminal",
-  "private": true,
+  "private": false,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "test:pty": "cargo test --manifest-path src-tauri/Cargo.toml --tests",
     "security:npm": "npm audit --omit=dev --audit-level=high",
     "security:cargo": "cargo audit --manifest-path src-tauri/Cargo.toml --deny warnings",
+    "security:gitleaks": "gitleaks detect --source . --verbose",
     "security:baseline": "npm run security:npm && npm run security:cargo",
     "check:versions": "node scripts/check-version-sync.mjs",
     "release:smoke": "npm run check:versions && npm run build && npm run tauri -- build --debug",

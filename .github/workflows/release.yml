@@ -135,6 +135,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Enable updater plugin for release packages
+        env:
+          MACH_UPDATER_ENDPOINT: https://github.com/MachBox-Dev/mach-terminal/releases/latest/download/latest.json
         run: node scripts/enable-updater-build.mjs
 
       - name: Build and publish release assets

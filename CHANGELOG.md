@@ -6,6 +6,8 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Added
 
+- OSS governance: Apache-2.0 `LICENSE`, `CONTRIBUTING.md` (DCO), `PRINCIPLES.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, GitHub issue/PR templates, and `docs/oss-prep.md`.
+- Gitleaks secret scan in CI and `npm run security:gitleaks`; updater manifest decoupled from committed config (`MACH_UPDATER_ENDPOINT` at release only).
 - Shell profile picker with cross-platform `detect_shells` (WSL distro enumeration, `/etc/shells`, profile `args`).
 - Persisted workspace tabs (`RestorableSession`: shell, cwd, name, chatKey, inputMode) with cold-restart respawn and layout remap.
 - Per-session AI chat persistence (`chatKey` + localStorage) with exit-save overlay and phased close flush.
@@ -23,6 +25,7 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Changed
 
+- Repository prepared for public release under `MachBox-Dev` (open-core client; Mach Cloud out of scope).
 - Provider settings and onboarding share canonical `buildProviderCards` view-model.
 - Titlebar-integrated tabs with inline rename and short shell labels.
 

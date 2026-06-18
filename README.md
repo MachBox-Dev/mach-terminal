@@ -1,6 +1,13 @@
-# mach-terminal
+# Mach Terminal
 
-A speed-first desktop terminal scaffold with an open extension model. The baseline is terminal performance, session reliability, and local control. AI providers are optional and disabled by default.
+A speed-first, local-first desktop terminal — part of the [Mach](https://machbox.dev) suite
+([Mach Triage](https://mach-triage.com) is the flagship app today).
+
+> **Repository:** [`MachBox-Dev/mach-terminal`](https://github.com/MachBox-Dev/mach-terminal) (Apache-2.0)
+Terminal performance, session reliability, and local control are the baseline. AI providers
+are optional, bring-your-own-key, and **disabled by default**.
+
+> **Principles:** [`PRINCIPLES.md`](PRINCIPLES.md) · **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) · **License:** [Apache-2.0](LICENSE) · **OSS prep:** [`docs/oss-prep.md`](docs/oss-prep.md)
 
 ## Stack
 
@@ -26,11 +33,17 @@ npm run tauri dev
 On first launch, use **Quick start (AI off)** in Settings to get to a working terminal session immediately.  
 Advanced provider/routing controls are optional and can be configured later.
 
+## Privacy & telemetry
+
+- **No account required** for the core terminal or BYOK/local AI.
+- **API keys** live in the OS keychain, never in plaintext settings.
+- **No telemetry by default.** Structured JSON logs via `tracing` stay local unless you opt in.
+- **Optional OTLP:** set `OTEL_EXPORTER_OTLP_ENDPOINT` to export distributed traces (see `docs/runtime-contracts.md`).
+
 ## Developer diagnostics
 
 - **Vite dev + debug Tauri:** With `npm run tauri dev`, the header shows **Diagnostics** and the command palette includes **Open diagnostics snapshot** (merged JSON from `runtime_debug_snapshot` and `settings_schema_dump` when the native build has debug assertions).
 - **Logs:** JSON logs via `tracing`; narrow noise with `RUST_LOG` (for example `RUST_LOG=mach_terminal_lib=debug,info`).
-- **Distributed traces:** Optional OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (see `docs/runtime-contracts.md`).
 - **Tests / CI:** Override history directory with `MACH_TERMINAL_HISTORY_DIR` when exercising persistence (see `src-tauri/src/history_store.rs`).
 
 ## Scaffolded Contracts

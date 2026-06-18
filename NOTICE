@@ -1,0 +1,24 @@
+Mach Terminal
+Copyright 2026 Mike Whobrey
+
+This product includes software developed as part of the Mach suite (https://machbox.dev).
+
+Licensed under the Apache License, Version 2.0 (the "License").
+You may obtain a copy of the License in the LICENSE file at the root of
+this repository or at http://www.apache.org/licenses/LICENSE-2.0.
+
+---
+
+Mach Terminal builds on the following third-party open-source software,
+each under its own license:
+
+- Tauri (https://tauri.app) — Apache-2.0 / MIT
+- portable-pty / wezterm-* (https://github.com/wezterm/wezterm) — MIT
+- xterm.js (https://xtermjs.org) — MIT
+- React (https://react.dev) — MIT
+- Vite (https://vite.dev) — MIT
+- reqwest, serde, tokio, tracing, keyring, and other Rust crates — see
+  their respective Cargo manifests and license files.
+
+The full dependency license set is reproduced in distributed builds and
+can be regenerated from the lockfiles (package-lock.json, Cargo.lock).

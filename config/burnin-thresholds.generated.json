@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedAt": "2026-04-15T21:13:04.240Z",
-  "sourceDir": "C:\\Users\\whobs\\dev\\mach-terminal\\artifacts\\burnin\\history",
+  "sourceDir": "artifacts/burnin/history",
   "platforms": {
     "win32": {
       "samples": 1,

@@ -1,0 +1,5 @@
+blank_issues: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/MachBox-Dev/mach-terminal/blob/master/SECURITY.md
+    about: Do not file public issues for security bugs — use Security Advisories or the private contact in SECURITY.md.
