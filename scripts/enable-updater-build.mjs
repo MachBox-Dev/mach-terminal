@@ -20,9 +20,20 @@ if (!endpoint) {
 
 config.plugins.updater.active = true;
 config.plugins.updater.endpoints = [endpoint];
+const publicKey = process.env.UPDATER_PUBLIC_KEY?.trim();
+if (!publicKey || publicKey.startsWith("$")) {
+  console.error(
+    "UPDATER_PUBLIC_KEY is required for release builds (full minisign .pub file contents). " +
+      "Tauri does not substitute env vars inside tauri.conf.json.",
+  );
+  process.exit(1);
+}
+config.plugins.updater.pubkey = publicKey;
 if (!config.bundle) {
   config.bundle = {};
 }
 config.bundle.createUpdaterArtifacts = true;
 writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-console.log(`Set plugins.updater.active = true; endpoint = ${endpoint}; createUpdaterArtifacts = true`);
+console.log(
+  `Set plugins.updater.active = true; endpoint = ${endpoint}; createUpdaterArtifacts = true; pubkey injected`,
+);

@@ -8,7 +8,7 @@ Mach Terminal uses **two independent signing layers**:
 | **OS code signing** | Windows Authenticode / macOS Developer ID — removes SmartScreen & Gatekeeper friction | **No** for CI to run; **yes** for polished public downloads |
 
 Stable tags **fail immediately** if updater signing secrets are missing (`validate-stable-signing` in `release.yml`).  
-OS cert secrets are optional — `tauri-action` still builds unsigned installers without them.
+OS cert secrets are optional — without them in `release.yml`, `tauri-action` builds **unsigned** installers (SmartScreen / Gatekeeper warnings until Tier 2 is wired). Do **not** add placeholder `APPLE_*` / `WINDOWS_*` secrets; invalid values break macOS builds.
 
 ---
 
@@ -46,9 +46,9 @@ gh secret list --repo MachBox-Dev/mach-terminal
 
 ### 3. Config already wired
 
-- `src-tauri/tauri.conf.json` → `bundle.createUpdaterArtifacts: true`, `plugins.updater.pubkey: "$UPDATER_PUBLIC_KEY"`
-- `release.yml` → injects secrets + `MACH_UPDATER_ENDPOINT` at build time
-- `scripts/enable-updater-build.mjs` → enables updater + endpoint on release builds only
+- `src-tauri/tauri.conf.json` → `bundle.createUpdaterArtifacts: true`; committed `pubkey` is empty (OSS clones)
+- `scripts/enable-updater-build.mjs` → injects `UPDATER_PUBLIC_KEY` + enables updater endpoint on release builds only (Tauri does **not** expand `$ENV` in config JSON)
+- `release.yml` → Tier 1 updater signing secrets only; add Tier 2 `APPLE_*` / `WINDOWS_*` to the tauri-action step when OS certs are ready
 
 Official docs: [Tauri updater signing](https://v2.tauri.app/plugin/updater/#signing-updates)
 
@@ -125,6 +125,8 @@ After Tier 1 secrets are set:
 | Symptom | Fix |
 | --- | --- |
 | `Stable releases require TAURI_SIGNING_PRIVATE_KEY` | Run `setup-release-signing.ps1` |
+| `failed to decode pubkey` / `Invalid symbol 36` | Pubkey was literal `$UPDATER_PUBLIC_KEY` — release CI must run `enable-updater-build.mjs` with `UPDATER_PUBLIC_KEY` secret set |
+| `failed to import keychain certificate` (macOS) | Remove invalid placeholder `APPLE_*` secrets, or add real Tier 2 certs to `release.yml` |
 | Updater checks fail in installed app | `UPDATER_PUBLIC_KEY` must match the key that signed the **installed** build |
 | `createUpdaterArtifacts` / no `.sig` files | Ensure `bundle.createUpdaterArtifacts: true` in `tauri.conf.json` |
 | `gh secret set` permission denied | Org owner/admin on `MachBox-Dev`, or repo admin |

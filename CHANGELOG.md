@@ -21,6 +21,7 @@ All notable changes to Mach Terminal are documented in this file.
 
 - `cargo audit` security gate: use `-f src-tauri/Cargo.lock` (not invalid `--manifest-path`); bump `rustls-webpki` for RUSTSEC-2026-0104.
 - CI release-smoke: disable updater artifacts without signing keys; build `deb` only (AppImage/linuxdeploy often hangs on GHA).
+- Release builds: inject updater `pubkey` via `enable-updater-build.mjs` (literal key required; `$UPDATER_PUBLIC_KEY` in JSON is not expanded). Skip Tier 2 OS cert env in `release.yml` until real certs exist.
 - App close after exit-save overlay: grant `core:window:allow-destroy` so `destroy()` succeeds after `preventDefault`; persist failures no longer block close (`runExitPersistAndClose`).
 - AI provider failures no longer pollute the global runtime error strip (status stays in ops-rail AI request status / provider config status).
 - xterm output pump drains pending writes across RAF frames instead of clearing the buffer in one shot.

@@ -13,7 +13,7 @@
     "updater": {
       "active": false,
       "dialog": false,
-      "pubkey": "$UPDATER_PUBLIC_KEY",
+      "pubkey": "",
       "endpoints": []
     }
   },

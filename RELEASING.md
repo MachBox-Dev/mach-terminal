@@ -75,7 +75,7 @@ Stable tag CI **fails** if `TAURI_SIGNING_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` i
 | `WINDOWS_CERTIFICATE` | Windows — base64 `.pfx` |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Windows |
 
-If OS signing credentials are unavailable, release workflow still builds artifacts but installers may show SmartScreen / Gatekeeper warnings until certs are added.
+If OS signing credentials are unavailable, release workflow builds **unsigned** OS installers (Tier 1 updater signing still applies). Do not add placeholder `APPLE_*` / `WINDOWS_*` secrets — wire them into `release.yml` only with valid certs (see `docs/signing-setup.md`).
 
 ## Release Execution (stable)
 
