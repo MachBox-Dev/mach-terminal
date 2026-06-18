@@ -68,9 +68,36 @@ Only if you have **zero** public release artifacts signed with the old key.
 
 ---
 
-## Tier 2 — OS code signing (later, optional)
+## Tier 2 — OS code signing (macOS first)
 
-Adds trust at download time. Not required for the workflow to produce GitHub Release assets.
+Adds trust at download time. **Required for polished macOS downloads**; Windows OV cert is optional (Mach Triage also omits `WINDOWS_CERTIFICATE` in CI).
+
+### Reuse Mach Triage Apple credentials (recommended)
+
+Mach Triage (proprietary repo) already builds signed + notarized macOS installers with your personal Apple Developer account. Terminal can use the **same** cert — no second enrollment.
+
+1. List secrets on the Triage repo (where they already work):
+
+   ```powershell
+   gh secret list --repo <your-mach-triage-repo>
+   ```
+
+2. Copy these to **`MachBox-Dev/mach-terminal`** (repo secrets or org secrets scoped to both repos):
+
+   | Secret | Notes |
+   | --- | --- |
+   | `APPLE_CERTIFICATE` | Base64 `.p12` (Developer ID Application) |
+   | `APPLE_CERTIFICATE_PASSWORD` | Export password — Triage uses `""` in workflow if none; set secret empty or omit password in workflow |
+   | `APPLE_ID` | Apple ID email |
+   | `APPLE_PASSWORD` | App-specific password for notarization |
+   | `APPLE_TEAM_ID` | 10-char team id |
+   | `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
+
+3. `release.yml` already passes these to `tauri-action` (mirrors Triage).
+
+4. Tag an RC and confirm macOS job produces a signed `.dmg` without keychain import errors.
+
+If macOS CI fails with `failed to import keychain certificate`, the `.p12` base64 or password is wrong — fix secrets, do **not** add placeholders.
 
 ### Windows (`WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`)
 

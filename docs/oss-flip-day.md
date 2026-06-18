@@ -63,22 +63,25 @@ Site polish does **not** block using GitHub as canonical docs.
 
 ## Phase C — First public release (next)
 
-1. Re-run CI on `main` (last OSS push run was cancelled — check [Actions](https://github.com/MachBox-Dev/mach-terminal/actions))
-2. Re-add signing secrets (A4)
-3. `CHANGELOG.md` — cut `[0.1.1]` OSS announcement or tag `v0.1.0` from org
-4. Tag from org repo:
+1. ~~Re-run CI on `main`~~ ✅
+2. ~~Signing secrets (Tier 1 + Apple Tier 2)~~ ✅
+3. Commit bundle id `com.machbox.terminal` + tag **`v0.1.0-rc.2`**
+4. Verify Release workflow (signed macOS + all matrix legs)
+5. Promote stable `v0.1.0` when RC validated per `RELEASING.md`
 
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
+## Phase D — Product bugs (Linear)
 
-5. `release.yml` → `MACH_UPDATER_ENDPOINT=https://github.com/MachBox-Dev/mach-terminal/releases/latest/download/latest.json`
-6. Promote draft stable release per `RELEASING.md`
+| ID | Issue |
+| --- | --- |
+| TER-1 | New-tab profile picker |
+| TER-2 | OS code signing (Apple wired; Windows OV optional) |
+| TER-3 | Bundle id migration (code done) |
+| TER-4 | Commander mode scroll alignment at buffer bottom |
+| TER-5 | Command history stale until manual refresh |
 
 ---
 
-## Phase D — Announce (when site is ready)
+## Phase E — Announce (when site is ready)
 
 - Link from `machbox.dev` → [github.com/MachBox-Dev/mach-terminal](https://github.com/MachBox-Dev/mach-terminal) + Triage
 - Release notes: `PRINCIPLES.md`, install from Releases
@@ -87,11 +90,12 @@ Site polish does **not** block using GitHub as canonical docs.
 
 ## Post-flip product (not blocking)
 
-| Item | When |
+| Item | Status |
 | --- | --- |
-| New-tab profile picker | First post-flip UX slice (before loud announce) |
-| Bundle id `com.whobs.machterminal` → `com.machbox.terminal` | Before wide install push (breaking) |
-| Full `NOTICE` dep regeneration | Before first org release tag |
+| New-tab profile picker (TER-1) | Backlog |
+| Bundle id `com.machbox.terminal` (TER-3) | Done on main — ship in `v0.1.0-rc.2` |
+| Apple signing secrets | On org repo |
+| Full `NOTICE` dep regeneration | Before stable `v0.1.0` |
 | Mach Cloud / `api.machbox.dev` | When relay exists |
 
 ---

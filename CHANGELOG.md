@@ -29,6 +29,8 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Changed
 
+- Bundle identifier **`com.machbox.terminal`** (was `com.whobs.machterminal`) — breaking vs `v0.1.0-rc.1`; reinstall required; see `docs/bundle-id-migration.md`.
+- Release workflow re-adds Tier 2 **`APPLE_*`** env for macOS signing (reuse Mach Triage Developer ID; see `docs/signing-setup.md`).
 - Repository prepared for public release under `MachBox-Dev` (open-core client; Mach Cloud out of scope).
 - `bundle.createUpdaterArtifacts: true` for signed updater bundles on release builds (disabled for debug smoke via `disable-updater-artifacts.mjs`).
 - Provider settings and onboarding share canonical `buildProviderCards` view-model.

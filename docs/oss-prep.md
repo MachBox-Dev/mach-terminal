@@ -92,7 +92,7 @@ docs.machbox.dev            → shared / OSS docs (optional)
 | --- | --- | --- |
 | Updater manifest URL in `tauri.conf.json` | ✅ | Committed `endpoints: []`; release CI injects `MACH_UPDATER_ENDPOINT` |
 | OTLP telemetry | ✅ | Opt-in only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set |
-| Bundle id `com.whobs.machterminal` | 🟡 | OK for dogfood; consider `com.machbox.terminal` before wide release (breaking for existing installs) |
+| Bundle id `com.machbox.terminal` | ✅ | Was `com.whobs.machterminal` in RC.1; see `docs/bundle-id-migration.md` |
 | `package.json` `"private": false` | ✅ | Set for public OSS home |
 
 ### GitHub templates & policies

@@ -1,7 +1,7 @@
 use keyring::Entry;
 use std::fmt;
 
-const PROVIDER_SECRET_SERVICE: &str = "com.whobs.machterminal.providers";
+const PROVIDER_SECRET_SERVICE: &str = "com.machbox.terminal.providers";
 
 #[derive(Debug)]
 pub enum ProviderSecretError {
