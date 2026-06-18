@@ -20,5 +20,9 @@ if (!endpoint) {
 
 config.plugins.updater.active = true;
 config.plugins.updater.endpoints = [endpoint];
+if (!config.bundle) {
+  config.bundle = {};
+}
+config.bundle.createUpdaterArtifacts = true;
 writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-console.log(`Set plugins.updater.active = true; endpoint = ${endpoint}`);
+console.log(`Set plugins.updater.active = true; endpoint = ${endpoint}; createUpdaterArtifacts = true`);

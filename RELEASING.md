@@ -28,7 +28,7 @@ Before any release artifacts ship, automation covers overlapping checks:
 | Matrix PR/push CI | `.github/workflows/ci.yml` — job `matrix-build-and-test` | `npm run build`, `npm run test` (includes `npm run test:pty`), `npm run test:invoke:strict`, `cargo check` |
 | Stability gate | `.github/workflows/ci.yml` — job `stability-signoff` on PR/master | `npm run stability:signoff` (`check:versions`, full tests, UX smoke, strict invoke, frontend build) |
 | Security | `.github/workflows/ci.yml` — job `security-baseline` | `npm run security:baseline` |
-| Release bundle smoke | `.github/workflows/ci.yml` — job `release-smoke` | `npm run release:smoke` (matches part of release preflight; uses placeholder `UPDATER_PUBLIC_KEY` like local smoke) |
+| Release bundle smoke | `.github/workflows/ci.yml` — job `release-smoke` | `npm run release:smoke` (disables updater artifacts; no signing keys) |
 | Tagged release | `.github/workflows/release.yml` — job `preflight-release-quality` | `check:versions`, `npm run test`, `npm run stability:signoff`, `npm run release:smoke`, `npm run security:baseline` |
 | Post-build checksums | `.github/workflows/release.yml` — job `publish-checksums` | Downloads release assets, writes `SHA256SUMS.txt`, uploads to the GitHub Release |
 

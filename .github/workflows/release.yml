@@ -73,8 +73,6 @@ jobs:
         run: npm run stability:signoff
 
       - name: Run release smoke
-        env:
-          UPDATER_PUBLIC_KEY: "disabled-for-ci-smoke"
         run: npm run release:smoke
 
       - name: Run security baseline checks

@@ -28,7 +28,7 @@ All notable changes to Mach Terminal are documented in this file.
 ### Changed
 
 - Repository prepared for public release under `MachBox-Dev` (open-core client; Mach Cloud out of scope).
-- `bundle.createUpdaterArtifacts: true` for signed updater bundles on release builds.
+- `bundle.createUpdaterArtifacts: true` for signed updater bundles on release builds (disabled for debug smoke via `disable-updater-artifacts.mjs`).
 - Provider settings and onboarding share canonical `buildProviderCards` view-model.
 - Titlebar-integrated tabs with inline rename and short shell labels.
 

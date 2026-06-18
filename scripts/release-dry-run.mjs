@@ -9,6 +9,7 @@ function run(command) {
 }
 
 try {
+  run("node scripts/disable-updater-artifacts.mjs");
   run("npm run check:versions");
   run("npm run test");
   run("npm run build");

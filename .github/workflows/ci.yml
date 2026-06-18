@@ -148,6 +148,4 @@ jobs:
         run: npm ci
 
       - name: Release smoke build
-        env:
-          UPDATER_PUBLIC_KEY: "disabled-for-ci-smoke"
         run: npm run release:smoke
