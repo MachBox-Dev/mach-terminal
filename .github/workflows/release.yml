@@ -138,16 +138,12 @@ jobs:
           UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
         run: node scripts/enable-updater-build.mjs
 
-      - name: Require macOS signing identity secret
+      - name: Verify macOS codesign certificate and identity
         if: runner.os == 'macOS'
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
-            echo "::error::Set APPLE_SIGNING_IDENTITY to the full codesign identity (run: security find-identity -v -p codesigning on a Mac with the .p12 imported)."
-            exit 1
-          fi
-          echo "APPLE_SIGNING_IDENTITY is set (length ${#APPLE_SIGNING_IDENTITY})."
+        run: bash scripts/ci/verify-macos-signing.sh
 
       - name: Build and publish release assets
         uses: tauri-apps/tauri-action@v0
@@ -161,7 +157,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Optional: verify step may normalize via GITHUB_ENV; omit to let Tauri infer from .p12.
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           VITE_ENABLE_UPDATER: "true"
         with:
           tagName: ${{ github.ref_name }}

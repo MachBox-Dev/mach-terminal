@@ -87,17 +87,46 @@ Mach Triage (proprietary repo) already builds signed + notarized macOS installer
    | Secret | Notes |
    | --- | --- |
    | `APPLE_CERTIFICATE` | Base64 `.p12` (Developer ID Application) |
-   | `APPLE_CERTIFICATE_PASSWORD` | Export password — Triage uses `""` in workflow if none; set secret empty or omit password in workflow |
+   | `APPLE_CERTIFICATE_PASSWORD` | **Do not set** in GitHub — `release.yml` hardcodes `""` (Triage pattern) when the export has no password |
    | `APPLE_ID` | Apple ID email |
    | `APPLE_PASSWORD` | App-specific password for notarization |
    | `APPLE_TEAM_ID` | 10-char team id |
-   | `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
+   | `APPLE_SIGNING_IDENTITY` | Optional — see **Exact identity string** below; omit to let Tauri infer from `.p12` |
 
 3. `release.yml` already passes these to `tauri-action` (mirrors Triage).
 
 4. Tag an RC and confirm macOS job produces a signed `.dmg` without keychain import errors.
 
-If macOS CI fails with `failed to import keychain certificate`, the `.p12` base64 or password is wrong — fix secrets, do **not** add placeholders.
+If macOS CI fails with `failed to import keychain certificate`, the `.p12` base64 or export password is wrong — fix secrets, do **not** add placeholders.
+
+### Exact identity string (`APPLE_SIGNING_IDENTITY`)
+
+On a Mac with the `.p12` imported into Keychain Access:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+Example line:
+
+```text
+  1) ABCD1234... "Developer ID Application: Michael Whobrey (HTZ6P7R555)"
+```
+
+Use **one** of these in the GitHub secret (no surrounding `"` characters):
+
+- Full name: `Developer ID Application: Michael Whobrey (HTZ6P7R555)`
+- Team id only: `HTZ6P7R555` (Tauri accepts the parenthesized team id)
+
+Release CI runs `scripts/ci/verify-macos-signing.sh` on macOS before `tauri-action`: it imports `APPLE_CERTIFICATE` with an empty password, prints available identities, and fails early if `APPLE_SIGNING_IDENTITY` does not match. If the secret is **unset**, Tauri infers the identity from the certificate (recommended when copying certs from Mach Triage).
+
+**Common mistakes**
+
+| Mistake | Symptom |
+| --- | --- |
+| Literal quotes in the secret value (`"Developer ID Application: …"`) | `failed to resolve signing identity` or identity mismatch |
+| Non-empty `APPLE_CERTIFICATE_PASSWORD` secret while `.p12` has no password | Import may succeed but Tauri cannot resolve a valid identity |
+| Wrong or truncated `APPLE_CERTIFICATE` base64 (re-copy from Triage) | `No valid codesigning identities` in verify step |
 
 ### Windows (`WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`)
 
@@ -154,7 +183,8 @@ After Tier 1 secrets are set:
 | `Stable releases require TAURI_SIGNING_PRIVATE_KEY` | Run `setup-release-signing.ps1` |
 | `failed to decode pubkey` / `Invalid symbol 36` | Pubkey was literal `$UPDATER_PUBLIC_KEY` — release CI must run `enable-updater-build.mjs` with `UPDATER_PUBLIC_KEY` secret set |
 | `failed to import keychain certificate` (macOS) | Remove invalid placeholder `APPLE_*` secrets, or add real Tier 2 certs to `release.yml` |
-| `failed to resolve signing identity` (macOS) | `APPLE_SIGNING_IDENTITY` must **exactly** match output of `security find-identity -v -p codesigning` after importing the same `.p12` (full string including `Developer ID Application:` and `(TEAMID)`). Re-set with `gh secret set APPLE_SIGNING_IDENTITY --body "..."`. Use `APPLE_CERTIFICATE_PASSWORD: ""` in workflow if p12 has no export password (Triage pattern). |
+| `failed to resolve signing identity` (macOS) | Delete `APPLE_CERTIFICATE_PASSWORD` repo secret; hardcode empty password in workflow (done). Re-copy `APPLE_CERTIFICATE` from Mach Triage. Fix `APPLE_SIGNING_IDENTITY` — no quotes; match `security find-identity -v -p codesigning` or omit secret for auto-infer. See verify step log in Release workflow. |
+| `failed to resolve signing identity` (macOS) | Export **Developer ID Application** `.p12` (not Apple Distribution / Development). `APPLE_SIGNING_IDENTITY` must match `security find-identity -v -p codesigning` exactly — e.g. `Developer ID Application: Michael Whobrey (HTZ6P7R555)`. No quotes in the secret. Delete `APPLE_CERTIFICATE_PASSWORD` if set. CI runs `scripts/ci/verify-macos-signing.sh` before build. |
 | Updater checks fail in installed app | `UPDATER_PUBLIC_KEY` must match the key that signed the **installed** build |
 | `createUpdaterArtifacts` / no `.sig` files | Ensure `bundle.createUpdaterArtifacts: true` in `tauri.conf.json` |
 | `gh secret set` permission denied | Org owner/admin on `MachBox-Dev`, or repo admin |

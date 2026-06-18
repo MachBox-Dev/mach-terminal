@@ -67,8 +67,7 @@ Stable tag CI **fails** if `TAURI_SIGNING_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` i
 | Secret | Platform |
 | --- | --- |
 | `APPLE_CERTIFICATE` | macOS — base64 `.p12` |
-| `APPLE_CERTIFICATE_PASSWORD` | macOS |
-| `APPLE_SIGNING_IDENTITY` | macOS |
+| `APPLE_SIGNING_IDENTITY` | macOS — optional; match `security find-identity` or omit (Tauri infers) |
 | `APPLE_ID` | macOS notarization |
 | `APPLE_PASSWORD` | macOS — app-specific password |
 | `APPLE_TEAM_ID` | macOS |
