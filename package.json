@@ -20,7 +20,7 @@
     "security:baseline": "npm run security:npm && npm run security:cargo",
     "check:versions": "node scripts/check-version-sync.mjs",
     "release:setup-signing": "pwsh -File scripts/setup-release-signing.ps1",
-    "release:smoke": "node scripts/disable-updater-artifacts.mjs && npm run check:versions && npm run build && npm run tauri -- build --debug",
+    "release:smoke": "node scripts/disable-updater-artifacts.mjs && npm run check:versions && npm run build && npm run tauri -- build --debug --bundles deb",
     "release:build": "npm run check:versions && npm run build && npm run tauri -- build",
     "release:artifacts": "node scripts/list-release-artifacts.mjs",
     "release:dry-run": "node scripts/release-dry-run.mjs",

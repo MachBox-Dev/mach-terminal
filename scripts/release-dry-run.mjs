@@ -13,7 +13,7 @@ try {
   run("npm run check:versions");
   run("npm run test");
   run("npm run build");
-  run("npm run tauri -- build --debug");
+  run("npm run tauri -- build --debug --bundles deb");
   const bundleDir = resolve("src-tauri/target/debug/bundle");
   const bundleTypes = readdirSync(bundleDir);
   const checksumLines = [];
