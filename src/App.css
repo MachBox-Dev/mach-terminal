@@ -2377,6 +2377,21 @@ body {
   margin-top: 0;
 }
 
+.modal-card.new-tab-profile-modal {
+  max-width: 520px;
+  width: 100%;
+  background: var(--mach-surface-raised);
+  border: 1px solid var(--mach-edge-strong);
+  border-radius: 12px;
+  padding: 1.25rem;
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.modal-card.new-tab-profile-modal h2 {
+  margin-top: 0;
+}
+
 .modal-card.diagnostics-modal {
   max-width: min(960px, 100%);
   width: 100%;

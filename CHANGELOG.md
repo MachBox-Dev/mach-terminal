@@ -6,7 +6,8 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Added
 
-- OSS governance: Apache-2.0 `LICENSE`, `CONTRIBUTING.md` (DCO), `PRINCIPLES.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, GitHub issue/PR templates, and `docs/oss-prep.md`.
+- **TER-1:** New-tab shell profile picker — tab `+` and `session.new` open `NewTabProfileModal` with `ShellProfilePicker`; per-tab shell/args via `spawnProfileFromShellSelection()` without changing global profile.
+- `docs/manual-qa.md` and `docs/shell-integration.md` (content moved out of README).
 - Gitleaks secret scan in CI and `npm run security:gitleaks`; updater manifest decoupled from committed config (`MACH_UPDATER_ENDPOINT` at release only).
 - Release signing bootstrap: `docs/signing-setup.md`, `scripts/setup-release-signing.ps1`, and `npm run release:setup-signing`.
 - Shell profile picker with cross-platform `detect_shells` (WSL distro enumeration, `/etc/shells`, profile `args`).
@@ -30,6 +31,8 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Changed
 
+- **README** trimmed to quick start + feature summary + doc index; manual QA checklists → `docs/manual-qa.md`.
+- `docs/oss-prep.md` marked completed (historical); see `docs/oss-flip-day.md`.
 - Bundle identifier **`com.machbox.terminal`** (was `com.whobs.machterminal`) — breaking vs `v0.1.0-rc.1`; reinstall required; see `docs/bundle-id-migration.md`.
 - Release workflow re-adds Tier 2 **`APPLE_*`** env for macOS signing (reuse Mach Triage Developer ID; see `docs/signing-setup.md`).
 - Repository prepared for public release under `MachBox-Dev` (open-core client; Mach Cloud out of scope).

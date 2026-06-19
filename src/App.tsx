@@ -4,6 +4,7 @@ import "./App.css";
 import { AppSettingsModal } from "./components/AppSettingsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetup";
+import { NewTabProfileModal } from "./components/NewTabProfileModal";
 import { SplitWorkspace } from "./components/SplitWorkspace";
 import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
@@ -152,6 +153,7 @@ import {
 import { isAiAssistReady } from "./core/providerUiState";
 import { historyAiContract, useProviderAiState } from "./hooks/useProviderAiState";
 import { HISTORY_UI_LIMIT, prependHistoryEntry } from "./core/historySync";
+import { spawnProfileFromShellSelection, type ShellSpawnSelection } from "./core/spawnProfile";
 import { isTauri } from "./core/tauriRuntime";
 import {
   appendCommandSubmitted,
@@ -254,6 +256,7 @@ function App() {
   const [pluginTelemetry, setPluginTelemetry] = useState<PluginMetricsSnapshot | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string>(UPDATER_ENABLED ? "idle" : "disabled (build flag)");
   const [firstRunModalOpen, setFirstRunModalOpen] = useState(false);
+  const [newTabPickerOpen, setNewTabPickerOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
 
@@ -1184,14 +1187,14 @@ function App() {
    * (profile storage stays untouched). Used by `restartSessionById` to land the
    * replacement shell where the old one left off per the live-cwd map.
    */
-  const createSessionAt = useCallback(async (cwdOverride: string | null) => {
+  const createSessionAt = useCallback(async (cwdOverride: string | null, shellSelection?: ShellSpawnSelection) => {
     try {
       const profile = await profileGet();
       setTerminalFontSize(profile.font_size);
-      const spawnProfile =
-        cwdOverride && cwdOverride.length > 0
-          ? { ...profile, cwd: cwdOverride }
-          : profile;
+      let spawnProfile = shellSelection ? spawnProfileFromShellSelection(profile, shellSelection) : profile;
+      if (cwdOverride && cwdOverride.length > 0) {
+        spawnProfile = { ...spawnProfile, cwd: cwdOverride };
+      }
       const created = await ptySpawn({ profile: spawnProfile });
       setSessions((current) => {
         const next = current.some((session) => session.id === created.id) ? current : [...current, created];
@@ -1209,9 +1212,16 @@ function App() {
     }
   }, [ensureChatKey]);
 
-  const createSession = useCallback(async () => {
-    await createSessionAt(null);
-  }, [createSessionAt]);
+  const openNewTabPicker = useCallback(() => {
+    setNewTabPickerOpen(true);
+  }, []);
+
+  const createSessionWithShell = useCallback(
+    async (shellSelection: ShellSpawnSelection) => {
+      await createSessionAt(null, shellSelection);
+    },
+    [createSessionAt],
+  );
 
   const clearSessionFromUiState = useCallback((sessionId: string) => {
     setSessions((current) => {
@@ -1727,7 +1737,7 @@ function App() {
       }
       switch (commandId) {
         case "session.new":
-          await createSession();
+          openNewTabPicker();
           break;
         case "session.restart":
           await restartActiveSession();
@@ -1799,7 +1809,7 @@ function App() {
       closeActivePane,
       closeActiveSession,
       closeAllExited,
-      createSession,
+      openNewTabPicker,
       dispatchTerminalUiRequest,
       explainCommand,
       fixCommand,
@@ -1917,7 +1927,7 @@ function App() {
             activeSessionId={activeSessionId}
             tabLabels={tabLabels}
             onSelect={(sessionId) => setWorkspace((current) => setPaneSession(current, current.activePaneId, sessionId))}
-            onCreate={() => void createSession()}
+            onCreate={() => openNewTabPicker()}
             onClose={(sessionId) => void closeSession(sessionId)}
             onRestartSession={(sessionId) => void restartSessionById(sessionId)}
             onRename={renameSession}
@@ -2162,6 +2172,11 @@ function App() {
           onRun={(commandId) => void executeCommand(commandId as AppCommandId)}
         />
         <FirstRunSetup open={firstRunModalOpen} onClose={() => setFirstRunModalOpen(false)} onSaved={handleSetupSaved} />
+        <NewTabProfileModal
+          open={newTabPickerOpen}
+          onClose={() => setNewTabPickerOpen(false)}
+          onConfirm={createSessionWithShell}
+        />
 
         {diagnosticsOpen ? (
         <div

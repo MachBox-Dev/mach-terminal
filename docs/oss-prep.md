@@ -1,5 +1,7 @@
 # OSS Preparation Checklist
 
+> **Completed (2026-06).** Repo is public under `MachBox-Dev/mach-terminal`. For the flip-day runbook see [`oss-flip-day.md`](oss-flip-day.md). This file is kept for historical reference only.
+
 > Track progress toward making **mach-terminal** public under Apache-2.0 (open-core:
 > entire client open; Mach Cloud relay/service stays proprietary and ships later).
 > Mach Cloud is **out of scope** for this pass.
