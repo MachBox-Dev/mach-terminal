@@ -12,6 +12,18 @@ Log results with [`ux-dogfood-log-template.md`](ux-dogfood-log-template.md).
 
 ---
 
+## Multi-pane workspace (TER-11)
+
+1. Split to 3–4 panes (`Ctrl/Cmd+\`); each pane gets an independent shell; tab bar shows one grouped tab (`wsl · +2` for 3+ panes).
+2. Drag split handles; double-click handle resets 50/50; restart app — proportions restore from `workspace_layout` v2.
+3. Operator mode: single group composer below panes; Commander leaf hides group composer and accepts raw xterm input.
+4. `Alt+1…6` (Windows: `Ctrl+Alt+1…6`) focuses/targets pane N; composer pills match walk order.
+5. Broadcast toggle (composer button or palette **Toggle broadcast mode**): Enter sends to all operator panes once, then broadcast auto-off.
+6. Close a middle pane — tree collapses cleanly; active pane fallback never dead-ends.
+7. At 6-pane cap, split replaces the inactive pane session (displaced PTY closed).
+
+---
+
 ## UX dogfood
 
 1. Open command palette with `Ctrl/Cmd+K`, navigate with arrow keys, execute with Enter, dismiss with Escape.

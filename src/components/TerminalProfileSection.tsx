@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { profileGet, profilePatch, type TerminalProfile } from "../core/terminal";
 import { ShellProfilePicker } from "./ShellProfilePicker";
+import {
+  addShellPreset,
+  loadShellPresets,
+  removeShellPreset,
+  shellPresetDescription,
+  type ShellPreset,
+} from "../core/shellPresets";
 
 interface TerminalProfileSectionProps {
   modalOpen: boolean;
   sectionId?: string;
   /** Notifies the app after a successful save so live state (e.g. font size) can refresh. */
   onProfileSaved?: (profile: TerminalProfile) => void | Promise<void>;
+  onShellPresetsChanged?: () => void;
 }
 
 const DEFAULT_FONT_SIZE = 13;
@@ -21,6 +29,7 @@ export function TerminalProfileSection({
   modalOpen,
   sectionId = "settings-section-terminal-profile",
   onProfileSaved,
+  onShellPresetsChanged,
 }: TerminalProfileSectionProps) {
   const [shell, setShell] = useState<string | undefined>(undefined);
   const [args, setArgs] = useState<string[]>([]);
@@ -30,6 +39,8 @@ export function TerminalProfileSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [presets, setPresets] = useState<ShellPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
 
   useEffect(() => {
     if (!modalOpen) {
@@ -49,6 +60,7 @@ export function TerminalProfileSection({
         setArgs(profile.args ?? []);
         setCwd(profile.cwd ?? "");
         setFontSize(profile.font_size ?? DEFAULT_FONT_SIZE);
+        setPresets(loadShellPresets());
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Failed to load terminal profile");
@@ -124,6 +136,65 @@ export function TerminalProfileSection({
         </button>
         {status ? <p className="muted-block">{status}</p> : null}
       </div>
+
+      <h3 className="settings-subheading">Saved shells</h3>
+      <p className="muted-block">
+        Named shortcuts for shells you open often. They appear in the command palette (<kbd>Ctrl/Cmd+K</kbd>) as{" "}
+        <strong>Open shell: …</strong>
+      </p>
+      <label className="field-row">
+        <span>Preset name</span>
+        <input
+          type="text"
+          placeholder="e.g. WSL Ubuntu, prod pwsh"
+          value={presetName}
+          onChange={(e) => setPresetName(e.target.value)}
+        />
+      </label>
+      <div className="inline-controls">
+        <button
+          type="button"
+          className="inline-btn ghost"
+          disabled={!presetName.trim() || !(shell ?? "").trim()}
+          onClick={() => {
+            const next = addShellPreset({
+              name: presetName.trim(),
+              shell: shell!.trim(),
+              args,
+            });
+            setPresets(next);
+            setPresetName("");
+            onShellPresetsChanged?.();
+          }}
+        >
+          Save current shell as preset
+        </button>
+      </div>
+      {presets.length === 0 ? (
+        <p className="muted-block">No saved shells yet.</p>
+      ) : (
+        <ul className="shell-preset-list">
+          {presets.map((preset) => (
+            <li key={preset.id} className="shell-preset-item">
+              <div>
+                <strong>{preset.name}</strong>
+                <code className="shell-preset-command">{shellPresetDescription(preset)}</code>
+              </div>
+              <button
+                type="button"
+                className="inline-btn ghost"
+                onClick={() => {
+                  const next = removeShellPreset(preset.id);
+                  setPresets(next);
+                  onShellPresetsChanged?.();
+                }}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

@@ -28,12 +28,14 @@ export function scorePaletteCommand(command: PaletteCommand, query: string): num
   const label = command.label.toLowerCase();
   const shortcut = (command.shortcut ?? "").toLowerCase();
   const id = command.id.toLowerCase();
+  const description = ("description" in command ? (command.description ?? "") : "").toLowerCase();
 
   const labelScore = scoreText(label, normalized);
   const shortcutScore = scoreText(shortcut, normalized);
   const idScore = scoreText(id, normalized);
+  const descriptionScore = scoreText(description, normalized);
 
-  return labelScore * 3 + shortcutScore * 2 + idScore;
+  return labelScore * 3 + shortcutScore * 2 + idScore + descriptionScore;
 }
 
 export function filterPaletteCommands(commands: PaletteCommand[], query: string): RankedPaletteCommand[] {

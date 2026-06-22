@@ -6,8 +6,7 @@ import { workspaceLayoutSet } from "./terminal";
 import type { SessionCwdMap } from "./sessionCwd";
 import {
   buildRestorableSessions,
-  snapshotWorkspace,
-  workspaceLayoutFromSnapshot,
+  workspaceLayoutFromState,
   type WorkspaceState,
 } from "../state/workspace";
 
@@ -76,7 +75,7 @@ export async function flushPersistedStateForExit(
     snap.sessionInputModes,
     snap.sessionChatKeys,
   );
-  const layout = workspaceLayoutFromSnapshot(snapshotWorkspace(snap.workspace), restorable);
+  const layout = workspaceLayoutFromState(snap.workspace, restorable);
   persistAiChatsForSessions(snap.aiChatState, snap.sessionChatKeys);
   prunePersistedAiChats(new Set(Object.values(snap.sessionChatKeys)));
   onPhase?.("workspace-layout");

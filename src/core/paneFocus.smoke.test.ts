@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commandToTerminalUiIntent } from "./terminalCommandRouting";
 import { evaluateTerminalUiIntent } from "./terminalUiIntent";
-import { closePane, createWorkspaceState, setPaneSession, splitActivePane } from "../state/workspace";
+import { closePane, createWorkspaceState, setPaneSession, splitActivePane, activeGroupLayout } from "../state/workspace";
 
 describe("Pane focus and follow-output smoke contracts", () => {
   it("consumes terminal UI requests on focused pane only without deferred replay", () => {
@@ -98,21 +98,23 @@ describe("Pane focus and follow-output smoke contracts", () => {
 
   it("preserves deterministic active-pane fallback through rapid split and close transitions", () => {
     let workspace = createWorkspaceState();
-    workspace = setPaneSession(workspace, workspace.activePaneId, "session-a");
+    const layout = () => activeGroupLayout(workspace);
+    workspace = setPaneSession(workspace, layout().activePaneId, "session-a");
     workspace = splitActivePane(workspace, "session-b", "row");
     workspace = splitActivePane(workspace, "session-c", "row");
     workspace = splitActivePane(workspace, "session-d", "row");
 
-    const closingOrder = [workspace.activePaneId];
-    workspace = closePane(workspace, workspace.activePaneId);
-    closingOrder.push(workspace.activePaneId);
-    workspace = closePane(workspace, workspace.activePaneId);
-    closingOrder.push(workspace.activePaneId);
-    workspace = closePane(workspace, workspace.activePaneId);
-    closingOrder.push(workspace.activePaneId);
+    const paneIds = layout().panes.map((pane) => pane.id);
+    const closingOrder = [layout().activePaneId];
+    workspace = closePane(workspace, layout().activePaneId);
+    closingOrder.push(layout().activePaneId);
+    workspace = closePane(workspace, layout().activePaneId);
+    closingOrder.push(layout().activePaneId);
+    workspace = closePane(workspace, layout().activePaneId);
+    closingOrder.push(layout().activePaneId);
 
-    expect(closingOrder).toEqual(["pane-4", "pane-3", "pane-2", "pane-1"]);
-    expect(workspace.panes).toHaveLength(1);
-    expect(workspace.activePaneId).toBe("pane-1");
+    expect(closingOrder).toEqual([paneIds[3], paneIds[2], paneIds[1], paneIds[0]]);
+    expect(layout().panes).toHaveLength(1);
+    expect(layout().activePaneId).toBe(paneIds[0]);
   });
 });

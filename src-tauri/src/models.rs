@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
-pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 2;
 
 fn default_workspace_layout_schema_version() -> u32 {
     WORKSPACE_LAYOUT_SCHEMA_VERSION
@@ -39,6 +39,41 @@ pub struct RestorableSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SplitNodeSnapshot {
+    pub kind: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first: Option<Box<SplitNodeSnapshot>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second: Option<Box<SplitNodeSnapshot>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabGroupSnapshot {
+    pub id: String,
+    pub primary_session_id: String,
+    #[serde(default)]
+    pub panes: Vec<WorkspacePaneSnapshot>,
+    pub active_pane_id: String,
+    #[serde(default)]
+    pub split_direction: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<SplitNodeSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broadcast_mode: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayout {
     #[serde(default = "default_workspace_layout_schema_version")]
     pub schema_version: u32,
@@ -50,6 +85,11 @@ pub struct WorkspaceLayout {
     /// older builds (which lack this field) loadable.
     #[serde(default)]
     pub sessions: Vec<RestorableSession>,
+    /// Tab groups (split sets). Absent on legacy layouts — migrated on the frontend.
+    #[serde(default)]
+    pub groups: Vec<TabGroupSnapshot>,
+    #[serde(default)]
+    pub active_group_id: Option<String>,
 }
 
 fn default_settings_schema_version() -> u32 {

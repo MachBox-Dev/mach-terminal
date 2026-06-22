@@ -35,7 +35,7 @@ On first launch, **Quick start (AI off)** gets you a working shell immediately. 
 
 - **Multi-tab + split panes** — workspace layout persists across restarts; tabs respawn with their last shell and directory.
 - **Composer-first input** — completion, history, and safe multiline paste; **Operator** vs **Commander** modes (`Ctrl+\``).
-- **Shell profile picker** — native shells, WSL distros, custom args; pick per tab on **New tab**.
+- **Shell profile picker** — native shells, WSL distros, custom args; **Shift+click +** or palette **New tab with shell picker** (instant default on `Ctrl/Cmd+T`).
 - **Command history** — persisted locally with corruption recovery.
 - **Optional AI** — OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint; keys in the OS keychain.
 - **Shell integration** — optional OSC 7 (live cwd) and OSC 133 (command markers); one-click install from Settings.

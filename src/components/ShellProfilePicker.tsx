@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { detectShells, type ShellCandidate } from "../core/terminal";
+import type { ShellCandidate } from "../core/terminal";
 import { isTauri } from "../core/tauriRuntime";
+import { invalidateShellCandidatesCache, loadShellCandidates } from "../core/shellCandidatesCache";
 import {
   CUSTOM_SHELL_OPTION_ID,
   argsToLines,
@@ -41,7 +42,8 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
     setLoading(true);
     setError(null);
     try {
-      setCandidates(await detectShells());
+      invalidateShellCandidatesCache();
+      setCandidates(await loadShellCandidates({ force: true }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to detect shells");
     } finally {

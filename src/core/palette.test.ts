@@ -18,6 +18,18 @@ describe("palette scoring", () => {
     expect(ranked[0]?.command.id).toBe("history.refresh");
   });
 
+  it("matches description text for pane split", () => {
+    const splitCommands = [
+      {
+        id: "pane.split",
+        label: "Split pane (add shell)",
+        description: "Split the active tab into another pane with a fresh shell session.",
+      },
+    ];
+    const ranked = filterPaletteCommands(splitCommands, "split");
+    expect(ranked[0]?.command.id).toBe("pane.split");
+  });
+
   it("returns zero score when query is absent from command", () => {
     expect(scorePaletteCommand(commands[0], "not-present")).toBe(0);
   });

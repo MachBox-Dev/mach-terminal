@@ -1,23 +1,17 @@
-import { TerminalSurface } from "./TerminalSurface";
+import { PaneLayout } from "./PaneLayout";
 import type { SessionCwdMap } from "../core/sessionCwd";
 import type { SessionExitedInfo } from "../core/sessionLifecycle";
-import type {
-  ComposerCompletionResponse,
-  HistoryEntry,
-  PtySessionInfo,
-  SessionStatus,
-} from "../core/terminal";
+import type { PtySessionInfo, SessionStatus } from "../core/terminal";
 import type { TerminalUiRequest } from "../core/terminalUiRequest";
 import type { UiSurfaceState, UiSurfaceStatePatch } from "../core/uiSurfaceState";
 import type { SessionInputMode } from "../core/inputMode";
-import { defaultSessionInputMode } from "../core/inputMode";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
-import type { AiContextAttachment } from "../core/aiChatState";
-import type { WorkspaceState } from "../state/workspace";
+import type { GroupLayoutSnapshot } from "../state/workspace";
+import { findPane } from "../state/splitTree";
 
 interface SplitWorkspaceProps {
-  workspace: WorkspaceState;
+  layout: GroupLayoutSnapshot;
   sessionsById: Record<string, PtySessionInfo>;
   sessionBuffers: Record<string, string>;
   sessionStatuses: Record<string, SessionStatus>;
@@ -32,137 +26,24 @@ interface SplitWorkspaceProps {
   sessionInputModes?: Record<string, SessionInputMode>;
   composerSubmitKinds?: Record<string, ComposerSubmitKind>;
   sessionCommandFailures?: Record<string, SessionCommandFailure | undefined>;
-  sessionLastOutputAt?: Record<string, number>;
   aiAssistEnabled?: boolean;
-  onComposerDraftChange?: (paneId: string, draft: string) => void;
-  onToggleComposerSubmitKind?: (sessionId: string) => void;
-  onAskAboutFailure?: (sessionId: string) => void;
-  onAiComposerSubmit?: (sessionId: string, text: string) => void;
-  onAskAiSelection?: (sessionId: string, attachment: AiContextAttachment) => void;
-  onAiExplainComposer?: () => void;
-  onAiFixComposer?: () => void;
-  historyEntries?: HistoryEntry[];
-  onRequestComposerCompletion?: (request: {
-    draft: string;
-    cursor: number;
-    cwd?: string;
-    shell?: string;
-    sessionId?: string;
-  }) => Promise<ComposerCompletionResponse>;
+  groupComposerActive?: boolean;
+  onAskAiSelection?: (sessionId: string, attachment: import("../core/aiChatState").AiContextAttachment) => void;
   onInput: (sessionId: string, data: string) => void;
   onResize: (sessionId: string, cols: number, rows: number) => void;
   onFocusPane: (paneId: string) => void;
   onUiSurfaceStateChange?: (sessionId: string, patch: UiSurfaceStatePatch) => void;
   onRequestRestartSession: (paneId: string) => void;
   onRequestCloseSession: (paneId: string) => void;
+  onSplitRatioChange?: (branchId: string, ratio: number) => void;
+  onResizeDragEnd?: () => void;
 }
 
-export function SplitWorkspace({
-  workspace,
-  sessionsById,
-  sessionBuffers,
-  sessionStatuses,
-  sessionMessages,
-  sessionExited,
-  sessionCwd,
-  terminalFontSize,
-  terminalUiRequest,
-  showComposerAssistMetrics = false,
-  sessionOsc133Hints = {},
-  sessionUiSurface = {},
-  sessionInputModes = {},
-  composerSubmitKinds = {},
-  sessionCommandFailures = {},
-  sessionLastOutputAt = {},
-  aiAssistEnabled = false,
-  onComposerDraftChange,
-  onToggleComposerSubmitKind,
-  onAskAboutFailure,
-  onAiComposerSubmit,
-  onAskAiSelection,
-  onAiExplainComposer,
-  onAiFixComposer,
-  historyEntries = [],
-  onRequestComposerCompletion,
-  onInput,
-  onResize,
-  onFocusPane,
-  onUiSurfaceStateChange,
-  onRequestRestartSession,
-  onRequestCloseSession,
-}: SplitWorkspaceProps) {
-  const layoutClass =
-    workspace.panes.length > 1
-      ? workspace.splitDirection === "row"
-        ? "split-grid split-grid-row"
-        : "split-grid split-grid-column"
-      : "split-single";
+export function SplitWorkspace(props: SplitWorkspaceProps) {
+  return <PaneLayout {...props} />;
+}
 
-  return (
-    <div className={layoutClass}>
-      {workspace.panes.map((pane) => {
-        const session = pane.sessionId ? sessionsById[pane.sessionId] : undefined;
-        const buffer = session ? sessionBuffers[session.id] ?? "" : "";
-        const status = session ? sessionStatuses[session.id] ?? session.status : "idle";
-        const message = session ? sessionMessages[session.id] : undefined;
-        const exitedInfo = session ? sessionExited[session.id] ?? null : null;
-        const liveCwd = session ? sessionCwd[session.id] ?? session.cwd ?? null : null;
-        const inputMode = session ? (sessionInputModes[session.id] ?? defaultSessionInputMode()) : defaultSessionInputMode();
-        const composerSubmitKind = session ? composerSubmitKinds[session.id] ?? "command" : "command";
-        const commandFailure = session ? sessionCommandFailures[session.id] ?? null : null;
-        const lastOutputAtMs = session ? sessionLastOutputAt[session.id] : undefined;
-        return (
-          <div
-            key={pane.id}
-            className={`split-pane ${workspace.activePaneId === pane.id ? "focused" : ""}`}
-            onClick={() => onFocusPane(pane.id)}
-          >
-            <TerminalSurface
-              activeSession={session}
-              activeBuffer={buffer}
-              activeStatus={status}
-              activeMessage={message}
-              exitedInfo={exitedInfo}
-              liveCwd={liveCwd}
-              isFocused={workspace.activePaneId === pane.id}
-              inputMode={inputMode}
-              composerSubmitKind={composerSubmitKind}
-              onToggleComposerSubmitKind={
-                session && onToggleComposerSubmitKind ? () => onToggleComposerSubmitKind(session.id) : undefined
-              }
-              commandFailure={commandFailure}
-              lastOutputAtMs={lastOutputAtMs}
-              onAskAboutFailure={
-                session && onAskAboutFailure ? () => onAskAboutFailure(session.id) : undefined
-              }
-              onAiComposerSubmit={
-                session && onAiComposerSubmit ? (text) => onAiComposerSubmit(session.id, text) : undefined
-              }
-              onAskAiSelection={
-                session && onAskAiSelection ? (attachment) => onAskAiSelection(session.id, attachment) : undefined
-              }
-              terminalFontSize={terminalFontSize}
-              terminalUiRequest={terminalUiRequest}
-              showComposerAssistMetrics={showComposerAssistMetrics}
-              osc133Hint={session ? sessionOsc133Hints[session.id] ?? null : null}
-              uiSurfaceState={session ? sessionUiSurface[session.id] : undefined}
-              aiAssistEnabled={aiAssistEnabled}
-              onComposerDraftChange={
-                onComposerDraftChange ? (draft) => onComposerDraftChange(pane.id, draft) : undefined
-              }
-              onAiExplainComposer={onAiExplainComposer}
-              onAiFixComposer={onAiFixComposer}
-              historyEntries={historyEntries}
-              onRequestComposerCompletion={onRequestComposerCompletion}
-              onInput={onInput}
-              onResize={onResize}
-              onUiSurfaceStateChange={onUiSurfaceStateChange}
-              onRequestRestartSession={() => onRequestRestartSession(pane.id)}
-              onRequestCloseSession={() => onRequestCloseSession(pane.id)}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
+export function sessionIdForPane(layout: GroupLayoutSnapshot, paneId: string): string | null {
+  const leaf = findPane(layout.layout, paneId);
+  return leaf?.sessionId ?? null;
 }

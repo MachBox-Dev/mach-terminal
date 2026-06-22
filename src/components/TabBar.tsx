@@ -1,31 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import type { SessionExitedInfo } from "../core/sessionLifecycle";
-import { buildTabTooltip, isExitedTab, tabShortLabel } from "../core/sessionTabStatus";
-import type { PtySessionInfo, SessionStatus } from "../core/terminal";
+import type { TabBarGroup } from "../core/tabGroups";
 
 interface TabBarProps {
-  sessions: PtySessionInfo[];
-  sessionStatus: Record<string, SessionStatus>;
-  sessionExited: Record<string, SessionExitedInfo>;
-  activeSessionId: string | null;
-  /** Display label per session id (custom name or numbered shell default). */
-  tabLabels: Record<string, string>;
-  onSelect: (sessionId: string) => void;
+  groups: TabBarGroup[];
+  onSelect: (groupId: string) => void;
   onCreate: () => void;
-  onClose: (sessionId: string) => void;
+  /** Shift+click on + invokes this when provided (shell picker). */
+  onCreateWithProfile?: () => void;
+  onClose: (groupId: string) => void;
   onRestartSession: (sessionId: string) => void;
   /** Set (non-empty) or clear (empty/whitespace) a tab's custom name. */
   onRename: (sessionId: string, name: string) => void;
 }
 
 export function TabBar({
-  sessions,
-  sessionStatus,
-  sessionExited,
-  activeSessionId,
-  tabLabels = {},
+  groups,
   onSelect,
   onCreate,
+  onCreateWithProfile,
   onClose,
   onRestartSession,
   onRename = () => {},
@@ -41,16 +33,14 @@ export function TabBar({
     }
   }, [editingId]);
 
-  // Drop edit mode if the tab being renamed disappears (closed/exited away).
   useEffect(() => {
-    if (editingId && !sessions.some((session) => session.id === editingId)) {
+    if (editingId && !groups.some((group) => group.primarySessionId === editingId)) {
       setEditingId(null);
     }
-  }, [editingId, sessions]);
+  }, [editingId, groups]);
 
-  const beginRename = (sessionId: string) => {
-    const session = sessions.find((candidate) => candidate.id === sessionId);
-    setDraft(tabLabels[sessionId] ?? (session ? tabShortLabel(session.shell) : ""));
+  const beginRename = (sessionId: string, label: string) => {
+    setDraft(label);
     setEditingId(sessionId);
   };
 
@@ -63,31 +53,24 @@ export function TabBar({
 
   return (
     <div className="session-tabs">
-      {sessions.map((session) => {
-        const status = sessionStatus[session.id] ?? session.status;
-        const exited = sessionExited[session.id];
-        const isExited = isExitedTab(status, exited);
-        const tooltip = buildTabTooltip(
-          status,
-          isExited ? exited.message : null,
-          isExited ? exited.exitCode : null,
-        );
-        const label = tabLabels[session.id] ?? tabShortLabel(session.shell);
-        const isEditing = editingId === session.id;
+      {groups.map((group) => {
+        const isEditing = editingId === group.primarySessionId;
+        const isSplit = group.sessionIds.length > 1;
         return (
           <button
-            key={session.id}
+            key={group.groupId}
             type="button"
-            className={`tab-btn ${activeSessionId === session.id ? "active" : ""} ${isExited ? "dead" : ""}`}
-            onClick={() => onSelect(session.id)}
+            className={`tab-btn ${group.isActive ? "active" : ""} ${group.isExited ? "dead" : ""} ${isSplit ? "split-tab" : ""}`}
+            onClick={() => onSelect(group.groupId)}
             onDoubleClick={(event) => {
               event.stopPropagation();
-              beginRename(session.id);
+              beginRename(group.primarySessionId, group.label);
             }}
-            title={tooltip}
-            aria-label={tooltip}
+            title={group.tooltip}
+            aria-label={group.tooltip}
           >
-            <span className={`tab-dot status-${status}`} aria-hidden="true" />
+            <span className={`tab-dot status-${group.status}`} aria-hidden="true" />
+            {isSplit ? <span className="tab-split-mark" aria-hidden="true" /> : null}
             {isEditing ? (
               <input
                 ref={inputRef}
@@ -108,9 +91,9 @@ export function TabBar({
                 }}
               />
             ) : (
-              <span className="tab-name">{label}</span>
+              <span className="tab-name">{group.label}</span>
             )}
-            {isExited ? (
+            {group.isExited ? (
               <span
                 className="tab-restart"
                 role="button"
@@ -119,13 +102,13 @@ export function TabBar({
                 tabIndex={0}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onRestartSession(session.id);
+                  onRestartSession(group.primarySessionId);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
-                    onRestartSession(session.id);
+                    onRestartSession(group.primarySessionId);
                   }
                 }}
               >
@@ -136,7 +119,7 @@ export function TabBar({
               className="tab-close"
               onClick={(event) => {
                 event.stopPropagation();
-                onClose(session.id);
+                onClose(group.groupId);
               }}
             >
               x
@@ -144,7 +127,19 @@ export function TabBar({
           </button>
         );
       })}
-      <button type="button" className="tab-btn create" onClick={onCreate} aria-label="New session" title="New session">
+      <button
+        type="button"
+        className="tab-btn create"
+        onClick={(event) => {
+          if (event.shiftKey && onCreateWithProfile) {
+            onCreateWithProfile();
+          } else {
+            onCreate();
+          }
+        }}
+        aria-label="New session"
+        title={onCreateWithProfile ? "New session (Shift+click to choose shell)" : "New session"}
+      >
         <span aria-hidden="true">+</span>
       </button>
     </div>

@@ -5,7 +5,8 @@ import { AppSettingsModal } from "./components/AppSettingsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetup";
 import { NewTabProfileModal } from "./components/NewTabProfileModal";
-import { SplitWorkspace } from "./components/SplitWorkspace";
+import { SplitWorkspace, sessionIdForPane } from "./components/SplitWorkspace";
+import { GroupComposer } from "./components/GroupComposer";
 import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
 import { OpsRail, type OpsRailFilter } from "./components/OpsRail";
@@ -20,6 +21,7 @@ import {
   pruneExitedForSessions,
   type SessionExitedInfo,
 } from "./core/sessionLifecycle";
+import { appendTerminalInputLine, isShellExitCommand } from "./core/shellExitCommand";
 import {
   applyCwdChange,
   clearCwd,
@@ -37,7 +39,14 @@ import {
   type UiSurfaceState,
   type UiSurfaceStatePatch,
 } from "./core/uiSurfaceState";
-import { DEFAULT_KEYMAP, formatShortcut, matchShortcut } from "./core/keymap";
+import {
+  DEFAULT_KEYMAP,
+  formatShortcut,
+  matchShortcut,
+  paneIndexFromCommand,
+  shouldBlockWorkspaceShortcut,
+  shortcutAllowedInTextField,
+} from "./core/keymap";
 import { drainChunksUpToByteBudget, nextSequenceState, SEQUENCE_LARGE_JUMP } from "./core/ptyOutputCoalesce";
 import { DEFAULT_RUNTIME_CAPABILITIES, type RuntimeCapabilities } from "./core/runtime";
 import {
@@ -82,24 +91,37 @@ import {
 import {
   buildRestorableSessions,
   closePane,
+  addNewSessionTab,
+  activeGroupLayout,
   createWorkspaceState,
-  reconcileWorkspace,
+  bootstrapWorkspaceFromSessions,
+  displacedSessionIdForSplitCap,
+  findSessionPaneHost,
+  reconcileWorkspaceAfterPaneSpawn,
   remapLayoutToSnapshot,
   removeSessionFromWorkspace,
   restoreWorkspaceFromSnapshot,
+  selectTabGroup,
   setActivePane,
+  setTargetPane,
+  setBroadcastMode,
+  toggleBroadcastMode,
+  setSplitRatioOnWorkspace,
   setPaneSession,
-  setSplitDirection,
-  snapshotWorkspace,
-  splitActivePane,
-  workspaceLayoutFromSnapshot,
-  type WorkspaceSnapshot,
+  selectSessionInWorkspace,
+  sessionIdsInGroup,
+  splitWorkspaceForNewSession,
+  workspaceLayoutFromState,
   type WorkspaceState,
+  type SplitDirection,
 } from "./state/workspace";
+import { useGroupComposer } from "./hooks/useGroupComposer";
 import { buildTabLabels } from "./core/sessionTabStatus";
+import { buildTabBarGroups } from "./core/tabGroups";
 import {
   cycleSessionInputMode,
   defaultSessionInputMode,
+  inputModeUsesComposer,
   isInputModeCycleChord,
   type SessionInputMode,
 } from "./core/inputMode";
@@ -154,6 +176,14 @@ import { isAiAssistReady } from "./core/providerUiState";
 import { historyAiContract, useProviderAiState } from "./hooks/useProviderAiState";
 import { HISTORY_UI_LIMIT, prependHistoryEntry } from "./core/historySync";
 import { spawnProfileFromShellSelection, type ShellSpawnSelection } from "./core/spawnProfile";
+import { prefetchShellCandidates } from "./core/shellCandidatesCache";
+import {
+  loadShellPresets,
+  parseShellPresetPaletteId,
+  shellPresetDescription,
+  shellPresetPaletteId,
+  type ShellPreset,
+} from "./core/shellPresets";
 import { isTauri } from "./core/tauriRuntime";
 import {
   appendCommandSubmitted,
@@ -205,6 +235,12 @@ function App() {
   const sessionBuffersRef = useRef(sessionBuffers);
   sessionBuffersRef.current = sessionBuffers;
   const composerDraftRef = useRef("");
+  const createSessionInFlightRef = useRef(false);
+  const splitSessionInFlightRef = useRef(false);
+  const lastPaneSplitAtRef = useRef(0);
+  const focusGroupComposerRef = useRef<(() => void) | null>(null);
+  const closePaneByIdRef = useRef<(paneId: string) => Promise<void>>(async () => {});
+  const sessionCommandLineRef = useRef<Record<string, string>>({});
   const [runLedger, setRunLedger] = useState<RunLedgerState>({});
   const runLedgerRef = useRef(runLedger);
   runLedgerRef.current = runLedger;
@@ -246,6 +282,7 @@ function App() {
   const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
   const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shellPresets, setShellPresets] = useState<ShellPreset[]>(() => loadShellPresets());
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -276,7 +313,6 @@ function App() {
   const [terminalFontSize, setTerminalFontSize] = useState(13);
   const [minimalShellPrompt, setMinimalShellPrompt] = useState(false);
   const [showComposerAssistMetrics, setShowComposerAssistMetrics] = useState(false);
-  const [sessionLastOutputAt, setSessionLastOutputAt] = useState<Record<string, number>>({});
   const [sessionOsc133Hints, setSessionOsc133Hints] = useState<Record<string, string>>({});
   const [sessionUiSurface, setSessionUiSurface] = useState<Record<string, UiSurfaceState>>({});
   const terminalUiSeqRef = useRef(0);
@@ -319,15 +355,30 @@ function App() {
     };
   }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, aiChatState, sessionsById]);
 
+  const activeLayout = useMemo(() => activeGroupLayout(workspace), [workspace]);
+
   const activeSessionId = useMemo(() => {
-    const activePane = workspace.panes.find((pane) => pane.id === workspace.activePaneId);
+    const activePane = activeLayout.panes.find((pane) => pane.id === activeLayout.activePaneId);
     return activePane?.sessionId ?? null;
-  }, [workspace]);
+  }, [activeLayout]);
 
   const activeSession = activeSessionId ? sessionsById[activeSessionId] : undefined;
   const activeUiSurfaceState = activeSessionId ? sessionUiSurface[activeSessionId] ?? DEFAULT_UI_SURFACE_STATE : null;
 
   const tabLabels = useMemo(() => buildTabLabels(sessions, sessionNames), [sessions, sessionNames]);
+
+  const tabBarGroups = useMemo(
+    () =>
+      buildTabBarGroups(
+        workspace.groups,
+        sessionsById,
+        tabLabels,
+        sessionStatus,
+        sessionExited,
+        workspace.activeGroupId,
+      ),
+    [workspace.groups, workspace.activeGroupId, sessionsById, tabLabels, sessionStatus, sessionExited],
+  );
 
   const cycleActiveInputMode = useCallback(() => {
     if (!activeSessionId) {
@@ -656,25 +707,30 @@ function App() {
         setTerminalFontSize(initialProfile.font_size);
         setMinimalShellPrompt(initialProfile.minimal_shell_prompt ?? false);
         setShowComposerAssistMetrics(initialProfile.show_composer_assist_metrics ?? false);
-        setSessions(existingSessions);
-        const existingSessionIds = existingSessions.map((session) => session.id);
+        prefetchShellCandidates();
         let storedWorkspace: string | null = null;
         const fromDisk = await workspaceLayoutGet();
         if (fromDisk) {
           storedWorkspace = JSON.stringify(fromDisk);
         } else if (typeof window !== "undefined") {
-          const legacy = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
-          if (legacy) {
+          // Drop stale webview snapshots — disk is authoritative; re-migrating here resurrected corrupt layouts.
+          window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+        }
+
+        let sessionsForBoot = existingSessions;
+        if (!storedWorkspace && existingSessions.length > 1) {
+          for (const extra of existingSessions.slice(1)) {
             try {
-              const layout = workspaceLayoutFromSnapshot(JSON.parse(legacy) as WorkspaceSnapshot);
-              await workspaceLayoutSet(layout);
-              window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
-              storedWorkspace = JSON.stringify(layout);
+              await ptyClose(extra.id);
             } catch {
-              window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+              // Session may already be gone on the backend.
             }
           }
+          sessionsForBoot = [existingSessions[0]];
         }
+
+        setSessions(sessionsForBoot);
+        const existingSessionIds = sessionsForBoot.map((session) => session.id);
         const persistedTabs = fromDisk?.sessions ?? [];
         if (existingSessions.length > 0) {
           // Backend still alive (e.g. webview reload): reuse live PTYs and reattach metadata.
@@ -689,12 +745,22 @@ function App() {
             setSessionInputModes(modes);
           }
           setWorkspace((current) => {
+            if (!storedWorkspace && existingSessionIds.length > 0) {
+              const booted = bootstrapWorkspaceFromSessions(existingSessionIds);
+              const layout = activeGroupLayout(booted);
+              const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
+              if (activePane?.sessionId) {
+                return booted;
+              }
+              return setPaneSession(booted, layout.activePaneId, sessionsForBoot[0].id);
+            }
             const restored = restoreWorkspaceFromSnapshot(storedWorkspace, existingSessionIds, current);
-            const activePane = restored.panes.find((pane) => pane.id === restored.activePaneId);
+            const layout = activeGroupLayout(restored);
+            const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
             if (activePane?.sessionId) {
               return restored;
             }
-            return setPaneSession(restored, restored.activePaneId, existingSessions[0].id);
+            return setPaneSession(restored, layout.activePaneId, sessionsForBoot[0].id);
           });
         } else if (persistedTabs.length > 0) {
           // True restart: respawn each tab, remap pane layout onto fresh session ids.
@@ -731,11 +797,12 @@ function App() {
             const remappedSnapshot = JSON.stringify(remapLayoutToSnapshot(fromDisk!, idMap));
             setWorkspace((current) => {
               const restored = restoreWorkspaceFromSnapshot(remappedSnapshot, restoredIds, current);
-              const activePane = restored.panes.find((pane) => pane.id === restored.activePaneId);
+              const layout = activeGroupLayout(restored);
+              const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
               if (activePane?.sessionId) {
                 return restored;
               }
-              return setPaneSession(restored, restored.activePaneId, restoredInfos[0].id);
+              return setPaneSession(restored, layout.activePaneId, restoredInfos[0].id);
             });
           } else {
             const created = await ptySpawn({ profile: initialProfile });
@@ -743,7 +810,8 @@ function App() {
             bootstrapSessionChat([created.id], {});
             setWorkspace((current) => {
               const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
-              return setPaneSession(restored, restored.activePaneId, created.id);
+              const layout = activeGroupLayout(restored);
+              return setPaneSession(restored, layout.activePaneId, created.id);
             });
           }
         } else {
@@ -752,7 +820,8 @@ function App() {
           bootstrapSessionChat([created.id], {});
           setWorkspace((current) => {
             const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
-            return setPaneSession(restored, restored.activePaneId, created.id);
+            const layout = activeGroupLayout(restored);
+            return setPaneSession(restored, layout.activePaneId, created.id);
           });
         }
         const initialHistory = await historyQuery({ limit: HISTORY_UI_LIMIT });
@@ -818,7 +887,7 @@ function App() {
         sessionInputModes,
         sessionChatKeys,
       );
-      const layout = workspaceLayoutFromSnapshot(snapshotWorkspace(workspace), restorable);
+      const layout = workspaceLayoutFromState(workspace, restorable);
       void workspaceLayoutSet(layout).catch((error) => {
         console.warn("failed to persist workspace layout", error);
       });
@@ -975,7 +1044,6 @@ function App() {
           pendingOutputRef.current[event.session_id] = [];
         }
         pendingOutputRef.current[event.session_id].push(event.data);
-        setSessionLastOutputAt((current) => ({ ...current, [event.session_id]: Date.now() }));
 
         if (rafFlushRef.current === null) {
           rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
@@ -998,12 +1066,18 @@ function App() {
 
         const exitedInfo = deriveExitedInfo(event);
         if (exitedInfo) {
-          // Drop in-flight output / sequence state so late bytes don't resurrect a dead session,
-          // but keep sessions[], the pane mapping, and sessionBuffers so the overlay can render
-          // on top of the final shell output. Explicit session.restart / session.close handles teardown.
           delete pendingOutputRef.current[sid];
           delete lastSequenceRef.current[sid];
-          setSessionExited((current) => ({ ...current, [sid]: exitedInfo }));
+          const host = findSessionPaneHost(persistSnapshotRef.current.workspace, sid);
+          const autoClosePane = Boolean(host && host.paneCount > 1);
+          if (!autoClosePane) {
+            setSessionExited((current) => ({ ...current, [sid]: exitedInfo }));
+          }
+          if (autoClosePane && host) {
+            queueMicrotask(() => {
+              void closePaneByIdRef.current(host.paneId);
+            });
+          }
         }
       });
 
@@ -1187,7 +1261,15 @@ function App() {
    * (profile storage stays untouched). Used by `restartSessionById` to land the
    * replacement shell where the old one left off per the live-cwd map.
    */
+  const refreshShellPresets = useCallback(() => {
+    setShellPresets(loadShellPresets());
+  }, []);
+
   const createSessionAt = useCallback(async (cwdOverride: string | null, shellSelection?: ShellSpawnSelection) => {
+    if (createSessionInFlightRef.current) {
+      return;
+    }
+    createSessionInFlightRef.current = true;
     try {
       const profile = await profileGet();
       setTerminalFontSize(profile.font_size);
@@ -1198,23 +1280,26 @@ function App() {
       const created = await ptySpawn({ profile: spawnProfile });
       setSessions((current) => {
         const next = current.some((session) => session.id === created.id) ? current : [...current, created];
-        const nextSessionIds = next.map((session) => session.id);
-        setWorkspace((currentWorkspace) => {
-          const repaired = reconcileWorkspace(currentWorkspace, nextSessionIds);
-          return setPaneSession(repaired, repaired.activePaneId, created.id);
-        });
+        const priorSessionIds = current.map((session) => session.id);
+        setWorkspace((currentWorkspace) => addNewSessionTab(currentWorkspace, priorSessionIds, created.id));
         return next;
       });
       setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
       ensureChatKey(created.id);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to create session.");
+    } finally {
+      createSessionInFlightRef.current = false;
     }
   }, [ensureChatKey]);
 
   const openNewTabPicker = useCallback(() => {
     setNewTabPickerOpen(true);
   }, []);
+
+  const createSession = useCallback(async () => {
+    await createSessionAt(null);
+  }, [createSessionAt]);
 
   const createSessionWithShell = useCallback(
     async (shellSelection: ShellSpawnSelection) => {
@@ -1314,14 +1399,6 @@ function App() {
       delete next[sessionId];
       return next;
     });
-    setSessionLastOutputAt((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
     setSessionOsc133Hints((current) => {
       if (!(sessionId in current)) {
         return current;
@@ -1369,6 +1446,71 @@ function App() {
       }
     },
     [clearSessionFromUiState],
+  );
+
+  /** Split the workspace and spawn a fresh shell in the new pane (independent PTY). */
+  const createSessionInNewPane = useCallback(
+    async (splitDirection?: SplitDirection) => {
+      if (splitSessionInFlightRef.current) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastPaneSplitAtRef.current < 500) {
+        return;
+      }
+      lastPaneSplitAtRef.current = now;
+      splitSessionInFlightRef.current = true;
+      try {
+        const profile = await profileGet();
+        setTerminalFontSize(profile.font_size);
+        const displacedId = displacedSessionIdForSplitCap(persistSnapshotRef.current.workspace);
+        const created = await ptySpawn({ profile });
+        setSessions((current) => {
+          const withoutDisplaced = displacedId ? current.filter((session) => session.id !== displacedId) : current;
+          const next = withoutDisplaced.some((session) => session.id === created.id)
+            ? withoutDisplaced
+            : [...withoutDisplaced, created];
+          const nextSessionIds = next.map((session) => session.id);
+          setWorkspace((currentWorkspace) => {
+            const split = splitWorkspaceForNewSession(currentWorkspace, created.id, splitDirection);
+            return reconcileWorkspaceAfterPaneSpawn(split, nextSessionIds);
+          });
+          return next;
+        });
+        setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
+        ensureChatKey(created.id);
+        if (displacedId) {
+          try {
+            await ptyClose(displacedId);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to close displaced session.";
+            if (!message.includes("does not exist")) {
+              console.warn("failed to close displaced split session", displacedId, error);
+            }
+          }
+          clearSessionFromUiState(displacedId);
+        }
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : "Failed to create session.");
+      } finally {
+        splitSessionInFlightRef.current = false;
+      }
+    },
+    [clearSessionFromUiState, ensureChatKey],
+  );
+
+  const closeTabGroup = useCallback(
+    async (groupId: string) => {
+      const group = workspace.groups.find((candidate) => candidate.id === groupId);
+      if (!group) {
+        return;
+      }
+      const ids = sessionIdsInGroup(group);
+      for (const sessionId of ids) {
+        await closeSession(sessionId);
+      }
+    },
+    [closeSession, workspace.groups],
   );
 
   const handleInput = useCallback(async (sessionId: string, data: string) => {
@@ -1633,27 +1775,133 @@ function App() {
     }
   }, []);
 
-  const splitPane = useCallback(() => {
-    setWorkspace((current) => splitActivePane(current, activeSession?.id ?? null, current.splitDirection));
-  }, [activeSession?.id]);
+  const splitPane = useCallback(async () => {
+    await createSessionInNewPane("column");
+  }, [createSessionInNewPane]);
 
-  const splitPaneRow = useCallback(() => {
+  const splitPaneRow = useCallback(async () => {
+    await createSessionInNewPane("row");
+  }, [createSessionInNewPane]);
+
+  const splitPaneColumn = useCallback(async () => {
+    await createSessionInNewPane("column");
+  }, [createSessionInNewPane]);
+
+  const closePaneById = useCallback(
+    async (paneId: string) => {
+      let sessionId: string | null = null;
+      let paneCount = 1;
+      let activeGroupId = "";
+      let groupCount = 1;
+
+      setWorkspace((current) => {
+        const layout = activeGroupLayout(current);
+        sessionId = sessionIdForPane(layout, paneId);
+        paneCount = layout.panes.length;
+        activeGroupId = current.activeGroupId;
+        groupCount = current.groups.length;
+        if (paneCount <= 1) {
+          return current;
+        }
+        return closePane(current, paneId);
+      });
+
+      if (sessionId) {
+        await closeSession(sessionId);
+        return;
+      }
+
+      if (paneCount <= 1 && groupCount > 1) {
+        await closeTabGroup(activeGroupId);
+      }
+    },
+    [closeSession, closeTabGroup],
+  );
+
+  const closePaneForSession = useCallback(
+    async (sessionId: string) => {
+      let paneId: string | null = null;
+      setWorkspace((current) => {
+        const host = findSessionPaneHost(current, sessionId);
+        if (host && host.paneCount > 1) {
+          paneId = host.paneId;
+        }
+        return current;
+      });
+      if (paneId) {
+        await closePaneById(paneId);
+      }
+    },
+    [closePaneById],
+  );
+
+  const closeComposerTargetPane = useCallback(async () => {
+    let paneId: string | null = null;
     setWorkspace((current) => {
-      const withDirection = setSplitDirection(current, "row");
-      return splitActivePane(withDirection, activeSession?.id ?? null, "row");
+      const layout = activeGroupLayout(current);
+      if (layout.panes.length <= 1) {
+        return current;
+      }
+      if (layout.panes.some((pane) => pane.id === layout.targetPaneId)) {
+        paneId = layout.targetPaneId;
+      }
+      return current;
     });
-  }, [activeSession?.id]);
+    if (paneId) {
+      await closePaneById(paneId);
+    }
+  }, [closePaneById]);
 
-  const splitPaneColumn = useCallback(() => {
+  const closePanesForBroadcastExit = useCallback(
+    async (sessionIds: readonly string[]) => {
+      const paneIds: string[] = [];
+      setWorkspace((current) => {
+        const seen = new Set<string>();
+        for (const sessionId of sessionIds) {
+          const host = findSessionPaneHost(current, sessionId);
+          if (host && host.paneCount > 1 && !seen.has(host.paneId)) {
+            seen.add(host.paneId);
+            paneIds.push(host.paneId);
+          }
+        }
+        return current;
+      });
+      for (const paneId of paneIds) {
+        await closePaneById(paneId);
+      }
+    },
+    [closePaneById],
+  );
+
+  const handleTerminalInput = useCallback(
+    async (sessionId: string, data: string) => {
+      const tracked = appendTerminalInputLine(sessionCommandLineRef.current[sessionId] ?? "", data);
+      sessionCommandLineRef.current[sessionId] = tracked.line;
+      try {
+        await handleInput(sessionId, data);
+      } finally {
+        if (tracked.submitted && isShellExitCommand(tracked.submitted)) {
+          await closePaneForSession(sessionId);
+        }
+      }
+    },
+    [closePaneForSession, handleInput],
+  );
+
+  useEffect(() => {
+    closePaneByIdRef.current = closePaneById;
+  }, [closePaneById]);
+
+  const closeActivePane = useCallback(async () => {
+    let paneId: string | null = null;
     setWorkspace((current) => {
-      const withDirection = setSplitDirection(current, "column");
-      return splitActivePane(withDirection, activeSession?.id ?? null, "column");
+      paneId = activeGroupLayout(current).activePaneId;
+      return current;
     });
-  }, [activeSession?.id]);
-
-  const closeActivePane = useCallback(() => {
-    setWorkspace((current) => closePane(current, current.activePaneId));
-  }, []);
+    if (paneId) {
+      await closePaneById(paneId);
+    }
+  }, [closePaneById]);
 
   const dispatchTerminalUiRequest = useCallback((payload: Omit<TerminalUiRequest, "seq">) => {
     terminalUiSeqRef.current += 1;
@@ -1665,10 +1913,7 @@ function App() {
       // Activate the pane that hosts `sessionId` up-front (synchronous functional
       // setState read) so `createSessionAt` lands in the same pane slot. We fall
       // back to the current active pane when no pane hosts the id.
-      setWorkspace((current) => {
-        const pane = current.panes.find((candidate) => candidate.sessionId === sessionId);
-        return pane ? setActivePane(current, pane.id) : current;
-      });
+      setWorkspace((current) => selectSessionInWorkspace(current, sessionId));
       // Snapshot the live cwd *before* `closeSession` clears it. Fall back to
       // whatever cwd the backend recorded on the session itself (profile default
       // at spawn time) so shells without an OSC 7 hook still behave exactly as
@@ -1719,8 +1964,33 @@ function App() {
   }, [restartSessionById, sessionExited, sessions]);
 
   const executeCommand = useCallback(
-    async (commandId: AppCommandId) => {
-      const terminalIntent = commandToTerminalUiIntent(commandId);
+    async (commandId: AppCommandId | string) => {
+      const presetId = parseShellPresetPaletteId(String(commandId));
+      if (presetId) {
+        const preset = shellPresets.find((entry) => entry.id === presetId);
+        if (preset) {
+          await createSessionAt(null, { shell: preset.shell, args: preset.args });
+        }
+        return;
+      }
+      const paneCmd = paneIndexFromCommand(String(commandId));
+      if (paneCmd) {
+        setWorkspace((current) => {
+          const layout = activeGroupLayout(current);
+          const pane = layout.panes[paneCmd.index - 1];
+          if (!pane) {
+            return current;
+          }
+          return paneCmd.mode === "focus"
+            ? setActivePane(current, pane.id)
+            : setTargetPane(current, pane.id);
+        });
+        if (paneCmd.mode === "target") {
+          queueMicrotask(() => focusGroupComposerRef.current?.());
+        }
+        return;
+      }
+      const terminalIntent = commandToTerminalUiIntent(commandId as AppCommandId);
       if (terminalIntent) {
         if (activeSessionId) {
           setSessionUiSurface((current) => {
@@ -1737,6 +2007,9 @@ function App() {
       }
       switch (commandId) {
         case "session.new":
+          await createSession();
+          break;
+        case "session.newWithProfile":
           openNewTabPicker();
           break;
         case "session.restart":
@@ -1752,13 +2025,25 @@ function App() {
           await restartAllExited();
           break;
         case "pane.split":
-          splitPane();
+          await splitPane();
+          break;
+        case "pane.split.column":
+          await splitPaneColumn();
+          break;
+        case "pane.split.row":
+          await splitPaneRow();
           break;
         case "pane.close":
-          closeActivePane();
+          await closeActivePane();
+          break;
+        case "pane.broadcast":
+          setWorkspace((current) => toggleBroadcastMode(current));
           break;
         case "palette.toggle":
           setPaletteOpen((current) => !current);
+          break;
+        case "input.cycleMode":
+          cycleActiveInputMode();
           break;
         case "history.refresh":
           await refreshHistory();
@@ -1807,9 +2092,14 @@ function App() {
     [
       activeSessionId,
       closeActivePane,
+      closePaneById,
       closeActiveSession,
       closeAllExited,
+      createSession,
+      createSessionAt,
+      cycleActiveInputMode,
       openNewTabPicker,
+      shellPresets,
       dispatchTerminalUiRequest,
       explainCommand,
       fixCommand,
@@ -1822,6 +2112,8 @@ function App() {
       restartActiveSession,
       restartAllExited,
       splitPane,
+      splitPaneColumn,
+      splitPaneRow,
       aiAssistEnabled,
     ],
   );
@@ -1835,11 +2127,11 @@ function App() {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-        return;
-      }
       const binding = DEFAULT_KEYMAP.find((candidate) => matchShortcut(event, candidate));
       if (!binding) {
+        return;
+      }
+      if (shouldBlockWorkspaceShortcut(target) && !shortcutAllowedInTextField(binding.command)) {
         return;
       }
       event.preventDefault();
@@ -1851,7 +2143,13 @@ function App() {
   }, [cycleActiveInputMode, executeCommand]);
 
   const commandPaletteItems = useMemo(() => {
-    const commands = import.meta.env.DEV ? [...APP_COMMANDS, ...DEV_PALETTE_COMMANDS] : APP_COMMANDS;
+    const baseCommands = import.meta.env.DEV ? [...APP_COMMANDS, ...DEV_PALETTE_COMMANDS] : APP_COMMANDS;
+    const presetCommands = shellPresets.map((preset) => ({
+      id: shellPresetPaletteId(preset.id),
+      label: `Open shell: ${preset.name}`,
+      description: shellPresetDescription(preset),
+    }));
+    const commands = [...baseCommands, ...presetCommands];
     return commands
       .filter((command) => {
         if (
@@ -1865,12 +2163,13 @@ function App() {
       })
       .map((command) => {
         const matchingBinding = DEFAULT_KEYMAP.find((binding) => binding.command === command.id);
+        const commandShortcut = "shortcut" in command ? command.shortcut : undefined;
         return {
           ...command,
-          shortcut: matchingBinding ? formatShortcut(matchingBinding) : command.shortcut,
+          shortcut: commandShortcut ?? (matchingBinding ? formatShortcut(matchingBinding) : undefined),
         };
       });
-  }, [aiAssistEnabled]);
+  }, [aiAssistEnabled, shellPresets]);
 
   const globalShortcutItems = useMemo(
     () => commandPaletteItems.filter((command) => DEFAULT_KEYMAP.some((binding) => binding.command === command.id)),
@@ -1913,6 +2212,97 @@ function App() {
     [],
   );
 
+  const activeInputMode = activeSessionId
+    ? (sessionInputModes[activeSessionId] ?? defaultSessionInputMode())
+    : defaultSessionInputMode();
+  const showGroupComposer = Boolean(activeSessionId) && inputModeUsesComposer(activeInputMode);
+  const targetSessionIdForComposer = sessionIdForPane(activeLayout, activeLayout.targetPaneId);
+
+  const groupComposer = useGroupComposer({
+    groupId: workspace.activeGroupId,
+    panes: activeLayout.panes,
+    activePaneId: activeLayout.activePaneId,
+    targetPaneId: activeLayout.targetPaneId,
+    broadcastMode: activeLayout.broadcastMode,
+    sessionsById,
+    tabLabels,
+    sessionInputModes,
+    composerSubmitKinds,
+    commandFailure: targetSessionIdForComposer
+      ? (sessionCommandFailures[targetSessionIdForComposer] ?? null)
+      : null,
+    historyEntries,
+    aiAssistEnabled,
+    onComposerDraftChange: (draft) => {
+      composerDraftRef.current = draft;
+    },
+    onToggleComposerSubmitKind: toggleComposerSubmitKindForSession,
+    onAskAboutFailure: askAboutCommandFailure,
+    onAiComposerSubmit: (sessionId, text) => void submitAiChat(sessionId, text),
+    onSubmitToPty: (sessionIds, payload) => {
+      for (const sessionId of sessionIds) {
+        void handleInput(sessionId, payload);
+      }
+    },
+    onShellExitSubmitted: () => {
+      void closeComposerTargetPane();
+    },
+    onShellExitBroadcast: (sessionIds) => {
+      void closePanesForBroadcastExit(sessionIds);
+    },
+    onRequestComposerCompletion: requestComposerCompletion,
+    onBroadcastConsumed: () => {
+      setWorkspace((current) => setBroadcastMode(current, false));
+    },
+  });
+
+  useEffect(() => {
+    focusGroupComposerRef.current = groupComposer.focusComposerInput;
+  }, [groupComposer.focusComposerInput]);
+
+  const handleGroupComposerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (groupComposer.isComposerAiToggleKey(event)) {
+        event.preventDefault();
+        groupComposer.onToggleComposerSubmitKind?.();
+        return;
+      }
+      if (
+        aiAssistEnabled &&
+        groupComposer.isAskFailureShortcut(
+          event,
+          groupComposer.composerDraft.trim().length === 0,
+          Boolean(groupComposer.commandFailure),
+        ) &&
+        groupComposer.onAskAboutFailure
+      ) {
+        event.preventDefault();
+        groupComposer.onAskAboutFailure();
+        return;
+      }
+      if (event.key === "ArrowUp" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        groupComposer.stepComposerHistory("prev");
+        return;
+      }
+      if (event.key === "ArrowDown" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        groupComposer.stepComposerHistory("next");
+        return;
+      }
+      if (event.key === "Tab" && groupComposer.composerSubmitKind !== "ai") {
+        event.preventDefault();
+        void groupComposer.requestComposerCompletion();
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        groupComposer.submitComposer();
+      }
+    },
+    [aiAssistEnabled, groupComposer],
+  );
+
   return (
     <div className="app-frame">
       <CustomTitleBar
@@ -1921,14 +2311,11 @@ function App() {
         showDiagnostics={import.meta.env.DEV}
         tabs={
           <TabBar
-            sessions={sessions}
-            sessionStatus={sessionStatus}
-            sessionExited={sessionExited}
-            activeSessionId={activeSessionId}
-            tabLabels={tabLabels}
-            onSelect={(sessionId) => setWorkspace((current) => setPaneSession(current, current.activePaneId, sessionId))}
-            onCreate={() => openNewTabPicker()}
-            onClose={(sessionId) => void closeSession(sessionId)}
+            groups={tabBarGroups}
+            onSelect={(groupId) => setWorkspace((current) => selectTabGroup(current, groupId))}
+            onCreate={() => void createSession()}
+            onCreateWithProfile={() => openNewTabPicker()}
+            onClose={(groupId) => void closeTabGroup(groupId)}
             onRestartSession={(sessionId) => void restartSessionById(sessionId)}
             onRename={renameSession}
           />
@@ -1953,7 +2340,7 @@ function App() {
           <div className={`terminal-workspace-split${opsRailCollapsed ? " ops-rail-window-collapsed" : ""}`}>
           <section className="terminal-stack">
           <SplitWorkspace
-            workspace={workspace}
+            layout={activeLayout}
             sessionsById={sessionsById}
             sessionBuffers={sessionBuffers}
             sessionStatuses={sessionStatus}
@@ -1968,17 +2355,59 @@ function App() {
             sessionInputModes={sessionInputModes}
             composerSubmitKinds={composerSubmitKinds}
             sessionCommandFailures={sessionCommandFailures}
-            sessionLastOutputAt={sessionLastOutputAt}
             aiAssistEnabled={aiAssistEnabled}
-            onComposerDraftChange={(paneId, draft) => {
-              if (paneId === workspace.activePaneId) {
-                composerDraftRef.current = draft;
-              }
-            }}
-            onToggleComposerSubmitKind={toggleComposerSubmitKindForSession}
-            onAskAboutFailure={askAboutCommandFailure}
-            onAiComposerSubmit={(sessionId, text) => void submitAiChat(sessionId, text)}
+            groupComposerActive={showGroupComposer}
             onAskAiSelection={queueAiSelection}
+            onInput={(sessionId, data) => {
+              void handleTerminalInput(sessionId, data);
+            }}
+            onResize={(sessionId, cols, rows) => void handleResize(sessionId, cols, rows)}
+            onFocusPane={(paneId) => setWorkspace((current) => setActivePane(current, paneId))}
+            onUiSurfaceStateChange={(sessionId, patch) => updateSessionUiSurfaceState(sessionId, patch)}
+            onSplitRatioChange={(branchId, ratio) =>
+              setWorkspace((current) => setSplitRatioOnWorkspace(current, branchId, ratio))
+            }
+            onResizeDragEnd={() => window.dispatchEvent(new Event("resize"))}
+            onRequestRestartSession={(paneId) => {
+              const sid = sessionIdForPane(activeLayout, paneId);
+              if (!sid) {
+                return;
+              }
+              void restartSessionById(sid);
+            }}
+            onRequestCloseSession={(paneId) => {
+              void closePaneById(paneId);
+            }}
+          />
+          <GroupComposer
+            visible={showGroupComposer}
+            composerDraft={groupComposer.composerDraft}
+            setComposerDraft={groupComposer.setComposerDraft}
+            composerTextareaRef={groupComposer.composerTextareaRef}
+            composerLocked={groupComposer.composerLocked}
+            inputMode={groupComposer.inputMode}
+            composerSubmitKind={groupComposer.composerSubmitKind}
+            composerPlaceholder={groupComposer.composerPlaceholder}
+            commandFailure={groupComposer.commandFailure}
+            prediction={groupComposer.prediction}
+            completionState={groupComposer.completionState}
+            completionMetricsTick={groupComposer.completionMetricsTick}
+            completionMetricsRef={groupComposer.completionMetricsRef}
+            showComposerAssistMetrics={showComposerAssistMetrics}
+            aiAssistEnabled={aiAssistEnabled}
+            broadcastMode={activeLayout.broadcastMode}
+            panePills={groupComposer.panePills}
+            liveCwd={
+              targetSessionIdForComposer
+                ? (sessionCwd[targetSessionIdForComposer] ?? sessionsById[targetSessionIdForComposer]?.cwd ?? null)
+                : null
+            }
+            shellExe={targetSessionIdForComposer ? (sessionsById[targetSessionIdForComposer]?.shell ?? null) : null}
+            osc133Hint={
+              targetSessionIdForComposer ? (sessionOsc133Hints[targetSessionIdForComposer] ?? null) : null
+            }
+            onToggleComposerSubmitKind={groupComposer.onToggleComposerSubmitKind}
+            onAskAboutFailure={groupComposer.onAskAboutFailure}
             onAiExplainComposer={() => {
               const draft = composerDraftRef.current.trim();
               if (draft) {
@@ -1991,32 +2420,9 @@ function App() {
                 void fixCommandToChat(draft);
               }
             }}
-            historyEntries={historyEntries}
-            onRequestComposerCompletion={requestComposerCompletion}
-            onInput={(sessionId, data) => void handleInput(sessionId, data)}
-            onResize={(sessionId, cols, rows) => void handleResize(sessionId, cols, rows)}
-            onFocusPane={(paneId) => setWorkspace((current) => setActivePane(current, paneId))}
-            onUiSurfaceStateChange={(sessionId, patch) => updateSessionUiSurfaceState(sessionId, patch)}
-            onRequestRestartSession={(paneId) => {
-              const pane = workspace.panes.find((candidate) => candidate.id === paneId);
-              const sid = pane?.sessionId ?? null;
-              if (!sid) {
-                return;
-              }
-              void restartSessionById(sid);
-            }}
-            onRequestCloseSession={(paneId) => {
-              const pane = workspace.panes.find((candidate) => candidate.id === paneId);
-              const sid = pane?.sessionId ?? null;
-              setWorkspace((current) => setActivePane(current, paneId));
-              if (!sid) {
-                return;
-              }
-              void (async () => {
-                await closeSession(sid);
-                setSessionExited((current) => clearExitedInfo(current, sid));
-              })();
-            }}
+            onToggleBroadcast={() => setWorkspace((current) => toggleBroadcastMode(current))}
+            onSelectPanePill={(paneId) => setWorkspace((current) => setTargetPane(current, paneId))}
+            onKeyDown={handleGroupComposerKeyDown}
           />
           </section>
           {!opsRailCollapsed ? (
@@ -2113,7 +2519,7 @@ function App() {
           onFindNextMatch={() => void executeCommand("terminal.findNext")}
           onFindPreviousMatch={() => void executeCommand("terminal.findPrevious")}
           uiSurfaceState={activeUiSurfaceState}
-          workspaceSplitDirection={workspace.splitDirection}
+          workspaceSplitDirection={activeLayout.splitDirection}
           checkForUpdates={checkForUpdates}
           updateStatus={updateStatus}
           updaterEnabled={UPDATER_ENABLED}
@@ -2148,6 +2554,7 @@ function App() {
             setMinimalShellPrompt(savedProfile.minimal_shell_prompt ?? false);
             setShowComposerAssistMetrics(savedProfile.show_composer_assist_metrics ?? false);
           }}
+          onShellPresetsChanged={refreshShellPresets}
           minimalShellPrompt={minimalShellPrompt}
           onMinimalShellPromptChange={setMinimalShellPromptPreference}
           showComposerAssistMetrics={showComposerAssistMetrics}

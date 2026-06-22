@@ -1,5 +1,6 @@
 use mach_terminal_lib::models::{
-    RestorableSession, WorkspaceLayout, WorkspacePaneSnapshot, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    RestorableSession, SplitNodeSnapshot, TabGroupSnapshot, WorkspaceLayout, WorkspacePaneSnapshot,
+    WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
 use mach_terminal_lib::workspace_store::{load_workspace_layout_from_path, save_workspace_layout_to_path};
 use std::fs;
@@ -29,6 +30,8 @@ fn sample_layout() -> WorkspaceLayout {
             chat_key: Some("chat-abc".to_string()),
             input_mode: Some("console".to_string()),
         }],
+        groups: vec![],
+        active_group_id: None,
     }
 }
 
@@ -61,6 +64,68 @@ fn workspace_layout_without_sessions_field_loads_as_empty() {
     .expect("write legacy");
     let loaded = load_workspace_layout_from_path(&path).expect("load").expect("some layout");
     assert!(loaded.sessions.is_empty());
+}
+
+#[test]
+fn workspace_layout_tree_group_round_trip() {
+    let temp = tempdir().expect("tempdir");
+    let path = temp.path().join("workspace_layout_v2.json");
+    let layout = WorkspaceLayout {
+        schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+        root_pane_id: "pane-1".to_string(),
+        panes: vec![WorkspacePaneSnapshot {
+            id: "pane-1".to_string(),
+            session_id: Some("session-a".to_string()),
+        }],
+        active_pane_id: "pane-1".to_string(),
+        split_direction: "column".to_string(),
+        sessions: vec![],
+        groups: vec![TabGroupSnapshot {
+            id: "group-1".to_string(),
+            primary_session_id: "session-a".to_string(),
+            panes: vec![],
+            active_pane_id: "pane-2".to_string(),
+            split_direction: "column".to_string(),
+            layout: Some(SplitNodeSnapshot {
+                kind: "split".to_string(),
+                id: "split-1".to_string(),
+                session_id: None,
+                direction: Some("column".to_string()),
+                ratio: Some(0.5),
+                first: Some(Box::new(SplitNodeSnapshot {
+                    kind: "pane".to_string(),
+                    id: "pane-1".to_string(),
+                    session_id: Some("session-a".to_string()),
+                    direction: None,
+                    ratio: None,
+                    first: None,
+                    second: None,
+                })),
+                second: Some(Box::new(SplitNodeSnapshot {
+                    kind: "pane".to_string(),
+                    id: "pane-2".to_string(),
+                    session_id: Some("session-b".to_string()),
+                    direction: None,
+                    ratio: None,
+                    first: None,
+                    second: None,
+                })),
+            }),
+            target_pane_id: Some("pane-2".to_string()),
+            broadcast_mode: Some(false),
+        }],
+        active_group_id: Some("group-1".to_string()),
+    };
+
+    save_workspace_layout_to_path(&path, &layout).expect("save");
+    let loaded = load_workspace_layout_from_path(&path).expect("load").expect("some layout");
+    assert_eq!(loaded.schema_version, 2);
+    assert_eq!(loaded.groups.len(), 1);
+    let group = &loaded.groups[0];
+    assert_eq!(group.target_pane_id.as_deref(), Some("pane-2"));
+    let tree = group.layout.as_ref().expect("tree layout");
+    assert_eq!(tree.kind, "split");
+    assert_eq!(tree.ratio, Some(0.5));
 }
 
 #[test]

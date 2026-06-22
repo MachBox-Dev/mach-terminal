@@ -149,6 +149,7 @@ export type AppSettingsModalProps = {
   onShowComposerAssistMetricsChange: (enabled: boolean) => void | Promise<void>;
   /** Called after the terminal profile is saved so the app can refresh live state (font size, etc.). */
   onProfileSaved?: (profile: TerminalProfile) => void | Promise<void>;
+  onShellPresetsChanged?: () => void;
 };
 
 export function buildHistoryPanelHandlers(
@@ -360,7 +361,11 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             </section>
 
             <div className="settings-pane" hidden={paneHidden("settings-section-terminal-profile")}>
-              <TerminalProfileSection modalOpen={props.open} onProfileSaved={onProfileSaved} />
+              <TerminalProfileSection
+                modalOpen={props.open}
+                onProfileSaved={onProfileSaved}
+                onShellPresetsChanged={props.onShellPresetsChanged}
+              />
             </div>
 
             <section id="settings-section-ai-providers" hidden={paneHidden("settings-section-ai-providers")}>

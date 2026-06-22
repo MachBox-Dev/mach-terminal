@@ -50,7 +50,6 @@ import {
   type ComposerSubmitKind,
 } from "../core/composerAiIntent";
 import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
-import { isSessionOutputStale } from "../core/sessionOutputHealth";
 import { isAskFailureShortcut } from "../core/sessionCommandOutcome";
 import {
   createAttachmentId,
@@ -149,8 +148,6 @@ interface TerminalSurfaceProps {
   composerSubmitKind?: ComposerSubmitKind;
   onToggleComposerSubmitKind?: () => void;
   commandFailure?: SessionCommandFailure | null;
-  /** Unix ms of the last pty-output chunk applied for this session. */
-  lastOutputAtMs?: number;
   onAskAboutFailure?: () => void;
   onAiComposerSubmit?: (text: string) => void;
   onAskAiSelection?: (attachment: AiContextAttachment) => void;
@@ -163,6 +160,8 @@ interface TerminalSurfaceProps {
   showComposerAssistMetrics?: boolean;
   /** Latest OSC 133 marker hint for this session (read-only status). */
   osc133Hint?: string | null;
+  /** When false, output-only pane (group composer handles input). */
+  showComposer?: boolean;
   onComposerDraftChange?: (draft: string) => void;
   onAiExplainComposer?: () => void;
   onAiFixComposer?: () => void;
@@ -193,7 +192,6 @@ export function TerminalSurface({
   composerSubmitKind = "command",
   onToggleComposerSubmitKind,
   commandFailure = null,
-  lastOutputAtMs,
   onAskAboutFailure,
   onAiComposerSubmit,
   onAskAiSelection,
@@ -203,6 +201,7 @@ export function TerminalSurface({
   showComposerAssistMetrics = false,
   osc133Hint = null,
   aiAssistEnabled = false,
+  showComposer = true,
   onComposerDraftChange,
   onAiExplainComposer,
   onAiFixComposer,
@@ -276,7 +275,6 @@ export function TerminalSurface({
   const [pasteBypassForSession, setPasteBypassForSession] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [composerDraft, setComposerDraft] = useState("");
-  const [outputHealthTick, setOutputHealthTick] = useState(0);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const completionRequestSeqRef = useRef(0);
   const completionStateRef = useRef(createComposerCompletionState());
@@ -291,15 +289,6 @@ export function TerminalSurface({
   const [completionMetricsTick, setCompletionMetricsTick] = useState(0);
   const terminalPanelRef = useRef<HTMLElement | null>(null);
   const composerLocked = !activeSession || Boolean(exitedInfo);
-  const outputLooksStale = useMemo(
-    () => isSessionOutputStale(activeStatus, lastOutputAtMs),
-    [activeStatus, lastOutputAtMs, outputHealthTick],
-  );
-
-  useEffect(() => {
-    const id = window.setInterval(() => setOutputHealthTick((tick) => tick + 1), 5000);
-    return () => window.clearInterval(id);
-  }, []);
 
   const pumpPendingTerminalWrites = useCallback(() => {
     if (writeFrameRef.current !== null) {
@@ -396,6 +385,18 @@ export function TerminalSurface({
     queueMicrotask(() => composerTextareaRef.current?.focus());
   }, [composerLocked]);
 
+  /** Mirror xterm guard: route pointer-down in the input column to the correct typing surface. */
+  const routePointerDownToInputSurface = useCallback(() => {
+    if (findOpenRef.current) {
+      return;
+    }
+    if (inputModeRef.current === "commander") {
+      terminalRef.current?.focus();
+      return;
+    }
+    focusComposerInput();
+  }, [focusComposerInput]);
+
   const sendTextToPty = useCallback((text: string) => {
     const session = activeSessionRef.current;
     if (!text || !session) {
@@ -414,6 +415,9 @@ export function TerminalSurface({
   }, []);
 
   const submitComposer = useCallback(() => {
+    if (!isFocusedRef.current) {
+      return;
+    }
     const normalized = composerDraft.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     if (!normalized.trim()) {
       return;
@@ -1059,6 +1063,9 @@ export function TerminalSurface({
     });
 
     const onDataDispose = terminal.onData((data) => {
+      if (!isFocusedRef.current) {
+        return;
+      }
       if (activeSessionRef.current) {
         onInputRef.current(activeSessionRef.current.id, data);
       }
@@ -1188,7 +1195,7 @@ export function TerminalSurface({
     if (!terminal) {
       return;
     }
-    terminal.options.disableStdin = !inputModeUsesXtermStdin(inputMode);
+    terminal.options.disableStdin = !(inputModeUsesXtermStdin(inputMode) && isFocused);
     terminal.options.cursorBlink = inputMode === "commander";
     if (inputMode === "commander" && isFocused) {
       queueMicrotask(() => {
@@ -1264,6 +1271,8 @@ export function TerminalSurface({
     onComposerDraftChange?.(composerDraft);
   }, [composerDraft, onComposerDraftChange]);
 
+  const hidePerPaneInputChrome = !showComposer && inputModeUsesComposer(inputMode);
+
   return (
     <section ref={terminalPanelRef} className={`terminal-panel ${isFocused ? "focused" : ""}`}>
       {sessionMessage ? <p className="terminal-message">{sessionMessage}</p> : null}
@@ -1276,21 +1285,6 @@ export function TerminalSurface({
         }}
       >
         <div className="terminal-output-column">
-          {outputLooksStale && !exitedInfo ? (
-            <div className="terminal-output-stale-banner" role="status">
-              <span>
-                Session output has not updated recently. The shell may be hung, blocked on input, or the
-                display may have stalled.
-              </span>
-              <button
-                type="button"
-                className="inline-btn ghost"
-                onClick={() => onRequestRestartSessionRef.current?.()}
-              >
-                Restart session
-              </button>
-            </div>
-          ) : null}
           <div className="terminal-output-stack">
         <button
           type="button"
@@ -1469,19 +1463,13 @@ export function TerminalSurface({
             <div
               className="terminal-xterm-input-guard"
               onPointerDown={() => {
-                if (findOpenRef.current) {
-                  return;
-                }
-                if (inputModeRef.current === "commander") {
-                  terminalRef.current?.focus();
-                  return;
-                }
-                focusComposerInput();
+                routePointerDownToInputSurface();
               }}
             >
               <div ref={containerRef} className="terminal-container" tabIndex={-1} />
             </div>
           </div>
+          {!hidePerPaneInputChrome ? (
           <div className="terminal-input-chrome">
             <MachStatusStrip
               liveCwd={liveCwd}
@@ -1493,7 +1481,14 @@ export function TerminalSurface({
               uiSurfaceState={{ followOutput, findOpen, findQuery }}
             />
             {inputModeUsesComposer(inputMode) ? (
-            <div className={`terminal-composer terminal-composer-kind-${composerSubmitKind}`} onContextMenu={(event) => event.stopPropagation()}>
+              showComposer ? (
+            <div
+              className={`terminal-composer terminal-composer-kind-${composerSubmitKind}`}
+              onContextMenu={(event) => event.stopPropagation()}
+              onPointerDown={() => {
+                routePointerDownToInputSurface();
+              }}
+            >
               {commandFailure && onAskAboutFailure && aiAssistEnabled ? (
                 <div className="terminal-failure-hint">
                   <span>
@@ -1513,6 +1508,7 @@ export function TerminalSurface({
                   className="terminal-composer-field"
                   placeholder={composerPlaceholderForMode(inputMode, composerLocked, composerSubmitKind === "ai")}
                   disabled={composerLocked}
+                  readOnly={!isFocused}
                   value={composerDraft}
                   onChange={(e) => {
                     historyStateRef.current = createComposerHistoryState();
@@ -1665,12 +1661,14 @@ export function TerminalSurface({
                 </div>
               ) : null}
             </div>
+              ) : null
             ) : (
               <p className="terminal-commander-mode-hint" aria-live="polite">
                 Commander mode — raw PTY input. <kbd>Ctrl</kbd>+<kbd>`</kbd> returns to Operator.
               </p>
             )}
           </div>
+          ) : null}
         </div>
         {exitedInfo ? (
           <div
