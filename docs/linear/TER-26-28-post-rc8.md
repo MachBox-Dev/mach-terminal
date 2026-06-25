@@ -1,7 +1,6 @@
 # Linear backlog — post rc.8 (current cycle)
 
-> **Cycle:** assign all three to the **active TER cycle** in Linear.  
-> MCP Linear was unavailable in the agent session — create or link these in the TER team if missing.
+> **Status:** Shipped — merged to `main` @ `3c0bafd` (2026-06-25). TER-26/27/28 marked **Done** in Linear.
 
 ## TER-26 — Provider UX unification (Track B)
 
