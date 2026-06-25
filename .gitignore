@@ -24,7 +24,8 @@ dist-ssr
 *.sw?
 artifacts/
 .aider*
-.cursor/
+.cursor/*
+!.cursor/runbook/
 # Local updater signing keys — NEVER commit
 .machbox/
 **/*.key
