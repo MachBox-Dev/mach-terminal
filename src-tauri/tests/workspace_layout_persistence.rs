@@ -25,6 +25,7 @@ fn sample_layout() -> WorkspaceLayout {
         sessions: vec![RestorableSession {
             session_id: "session-a".to_string(),
             shell: "wsl.exe".to_string(),
+            args: vec!["-d".to_string(), "Ubuntu".to_string()],
             cwd: Some("/home/me".to_string()),
             name: Some("build".to_string()),
             chat_key: Some("chat-abc".to_string()),
@@ -49,6 +50,7 @@ fn workspace_layout_save_and_load_round_trip() {
     assert_eq!(loaded.panes[0].session_id.as_deref(), Some("session-a"));
     assert_eq!(loaded.sessions.len(), 1);
     assert_eq!(loaded.sessions[0].session_id, "session-a");
+    assert_eq!(loaded.sessions[0].args, vec!["-d", "Ubuntu"]);
     assert_eq!(loaded.sessions[0].name.as_deref(), Some("build"));
 }
 

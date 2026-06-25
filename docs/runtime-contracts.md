@@ -61,9 +61,9 @@ This document defines the first stable contract between the frontend shell and R
 
 ## Runtime Events
 
-- `pty-output`
-  - payload: `{ session_id: string, data: string, sequence: number }`
-  - emitted whenever PTY output chunk arrives
+- `pty-output` — **streamed over a Tauri `Channel`, not the event system.** The webview registers a single long-lived `Channel<Response>` once at mount via the `pty_subscribe_output` command (`SessionManager.output_channel`). Reader threads stream raw bytes through it; the event system is intentionally avoided here because it JSON-serializes every payload and is not built for high-throughput streaming (per Tauri docs).
+  - frame: `[u16 LE session_id byte length][session_id utf8][chunk utf8]` (one frame per `MAX_CHUNK`-bounded chunk). The chunk payload is whole-char UTF-8 (the reader thread runs `decode_utf8_streaming` first, then `split_chunk` on char boundaries), so the frontend decodes each frame's payload with a non-streaming `TextDecoder`.
+  - the bridge (`onPtyOutput` in `src/core/terminal.ts`) parses the frame and **synthesizes a per-session monotonic `sequence`** (the channel guarantees ordered delivery), so the downstream coalescing/anomaly contract below is unchanged and still consumes `{ session_id, data, sequence }`.
 - `pty-lifecycle`
   - payload: `{ session_id: string, status: "running" | "stopped" | "closed" | "error", message?: string, timestamp_ms: number, exit_code?: number }`
   - `exit_code` is populated only for the EOF-driven `stopped` transition. The reader thread wraps the spawned child in an `Arc<Mutex<Box<dyn Child + Send>>>` shared with the emit loop and calls `wait()` on the already-dead process on `Ok(0)` from the PTY reader; `portable_pty::ExitStatus::exit_code()` returns a `u32` which is downcast to `i32` for the wire. `running`, user-initiated `closed` (the child is killed before we can observe a code), and `error` (reader I/O failure) paths all omit the field — the Rust `Option<i32>` serializes with `skip_serializing_if = "Option::is_none"` so older consumers see no schema break. Unix signal deaths manifest as the shell convention `128 + signal_number` via portable_pty; a dedicated `signal` channel is intentionally out of scope for this tranche.
@@ -82,9 +82,9 @@ This document defines the first stable contract between the frontend shell and R
 
 ## PTY output coalescing (UI)
 
-- The shell batches `pty-output` chunks per session using `requestAnimationFrame`: pending strings are drained in slices so a single frame does not apply unbounded UTF-16 units to xterm (see `MAX_PTY_FLUSH_BYTES_PER_FRAME` in the app shell).
+- The shell batches `pty-output` chunks (now delivered via the channel above) per session using `requestAnimationFrame`: pending strings are drained in slices so a single frame does not apply unbounded UTF-16 units to xterm (see `MAX_PTY_FLUSH_BYTES_PER_FRAME` in the app shell).
 - **Sequence policy (per `session_id`):** first observed chunk always establishes the baseline; `sequence === previous + 1` is normal. Forward gaps of at most **100** skipped numbers are treated as a **silent resync** (baseline jumps to the new `sequence`; in Vite dev builds a `console.debug` line is emitted). **User-visible** `runtimeError` toasts are reserved for rewinds/duplicates (`sequence <= previous`) or jumps larger than that window—these should be rare if the runtime emitter stays monotonic.
-- **`pty-lifecycle`:** on `running`, or when a session reaches a terminal state (`stopped` / `closed` / `error`), the UI clears pending coalesced chunks and the sequence baseline for that `session_id` so a later lifecycle cannot reuse stale state.
+- **`pty-lifecycle`:** on `running`, reset the sequence baseline only — **do not** clear pending coalesced chunks (raw channel output often arrives before the lifecycle event, especially on multi-tab cold restore). On terminal states (`stopped` / `closed` / `error`), clear pending chunks and the sequence baseline so late bytes cannot resurrect a dead session.
 - Rust-side `sequence_anomalies` in `RuntimeMetricsSnapshot` still counts gaps detected in the PTY reader thread; UI resync policy is independent and reduces false-positive UX when the stream is healthy but numbering skipped.
 
 ## Frontend terminal (xterm.js)

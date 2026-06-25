@@ -30,6 +30,7 @@ use crate::composer_completion::{ComposerCompletionRequest, ComposerCompletionRe
 use crate::plugin_host::PluginHost;
 use crate::session_manager::SessionManager;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tracing::{error, info, instrument, warn};
 
@@ -236,6 +237,19 @@ fn pty_spawn(
     manager.spawn_session(&app, request, default_profile)
 }
 
+/// Register the webview's long-lived raw-bytes channel for streaming PTY output.
+/// Called once at app mount before any session spawns; replaces the per-chunk
+/// `pty-output` JSON event (the event system is not built for high-throughput
+/// streaming — see Tauri docs). Reader threads stream framed bytes through it.
+#[tauri::command]
+#[instrument(skip(manager, on_output))]
+fn pty_subscribe_output(
+    manager: State<'_, SessionManager>,
+    on_output: Channel<Response>,
+) -> Result<(), String> {
+    manager.set_output_channel(on_output)
+}
+
 #[tauri::command]
 #[instrument(skip(app, manager, data))]
 fn pty_write(
@@ -440,6 +454,7 @@ pub fn run() {
             workspace_layout_set,
             provider_list,
             pty_spawn,
+            pty_subscribe_output,
             pty_write,
             pty_resize,
             pty_close,

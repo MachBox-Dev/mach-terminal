@@ -12,6 +12,9 @@ export function spawnProfileForRestorableTab(
   if (shell) {
     profile.shell = shell;
   }
+  if (tab.args && tab.args.length > 0) {
+    profile.args = [...tab.args];
+  }
   const cwd = tab.cwd?.trim();
   if (cwd) {
     profile.cwd = cwd;

@@ -12,6 +12,7 @@ import {
   removeSessionFromWorkspace,
   restoreWorkspaceFromSnapshot,
   selectSessionInWorkspace,
+  selectTabGroup,
   sessionIdsInGroup,
   setSplitDirection,
   setActivePane,
@@ -527,5 +528,27 @@ describe("remapLayoutToSnapshot", () => {
     const active = layout.panes.find((pane) => pane.id === paneId(workspace));
     expect(active?.sessionId).toBe("session-c");
     expect(layout.panes.find((pane) => pane.id !== paneId(workspace))?.sessionId).toBe("session-a");
+  });
+
+  it("selectTabGroup repairs stale pane ids and syncs target to focus", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    const second = addNewSessionTab(workspace, ["session-a"], "session-b");
+    const secondGroupId = second.groups[1]!.id;
+    const stale = {
+      ...second.groups[1]!,
+      activePaneId: "ghost-pane",
+      targetPaneId: "also-ghost",
+    };
+    workspace = {
+      ...second,
+      groups: second.groups.map((group) => (group.id === secondGroupId ? stale : group)),
+    };
+    const selected = selectTabGroup(workspace, secondGroupId);
+    const group = selected.groups.find((candidate) => candidate.id === secondGroupId)!;
+    const layout = layoutOf({ ...selected, activeGroupId: secondGroupId });
+    expect(layout.activePaneId).toBe(group.activePaneId);
+    expect(layout.targetPaneId).toBe(layout.activePaneId);
+    expect(layout.panes.some((pane) => pane.id === layout.activePaneId)).toBe(true);
   });
 });

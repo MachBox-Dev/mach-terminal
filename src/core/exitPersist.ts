@@ -19,6 +19,7 @@ export type ExitPersistSnapshot = {
   sessionNames: Record<string, string>;
   sessionInputModes: Record<string, SessionInputMode>;
   sessionChatKeys: Record<string, string>;
+  sessionSpawnArgs: Record<string, string[]>;
   aiChatState: AiChatState;
   sessionsById: Record<string, PtySessionInfo>;
 };
@@ -74,6 +75,7 @@ export async function flushPersistedStateForExit(
     snap.sessionNames,
     snap.sessionInputModes,
     snap.sessionChatKeys,
+    snap.sessionSpawnArgs,
   );
   const layout = workspaceLayoutFromState(snap.workspace, restorable);
   persistAiChatsForSessions(snap.aiChatState, snap.sessionChatKeys);

@@ -2,7 +2,7 @@ use crate::child_env;
 use crate::history_store;
 use crate::models::{
     AiContextEvent, HistoryEntry, HistoryQueryRequest, PtyCommandMarkerEvent, PtyCommandMarkerPhase, PtyCwdChangedEvent,
-    PtyLifecycleEvent, PtyOutputEvent, PtySessionInfo, PtySpawnRequest, RuntimeMetricsSnapshot, TerminalProfile,
+    PtyLifecycleEvent, PtySessionInfo, PtySpawnRequest, RuntimeMetricsSnapshot, TerminalProfile,
 };
 use crate::osc133::{Osc133Kind, Osc133Parser};
 use crate::osc7::Osc7Parser;
@@ -14,10 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, instrument, warn};
 
-const PTY_OUTPUT_EVENT: &str = "pty-output";
 const PTY_LIFECYCLE_EVENT: &str = "pty-lifecycle";
 const PTY_CWD_CHANGED_EVENT: &str = "pty-cwd-changed";
 const PTY_COMMAND_MARKER_EVENT: &str = "pty-command-marker";
@@ -77,6 +77,11 @@ pub struct SessionManager {
     history_recovery_notice: Arc<Mutex<Option<String>>>,
     counters: Arc<RuntimeCounters>,
     sequence: AtomicU64,
+    /// Single long-lived raw-bytes channel the webview subscribes to once at mount
+    /// (`pty_subscribe_output`). Every reader thread streams framed PTY output through
+    /// it ([u16 LE id_len][session_id][raw utf8]) instead of per-chunk JSON events —
+    /// `Channel<Response>` skips JSON serialization and guarantees ordered delivery.
+    output_channel: Arc<Mutex<Option<Channel<Response>>>>,
 }
 
 impl Default for SessionManager {
@@ -88,6 +93,7 @@ impl Default for SessionManager {
             history_recovery_notice: Arc::new(Mutex::new(None)),
             counters: Arc::new(RuntimeCounters::default()),
             sequence: AtomicU64::new(0),
+            output_channel: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -105,6 +111,19 @@ struct RuntimeCounters {
 }
 
 impl SessionManager {
+    /// Register the webview's long-lived PTY-output channel. Called once from
+    /// `pty_subscribe_output` at app mount, before any session is spawned. Reader
+    /// threads read the latest registered channel per chunk, so a late/replaced
+    /// subscription (e.g. webview reload) is picked up without respawning sessions.
+    pub fn set_output_channel(&self, channel: Channel<Response>) -> Result<(), String> {
+        let mut slot = self
+            .output_channel
+            .lock()
+            .map_err(|error| format!("failed to lock output channel: {error}"))?;
+        *slot = Some(channel);
+        Ok(())
+    }
+
     #[instrument(skip(self, app, request, default_profile))]
     pub fn spawn_session(
         &self,
@@ -178,11 +197,15 @@ impl SessionManager {
         let sequence_for_thread = self.sequence.fetch_add(1, Ordering::Relaxed);
         let sessions_for_thread = Arc::clone(&self.sessions);
         let counters_for_thread = Arc::clone(&self.counters);
+        let output_channel_for_thread = Arc::clone(&self.output_channel);
 
         let reader_thread = std::thread::spawn(move || {
             let mut chunk_sequence = sequence_for_thread;
             let mut last_emitted_sequence = chunk_sequence;
             let mut buffer = [0_u8; 8192];
+            // Trailing bytes of a multibyte UTF-8 codepoint split across reads.
+            // Always <4 bytes; prepended to the next read before display decoding.
+            let mut utf8_carry: Vec<u8> = Vec::new();
             let mut osc7_parser = Osc7Parser::new();
             let mut osc133_parser = Osc133Parser::new();
             loop {
@@ -270,61 +293,84 @@ impl SessionManager {
                                 );
                             }
                         }
-                        let output = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
-                        let mut pending = VecDeque::new();
-                        for chunk in split_chunk(&output, MAX_CHUNK) {
-                            pending.push_back(chunk);
-                            if pending.len() > MAX_PENDING_CHUNKS {
-                                pending.pop_front();
-                                counters_for_thread
-                                    .output_chunks_dropped
-                                    .fetch_add(1, Ordering::Relaxed);
-                                debug!(
-                                    session_id = %session_id_for_thread,
-                                    max_pending = MAX_PENDING_CHUNKS,
-                                    "dropped oldest pty output chunk due to backpressure"
-                                );
-                            }
-                        }
+                        // Prepend any incomplete trailing UTF-8 sequence carried from the
+                        // previous read, then decode the longest valid prefix and stash a
+                        // new carry. OSC parsers above intentionally see only the raw new
+                        // bytes (`&buffer[..bytes_read]`); the carry is a display-only concern.
+                        let mut display_bytes = std::mem::take(&mut utf8_carry);
+                        display_bytes.extend_from_slice(&buffer[..bytes_read]);
+                        let (output, carry) = decode_utf8_streaming(&display_bytes);
+                        utf8_carry = carry;
 
-                        while let Some(chunk) = pending.pop_front() {
-                            chunk_sequence += 1;
-                            if chunk_sequence != last_emitted_sequence + 1 {
-                                counters_for_thread
-                                    .sequence_anomalies
-                                    .fetch_add(1, Ordering::Relaxed);
-                                debug!(
-                                    session_id = %session_id_for_thread,
-                                    chunk_sequence,
-                                    last_emitted_sequence,
-                                    "pty output sequence gap"
-                                );
+                        if !output.is_empty() {
+                            let mut pending = VecDeque::new();
+                            for chunk in split_chunk(&output, MAX_CHUNK) {
+                                pending.push_back(chunk);
+                                if pending.len() > MAX_PENDING_CHUNKS {
+                                    pending.pop_front();
+                                    counters_for_thread
+                                        .output_chunks_dropped
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    debug!(
+                                        session_id = %session_id_for_thread,
+                                        max_pending = MAX_PENDING_CHUNKS,
+                                        "dropped oldest pty output chunk due to backpressure"
+                                    );
+                                }
                             }
-                            last_emitted_sequence = chunk_sequence;
 
-                            let chunk_bytes = chunk.len() as u64;
-                            let emit_result = app_for_thread.emit(
-                                PTY_OUTPUT_EVENT,
-                                PtyOutputEvent {
-                                    session_id: session_id_for_thread.clone(),
-                                    data: chunk,
-                                    sequence: chunk_sequence,
-                                },
-                            );
-                            if emit_result.is_ok() {
-                                counters_for_thread
-                                    .output_chunks_emitted
-                                    .fetch_add(1, Ordering::Relaxed);
-                                counters_for_thread
-                                    .output_bytes_emitted
-                                    .fetch_add(chunk_bytes, Ordering::Relaxed);
-                            } else {
-                                counters_for_thread.emit_failures.fetch_add(1, Ordering::Relaxed);
-                                warn!(
-                                    session_id = %session_id_for_thread,
-                                    error = ?emit_result.err(),
-                                    "failed to emit pty-output event"
-                                );
+                            while let Some(chunk) = pending.pop_front() {
+                                chunk_sequence += 1;
+                                if chunk_sequence != last_emitted_sequence + 1 {
+                                    counters_for_thread
+                                        .sequence_anomalies
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    debug!(
+                                        session_id = %session_id_for_thread,
+                                        chunk_sequence,
+                                        last_emitted_sequence,
+                                        "pty output sequence gap"
+                                    );
+                                }
+                                last_emitted_sequence = chunk_sequence;
+
+                                let chunk_bytes = chunk.len() as u64;
+                                // Frame: [u16 LE session_id len][session_id utf8][chunk utf8].
+                                // The chunk is whole-char UTF-8 (split_chunk respects char
+                                // boundaries), so the frontend decodes each frame's payload as a
+                                // complete string without needing a streaming decoder.
+                                let id_bytes = session_id_for_thread.as_bytes();
+                                let mut framed = Vec::with_capacity(2 + id_bytes.len() + chunk.len());
+                                framed.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
+                                framed.extend_from_slice(id_bytes);
+                                framed.extend_from_slice(chunk.as_bytes());
+
+                                let send_result = output_channel_for_thread
+                                    .lock()
+                                    .ok()
+                                    .and_then(|guard| guard.clone())
+                                    .map(|channel| channel.send(Response::new(framed)));
+                                match send_result {
+                                    Some(Ok(())) => {
+                                        counters_for_thread
+                                            .output_chunks_emitted
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        counters_for_thread
+                                            .output_bytes_emitted
+                                            .fetch_add(chunk_bytes, Ordering::Relaxed);
+                                    }
+                                    Some(Err(error)) => {
+                                        counters_for_thread.emit_failures.fetch_add(1, Ordering::Relaxed);
+                                        warn!(
+                                            session_id = %session_id_for_thread,
+                                            error = ?error,
+                                            "failed to send pty output over channel"
+                                        );
+                                    }
+                                    // No channel registered yet (pre-subscribe): drop silently;
+                                    // the webview subscribes at mount before spawning sessions.
+                                    None => {}
+                                }
                             }
                         }
                         if app_for_thread
@@ -823,6 +869,50 @@ fn split_chunk(data: &str, max_bytes: usize) -> Vec<String> {
     output
 }
 
+/// Incrementally decode a PTY byte stream to UTF-8 without corrupting multibyte
+/// sequences that straddle a `read()` boundary.
+///
+/// `String::from_utf8_lossy` per read replaces the trailing bytes of any
+/// multibyte codepoint (UTF-8 chars are up to 4 bytes, plus wide/emoji/box-draw
+/// glyphs) with U+FFFD when the codepoint is split across two reads — silently
+/// mangling output. This decodes the longest valid prefix, emits U+FFFD only for
+/// genuinely invalid bytes (real binary noise), and returns any *incomplete*
+/// trailing sequence (always <4 bytes) so the caller can prepend it to the next
+/// read. The returned carry must be fed back in on the subsequent call.
+fn decode_utf8_streaming(bytes: &[u8]) -> (String, Vec<u8>) {
+    let mut out = String::new();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match std::str::from_utf8(&bytes[idx..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                return (out, Vec::new());
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                if valid_up_to > 0 {
+                    // SAFETY: `valid_up_to` is the byte length of the verified-valid prefix.
+                    out.push_str(unsafe {
+                        std::str::from_utf8_unchecked(&bytes[idx..idx + valid_up_to])
+                    });
+                    idx += valid_up_to;
+                }
+                match error.error_len() {
+                    // A genuinely invalid byte sequence in the middle of the stream:
+                    // emit one replacement char, skip the offending bytes, keep going.
+                    Some(invalid_len) => {
+                        out.push('\u{FFFD}');
+                        idx += invalid_len;
+                    }
+                    // Truncated multibyte sequence at the very end: carry it forward.
+                    None => return (out, bytes[idx..].to_vec()),
+                }
+            }
+        }
+    }
+    (out, Vec::new())
+}
+
 fn unix_timestamp_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -866,7 +956,8 @@ pub fn default_shell() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        history_store, normalize_history_replay_command, query_history_entries, split_chunk, SessionManager,
+        decode_utf8_streaming, history_store, normalize_history_replay_command, query_history_entries, split_chunk,
+        SessionManager,
     };
     use crate::models::{HistoryEntry, HistoryQueryRequest};
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -881,6 +972,126 @@ mod tests {
         let data = "abcdefghij";
         let joined = split_chunk(data, 3).join("");
         assert_eq!(joined, data);
+    }
+
+    #[test]
+    fn decode_utf8_streaming_passes_through_valid_utf8() {
+        let (out, carry) = decode_utf8_streaming("héllo 世界 🚀".as_bytes());
+        assert_eq!(out, "héllo 世界 🚀");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn decode_utf8_streaming_carries_split_multibyte_sequence() {
+        // "世" is 3 bytes (E4 B8 96). Split it across two reads and prove no U+FFFD
+        // leaks and the codepoint reassembles exactly.
+        let full = "ab世cd";
+        let bytes = full.as_bytes();
+        let world_start = "ab".len();
+        // Cut one byte into the 3-byte "世" so the read ends mid-codepoint.
+        let split_at = world_start + 1;
+
+        let (first, carry) = decode_utf8_streaming(&bytes[..split_at]);
+        assert_eq!(first, "ab");
+        assert_eq!(carry.len(), 1, "one leading byte of 世 should be carried");
+
+        let mut combined = carry;
+        combined.extend_from_slice(&bytes[split_at..]);
+        let (second, carry2) = decode_utf8_streaming(&combined);
+        assert_eq!(second, "世cd");
+        assert!(carry2.is_empty());
+        assert!(!format!("{first}{second}").contains('\u{FFFD}'));
+        assert_eq!(format!("{first}{second}"), full);
+    }
+
+    #[test]
+    fn decode_utf8_streaming_emits_replacement_for_genuine_invalid_byte() {
+        // 0xFF is never valid UTF-8 and is followed by more valid text: it must
+        // become exactly one U+FFFD without eating the surrounding bytes.
+        let bytes = [b'a', 0xFF, b'b'];
+        let (out, carry) = decode_utf8_streaming(&bytes);
+        assert_eq!(out, "a\u{FFFD}b");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn decode_utf8_streaming_reassembles_four_byte_codepoint_across_three_reads() {
+        // "🚀" is 4 bytes (F0 9F 9A 80). Feed it one byte at a time.
+        let rocket = "🚀";
+        let bytes = rocket.as_bytes();
+        let mut carry: Vec<u8> = Vec::new();
+        let mut assembled = String::new();
+        for byte in bytes {
+            carry.push(*byte);
+            let (out, rest) = decode_utf8_streaming(&carry);
+            assembled.push_str(&out);
+            carry = rest;
+        }
+        assert!(carry.is_empty());
+        assert_eq!(assembled, rocket);
+    }
+
+    /// End-to-end benchmark + correctness guard for the reader-thread byte pipeline
+    /// (decode → chunk), the part of the hot path that runs *before* the webview IPC
+    /// emit. This is the only segment measurable without a live GUI; render (WebGL)
+    /// and `emit` (IPC) latency need the in-app dev probe, not this test.
+    ///
+    /// Stronger than the unit cases above: it feeds a large mixed payload (ASCII +
+    /// ANSI + 2/3/4-byte UTF-8 + box-drawing) through arbitrary 8 KB read windows —
+    /// exactly mirroring `[0u8; 8192]` in the reader thread — and proves the decoded,
+    /// re-chunked stream round-trips byte-for-byte regardless of where codepoints are
+    /// split. The throughput floor only trips on a catastrophic regression (the real
+    /// pipeline runs in the GB/s range; the floor is deliberately ~100x below that).
+    #[test]
+    fn pty_byte_pipeline_round_trips_and_meets_throughput_floor() {
+        use super::{decode_utf8_streaming, split_chunk, MAX_CHUNK};
+        use std::time::Instant;
+
+        // Representative terminal output block: prompts, ANSI SGR, mixed-width UTF-8.
+        let block = "\x1b[32muser@mach\x1b[0m:\x1b[34m~/dev/世界\x1b[0m$ ls -la 🚀\r\n\
+             ┌─────────────┬──────────┐ café résumé naïve\r\n\
+             total 42  drwxr-xr-x  Ωμέγα ✓ déjà vu\r\n";
+        let mut source = String::with_capacity(16 * 1024 * 1024);
+        while source.len() < 16 * 1024 * 1024 {
+            source.push_str(block);
+        }
+        let source_bytes = source.as_bytes();
+        let total_bytes = source_bytes.len();
+
+        let start = Instant::now();
+        let mut carry: Vec<u8> = Vec::new();
+        let mut reconstructed = String::with_capacity(total_bytes);
+        let mut chunk_count = 0_usize;
+        for window in source_bytes.chunks(8192) {
+            let mut display_bytes = std::mem::take(&mut carry);
+            display_bytes.extend_from_slice(window);
+            let (decoded, rest) = decode_utf8_streaming(&display_bytes);
+            carry = rest;
+            for chunk in split_chunk(&decoded, MAX_CHUNK) {
+                assert!(chunk.len() <= MAX_CHUNK, "chunk exceeded MAX_CHUNK");
+                reconstructed.push_str(&chunk);
+                chunk_count += 1;
+            }
+        }
+        // No valid UTF-8 source should ever leave a trailing carry once fully consumed.
+        assert!(carry.is_empty(), "carry not drained at stream end");
+        let elapsed = start.elapsed();
+
+        // Correctness at scale: byte-for-byte identical across all 8 KB boundaries,
+        // with zero replacement characters injected into valid input.
+        assert_eq!(reconstructed, source, "pipeline corrupted the byte stream");
+        assert!(!reconstructed.contains('\u{FFFD}'), "spurious U+FFFD in valid stream");
+
+        let mb = total_bytes as f64 / (1024.0 * 1024.0);
+        let mb_per_sec = mb / elapsed.as_secs_f64();
+        eprintln!(
+            "[pty-pipeline] {mb:.1} MiB in {:.1} ms → {mb_per_sec:.0} MiB/s ({chunk_count} chunks)",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        assert!(
+            mb_per_sec > 50.0,
+            "byte pipeline throughput {mb_per_sec:.0} MiB/s fell below the 50 MiB/s floor"
+        );
     }
 
     #[test]

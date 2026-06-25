@@ -6,6 +6,9 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Added
 
+- **Hot-path:** Raw-bytes `Channel` transport for PTY output (`pty_subscribe_output`); WebGL xterm renderer (`@xterm/addon-webgl`) with DOM fallback; `npm run test:perf` pipeline throughput gate (~75 MiB/s debug, 50 MiB/s floor).
+- `RestorableSession.args` persisted end-to-end so WSL distro args survive cold restart.
+- App hooks: `usePtyOutputStream`, `useSessionBoot`, `useWorkspaceFocus`; `workspaceFocus.ts` terminal focus event after tab/pane switch.
 - **TER-25:** Terminal hyperlinks require Ctrl+click (Win/Linux) or Cmd+click (Mac) to open — Windows Terminal parity; plain click no longer launches browser/file handler.
 - **TER-9:** Command palette quick-launch entries for saved presets and detected shells (`preset:` / `shell:` command ids).
 - **TER-19:** Sticky broadcast mode (`off` | `once` | `sticky`) — click Broadcast for one-shot, Shift+click for sticky; `Ctrl/Cmd+Alt+Shift+B` arms sticky; palette disarm command; workspace layout migrates legacy `broadcastMode: boolean`.
@@ -23,6 +26,8 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Fixed
 
+- **Hot-path:** Streaming UTF-8 decode across PTY read boundaries (no spurious U+FFFD on split multibyte codepoints); multi-tab restore races (subscribe-before-spawn, channel output backlog, lifecycle pending-output wipe).
+- **Workspace:** Tab switch repairs stale pane ids, syncs composer target to focus, routes keyboard focus to Operator composer or Commander xterm.
 - **TER-22:** Windows PTY spawn refreshes `PATH` from User + Machine registry (WinGet/mise/scoop shims visible without Explorer restart); `profile.env` overlay preserved.
 - **TER-23:** New-tab / boot perf — shell picker uses cached `detect_shells` on mount; WSL distro probe times out at 2s; deferred shell prefetch; cached boot profile; `pty_spawn` skips redundant settings read when profile provided; picker loads in parallel with profile fetch.
 - **TER-6:** `Ctrl/Cmd+K` works from composer — global shortcut allowlist in `keymap.ts`.

@@ -26,6 +26,8 @@ pub struct RestorableSession {
     #[serde(default)]
     pub shell: String,
     #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
     pub name: Option<String>,

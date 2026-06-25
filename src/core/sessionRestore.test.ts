@@ -26,6 +26,14 @@ describe("sessionRestore", () => {
     expect(profile.font_size).toBe(13);
   });
 
+  it("restores shell args from restorable tab", () => {
+    const profile = spawnProfileForRestorableTab(
+      { sessionId: "session-1", shell: "wsl.exe", args: ["-d", "Ubuntu"] },
+      defaultProfile,
+    );
+    expect(profile.args).toEqual(["-d", "Ubuntu"]);
+  });
+
   it("maps persisted tab metadata onto respawned session ids", () => {
     const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(
       [

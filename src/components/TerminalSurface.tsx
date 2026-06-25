@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { FOCUS_ACTIVE_TERMINAL_EVENT } from "../core/workspaceFocus";
 import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import {
   bufferLineIndexFromProviderLine,
@@ -218,6 +220,7 @@ export function TerminalSurface({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
   const renderedStateRef = useRef<{ sessionId?: string; length: number }>({ length: 0 });
   const activeSessionRef = useRef<PtySessionInfo | undefined>(activeSession);
   const onInputRef = useRef(onInput);
@@ -913,6 +916,27 @@ export function TerminalSurface({
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(searchAddon);
     terminal.open(containerRef.current);
+
+    // GPU-accelerated rendering is the whole point of "speed-first": the DOM
+    // renderer is xterm's slowest path. Load the WebGL addon AFTER open() (it
+    // needs a live <canvas>), and degrade gracefully — if the GPU context is
+    // unavailable at init or is lost later (driver reset, tab backgrounding),
+    // dispose the addon so xterm transparently reverts to the DOM renderer.
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+        if (webglAddonRef.current === webglAddon) {
+          webglAddonRef.current = null;
+        }
+      });
+      terminal.loadAddon(webglAddon);
+      webglAddonRef.current = webglAddon;
+    } catch {
+      // No WebGL (rare: headless/software GL): DOM renderer remains active.
+      webglAddonRef.current = null;
+    }
+
     fitAddon.fit();
     terminal.writeln("mach-terminal");
     terminal.writeln("ready.");
@@ -1125,7 +1149,16 @@ export function TerminalSurface({
     });
     observer.observe(containerRef.current);
 
+    const onFocusActiveTerminal = () => {
+      if (!isFocusedRef.current) {
+        return;
+      }
+      terminalRef.current?.focus();
+    };
+    window.addEventListener(FOCUS_ACTIVE_TERMINAL_EVENT, onFocusActiveTerminal);
+
     return () => {
+      window.removeEventListener(FOCUS_ACTIVE_TERMINAL_EVENT, onFocusActiveTerminal);
       onScrollDispose.dispose();
       searchResultsDispose.dispose();
       bellDispose.dispose();
@@ -1139,6 +1172,8 @@ export function TerminalSurface({
       linkProviderDisposeRef.current = null;
       searchAddon.dispose();
       searchAddonRef.current = null;
+      webglAddonRef.current?.dispose();
+      webglAddonRef.current = null;
       observer.disconnect();
       terminal.dispose();
       terminalRef.current = null;

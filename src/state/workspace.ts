@@ -99,6 +99,7 @@ export interface TabGroupSnapshot {
 export interface RestorableSession {
   sessionId: string;
   shell: string;
+  args?: string[];
   cwd?: string;
   name?: string;
   chatKey?: string;
@@ -147,6 +148,18 @@ function defaultActivePaneForGroup(group: TabGroup): string {
     return group.activePaneId;
   }
   return collectPaneLeaves(group.layout)[0]?.id ?? group.activePaneId;
+}
+
+/** Repair stale pane ids after restore/remap; optionally align target with focus. */
+export function normalizeGroupPaneFocus(group: TabGroup, syncTargetToFocus = false): TabGroup {
+  const activePaneId = defaultActivePaneForGroup(group);
+  const targetPaneId = syncTargetToFocus
+    ? activePaneId
+    : defaultTargetForGroup({ ...group, activePaneId });
+  if (group.activePaneId === activePaneId && group.targetPaneId === targetPaneId) {
+    return group;
+  }
+  return { ...group, activePaneId, targetPaneId };
 }
 
 export function getActiveGroup(state: WorkspaceState): TabGroup | undefined {
@@ -251,7 +264,10 @@ export function selectTabGroup(state: WorkspaceState, groupId: string): Workspac
   if (!state.groups.some((group) => group.id === groupId)) {
     return state;
   }
-  return { ...state, activeGroupId: groupId };
+  const groups = state.groups.map((group) =>
+    group.id === groupId ? normalizeGroupPaneFocus(group, true) : group,
+  );
+  return { ...state, activeGroupId: groupId, groups };
 }
 
 export function setPaneSession(state: WorkspaceState, paneId: string, sessionId: string | null): WorkspaceState {
@@ -1015,15 +1031,18 @@ export function buildRestorableSessions(
   names: Record<string, string | undefined>,
   inputModes: Record<string, SessionInputMode | undefined> = {},
   chatKeys: Record<string, string | undefined> = {},
+  argsById: Record<string, string[] | undefined> = {},
 ): RestorableSession[] {
   return sessions.map((session) => {
     const name = (names[session.id] ?? "").trim();
     const cwd = cwdById(session.id);
     const inputMode = inputModes[session.id];
     const chatKey = chatKeys[session.id];
+    const args = argsById[session.id];
     return {
       sessionId: session.id,
       shell: session.shell,
+      ...(args && args.length > 0 ? { args } : {}),
       ...(cwd && cwd.length > 0 ? { cwd } : {}),
       ...(name.length > 0 ? { name } : {}),
       ...(chatKey && chatKey.length > 0 ? { chatKey } : {}),

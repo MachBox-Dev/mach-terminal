@@ -47,18 +47,15 @@ import {
   shouldBlockWorkspaceShortcut,
   shortcutAllowedInTextField,
 } from "./core/keymap";
-import { drainChunksUpToByteBudget, nextSequenceState, SEQUENCE_LARGE_JUMP } from "./core/ptyOutputCoalesce";
 import { DEFAULT_RUNTIME_CAPABILITIES, type RuntimeCapabilities } from "./core/runtime";
 import {
   historyQuery,
-  historyRecoveryTake,
   historyReplay,
   composerComplete,
   onAiContext,
   onPtyCwdChanged,
   onPtyCommandMarker,
   onPtyLifecycle,
-  onPtyOutput,
   pluginExecute,
   pluginGrantsSnapshot,
   pluginGrantCapability,
@@ -71,7 +68,6 @@ import {
   runtimeMetricsSnapshot,
   settingsSchemaDump,
   ptyClose,
-  ptyListSessions,
   ptyResize,
   ptySpawn,
   ptyWrite,
@@ -83,8 +79,6 @@ import {
   type PluginMetricsSnapshot,
   type SessionStatus,
   type ShellCandidate,
-  runtimeCapabilities,
-  workspaceLayoutGet,
   workspaceLayoutSet,
   trimAiContextExcerpt,
   type AiPromptContextPayload,
@@ -96,13 +90,10 @@ import {
   addNewSessionTab,
   activeGroupLayout,
   createWorkspaceState,
-  bootstrapWorkspaceFromSessions,
   displacedSessionIdForSplitCap,
   findSessionPaneHost,
   reconcileWorkspaceAfterPaneSpawn,
-  remapLayoutToSnapshot,
   removeSessionFromWorkspace,
-  restoreWorkspaceFromSnapshot,
   selectTabGroup,
   setActivePane,
   setTargetPane,
@@ -110,7 +101,6 @@ import {
   toggleBroadcastOnce,
   armBroadcastSticky,
   setSplitRatioOnWorkspace,
-  setPaneSession,
   selectSessionInWorkspace,
   sessionIdsInGroup,
   splitWorkspaceForNewSession,
@@ -119,6 +109,9 @@ import {
   type SplitDirection,
 } from "./state/workspace";
 import { useGroupComposer } from "./hooks/useGroupComposer";
+import { usePtyOutputStream } from "./hooks/usePtyOutputStream";
+import { useSessionBoot, type SessionBootCallbacks } from "./hooks/useSessionBoot";
+import { useWorkspaceFocus } from "./hooks/useWorkspaceFocus";
 import { buildTabLabels } from "./core/sessionTabStatus";
 import { buildTabBarGroups } from "./core/tabGroups";
 import {
@@ -144,8 +137,6 @@ import {
 import {
   ensureChatKeysForSessionIds,
   resolveChatKeyForSession,
-  restoreSessionMetadataFromTabs,
-  spawnProfileForRestorableTab,
 } from "./core/sessionRestore";
 import {
   appendChatMessage,
@@ -179,7 +170,6 @@ import { isAiAssistReady } from "./core/providerUiState";
 import { historyAiContract, useProviderAiState } from "./hooks/useProviderAiState";
 import { HISTORY_UI_LIMIT, prependHistoryEntry } from "./core/historySync";
 import { spawnProfileFromShellSelection, type ShellSpawnSelection } from "./core/spawnProfile";
-import { prefetchShellCandidates, loadShellCandidates } from "./core/shellCandidatesCache";
 import {
   fetchShellPresets,
   parseShellPresetPaletteId,
@@ -203,10 +193,7 @@ import {
 } from "./core/runLedger";
 
 const MAX_SESSION_BUFFER = 120_000;
-/** Max UTF-16 units applied to xterm per animation frame per session (remainder stays queued). */
-const MAX_PTY_FLUSH_BYTES_PER_FRAME = 48_000;
 const RESIZE_THROTTLE_MS = 100;
-const WORKSPACE_STORAGE_KEY = "mach-terminal.workspace.v1";
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 320;
 const OPS_RAIL_COLLAPSED_KEY = "mach-terminal.opsRail.collapsed";
 const OPS_RAIL_PINS_KEY = "mach-terminal.opsRail.pins";
@@ -222,14 +209,6 @@ function stepRunSelection(runs: RunRecord[], selectedId: string | null, delta: n
   const cur = idx < 0 ? runs.length - 1 : idx;
   const next = (cur + delta + runs.length) % runs.length;
   return runs[next]?.id ?? null;
-}
-
-function appendBoundedOutput(previous: string, nextChunk: string): string {
-  const combined = `${previous}${nextChunk}`;
-  if (combined.length <= MAX_SESSION_BUFFER) {
-    return combined;
-  }
-  return combined.slice(combined.length - MAX_SESSION_BUFFER);
 }
 
 function App() {
@@ -291,6 +270,8 @@ function App() {
   const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
   const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** Spawn-time shell args per session (WSL distros, login flags, etc.) for restore. */
+  const [sessionSpawnArgs, setSessionSpawnArgs] = useState<Record<string, string[]>>({});
   const [shellPresets, setShellPresets] = useState<ShellPreset[]>([]);
   const [detectedShells, setDetectedShells] = useState<ShellCandidate[]>([]);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
@@ -327,11 +308,9 @@ function App() {
   const [sessionUiSurface, setSessionUiSurface] = useState<Record<string, UiSurfaceState>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
-  const pendingOutputRef = useRef<Record<string, string[]>>({});
-  const rafFlushRef = useRef<number | null>(null);
-  const lastSequenceRef = useRef<Record<string, number>>({});
   const resizeThrottleRef = useRef<Record<string, number>>({});
   const layoutPersistBootstrappedRef = useRef(false);
+  const sessionBootCallbacksRef = useRef<SessionBootCallbacks>(null!);
   const persistSnapshotRef = useRef({
     workspace,
     sessions,
@@ -339,6 +318,7 @@ function App() {
     sessionNames,
     sessionInputModes,
     sessionChatKeys,
+    sessionSpawnArgs,
     aiChatState,
     sessionsById: {} as Record<string, PtySessionInfo>,
   });
@@ -360,10 +340,24 @@ function App() {
       sessionNames,
       sessionInputModes,
       sessionChatKeys,
+      sessionSpawnArgs,
       aiChatState,
       sessionsById,
     };
-  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, aiChatState, sessionsById]);
+  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, sessionSpawnArgs, aiChatState, sessionsById]);
+
+  const recordSpawnArgs = useCallback((sessionId: string, profile: TerminalProfile) => {
+    if (!profile.args || profile.args.length === 0) {
+      return;
+    }
+    setSessionSpawnArgs((current) => ({ ...current, [sessionId]: [...profile.args!] }));
+  }, []);
+
+  const { pendingOutputRef, lastSequenceRef } = usePtyOutputStream({
+    maxSessionBuffer: MAX_SESSION_BUFFER,
+    setSessionBuffers,
+    setRuntimeError,
+  });
 
   const activeLayout = useMemo(() => activeGroupLayout(workspace), [workspace]);
 
@@ -700,163 +694,36 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const loadCapabilities = async () => {
-      setHistoryLoading(true);
-      setHistoryError(null);
-      try {
-        const [runtime, providerDescriptors, existingSessions, providerRouting, initialProfile] = await Promise.all([
-          runtimeCapabilities() as Promise<RuntimeCapabilities>,
-          providerList(),
-          ptyListSessions(),
-          providerRoutingGet(),
-          profileGet(),
-        ]);
-        setCapabilities(runtime);
-        initializeProviderAiState(providerDescriptors, providerRouting);
-        setTerminalFontSize(initialProfile.font_size);
-        setMinimalShellPrompt(initialProfile.minimal_shell_prompt ?? false);
-        setShowComposerAssistMetrics(initialProfile.show_composer_assist_metrics ?? false);
-        cachedProfileRef.current = initialProfile;
-        let storedWorkspace: string | null = null;
-        const fromDisk = await workspaceLayoutGet();
-        if (fromDisk) {
-          storedWorkspace = JSON.stringify(fromDisk);
-        } else if (typeof window !== "undefined") {
-          // Drop stale webview snapshots — disk is authoritative; re-migrating here resurrected corrupt layouts.
-          window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
-        }
-
-        let sessionsForBoot = existingSessions;
-        if (!storedWorkspace && existingSessions.length > 1) {
-          for (const extra of existingSessions.slice(1)) {
-            try {
-              await ptyClose(extra.id);
-            } catch {
-              // Session may already be gone on the backend.
-            }
-          }
-          sessionsForBoot = [existingSessions[0]];
-        }
-
-        setSessions(sessionsForBoot);
-        const existingSessionIds = sessionsForBoot.map((session) => session.id);
-        const persistedTabs = fromDisk?.sessions ?? [];
-        if (existingSessions.length > 0) {
-          // Backend still alive (e.g. webview reload): reuse live PTYs and reattach metadata.
-          const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(persistedTabs, (id) =>
-            existingSessionIds.includes(id) ? id : null,
-          );
-          bootstrapSessionChat(existingSessionIds, chatKeys);
-          if (Object.keys(names).length > 0) {
-            setSessionNames(names);
-          }
-          if (Object.keys(modes).length > 0) {
-            setSessionInputModes(modes);
-          }
-          setWorkspace((current) => {
-            if (!storedWorkspace && existingSessionIds.length > 0) {
-              const booted = bootstrapWorkspaceFromSessions(existingSessionIds);
-              const layout = activeGroupLayout(booted);
-              const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
-              if (activePane?.sessionId) {
-                return booted;
-              }
-              return setPaneSession(booted, layout.activePaneId, sessionsForBoot[0].id);
-            }
-            const restored = restoreWorkspaceFromSnapshot(storedWorkspace, existingSessionIds, current);
-            const layout = activeGroupLayout(restored);
-            const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
-            if (activePane?.sessionId) {
-              return restored;
-            }
-            return setPaneSession(restored, layout.activePaneId, sessionsForBoot[0].id);
-          });
-        } else if (persistedTabs.length > 0) {
-          // True restart: respawn each tab, remap pane layout onto fresh session ids.
-          const restoredInfos: PtySessionInfo[] = [];
-          const idMap: Record<string, string> = {};
-          for (const tab of persistedTabs) {
-            try {
-              const created = await ptySpawn({
-                profile: spawnProfileForRestorableTab(tab, initialProfile),
-              });
-              restoredInfos.push(created);
-              idMap[tab.sessionId] = created.id;
-            } catch (error) {
-              console.warn("failed to restore session", tab.sessionId, error);
-            }
-          }
-          if (restoredInfos.length > 0) {
-            const restoredIds = restoredInfos.map((info) => info.id);
-            const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(persistedTabs, (id) => idMap[id] ?? null);
-            setSessions(restoredInfos);
-            setSessionStatus(
-              restoredInfos.reduce<Record<string, SessionStatus>>((acc, info) => {
-                acc[info.id] = "running";
-                return acc;
-              }, {}),
-            );
-            bootstrapSessionChat(restoredIds, chatKeys);
-            if (Object.keys(names).length > 0) {
-              setSessionNames(names);
-            }
-            if (Object.keys(modes).length > 0) {
-              setSessionInputModes(modes);
-            }
-            const remappedSnapshot = JSON.stringify(remapLayoutToSnapshot(fromDisk!, idMap));
-            setWorkspace((current) => {
-              const restored = restoreWorkspaceFromSnapshot(remappedSnapshot, restoredIds, current);
-              const layout = activeGroupLayout(restored);
-              const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId);
-              if (activePane?.sessionId) {
-                return restored;
-              }
-              return setPaneSession(restored, layout.activePaneId, restoredInfos[0].id);
-            });
-          } else {
-            const created = await ptySpawn({ profile: initialProfile });
-            setSessions([created]);
-            bootstrapSessionChat([created.id], {});
-            setWorkspace((current) => {
-              const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
-              const layout = activeGroupLayout(restored);
-              return setPaneSession(restored, layout.activePaneId, created.id);
-            });
-          }
-        } else {
-          const created = await ptySpawn({ profile: initialProfile });
-          setSessions([created]);
-          bootstrapSessionChat([created.id], {});
-          setWorkspace((current) => {
-            const restored = restoreWorkspaceFromSnapshot(storedWorkspace, [created.id], current);
-            const layout = activeGroupLayout(restored);
-            return setPaneSession(restored, layout.activePaneId, created.id);
-          });
-        }
-        const initialHistory = await historyQuery({ limit: HISTORY_UI_LIMIT });
-        setHistoryEntries(initialHistory);
-        const recoveryNotice = await historyRecoveryTake();
-        if (recoveryNotice) {
-          setRecoveryBanner(recoveryNotice);
-        }
-        const metrics = await runtimeMetricsSnapshot();
-        setRuntimeMetrics(metrics);
-        prefetchShellCandidates();
-        void loadShellCandidates().then(setDetectedShells);
-        void fetchShellPresets().then(setShellPresets);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load runtime capabilities.";
-        setRuntimeError(message);
-        setHistoryError(message);
-      } finally {
-        layoutPersistBootstrappedRef.current = true;
-        setHistoryLoading(false);
-      }
-    };
-
-    void loadCapabilities();
-  }, []);
+  sessionBootCallbacksRef.current = {
+    setHistoryLoading,
+    setHistoryError,
+    setCapabilities,
+    initializeProviderAiState,
+    setTerminalFontSize,
+    setMinimalShellPrompt,
+    setShowComposerAssistMetrics,
+    setCachedProfile: (profile) => {
+      cachedProfileRef.current = profile;
+    },
+    setSessions,
+    setSessionStatus,
+    setSessionNames,
+    setSessionInputModes,
+    setSessionSpawnArgs,
+    setWorkspace,
+    bootstrapSessionChat,
+    setHistoryEntries,
+    setRecoveryBanner,
+    setRuntimeMetrics,
+    setRuntimeError,
+    setDetectedShells,
+    setShellPresets,
+    recordSpawnArgs,
+    onBootstrapped: () => {
+      layoutPersistBootstrappedRef.current = true;
+    },
+  };
+  useSessionBoot(sessionBootCallbacksRef);
 
   useEffect(() => {
     if (!recoveryBanner) {
@@ -899,6 +766,7 @@ function App() {
         sessionNames,
         sessionInputModes,
         sessionChatKeys,
+        sessionSpawnArgs,
       );
       const layout = workspaceLayoutFromState(workspace, restorable);
       void workspaceLayoutSet(layout).catch((error) => {
@@ -906,7 +774,7 @@ function App() {
       });
     }, WORKSPACE_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, sessionsById]);
+  }, [workspace, sessions, sessionCwd, sessionNames, sessionInputModes, sessionChatKeys, sessionSpawnArgs, sessionsById]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -986,108 +854,20 @@ function App() {
   }, [flushPersistedState]);
 
   useEffect(() => {
-    let outputUnlisten: (() => void) | undefined;
     let lifecycleUnlisten: (() => void) | undefined;
     let cwdUnlisten: (() => void) | undefined;
     let markerUnlisten: (() => void) | undefined;
     let contextUnlisten: (() => void) | undefined;
 
-    let visibilityCleanup: (() => void) | undefined;
-
     const bindEvents = async () => {
-      const flushPendingOutput = () => {
-        const updates: Record<string, string> = {};
-        let hadRemainder = false;
-
-        for (const [sessionId, chunks] of Object.entries(pendingOutputRef.current)) {
-          if (chunks.length === 0) {
-            delete pendingOutputRef.current[sessionId];
-            continue;
-          }
-          const { merged, rest } = drainChunksUpToByteBudget(chunks, MAX_PTY_FLUSH_BYTES_PER_FRAME);
-          if (merged.length > 0) {
-            updates[sessionId] = merged;
-          }
-          if (rest.length > 0) {
-            pendingOutputRef.current[sessionId] = rest;
-            hadRemainder = true;
-          } else {
-            delete pendingOutputRef.current[sessionId];
-          }
-        }
-
-        if (Object.keys(updates).length > 0) {
-          setSessionBuffers((current) => {
-            const next = { ...current };
-            for (const [sessionId, merged] of Object.entries(updates)) {
-              next[sessionId] = appendBoundedOutput(next[sessionId] ?? "", merged);
-            }
-            return next;
-          });
-        }
-
-        if (hadRemainder) {
-          rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
-        } else {
-          rafFlushRef.current = null;
-        }
-      };
-
-      const kickOutputFlush = () => {
-        if (document.visibilityState === "hidden") {
-          return;
-        }
-        const hasPending = Object.values(pendingOutputRef.current).some((chunks) => chunks.length > 0);
-        if (!hasPending || rafFlushRef.current !== null) {
-          return;
-        }
-        rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
-      };
-
-      document.addEventListener("visibilitychange", kickOutputFlush);
-      window.addEventListener("focus", kickOutputFlush);
-      visibilityCleanup = () => {
-        document.removeEventListener("visibilitychange", kickOutputFlush);
-        window.removeEventListener("focus", kickOutputFlush);
-      };
-
-      outputUnlisten = await onPtyOutput((event) => {
-        const previousSequence = lastSequenceRef.current[event.session_id];
-        const seq = nextSequenceState(previousSequence, event.sequence);
-        lastSequenceRef.current[event.session_id] = seq.next;
-        if (seq.status === "duplicate") {
-          return;
-        }
-        if (seq.status === "gap") {
-          setRuntimeError(
-            `Output sequence anomaly for ${event.session_id}: previous=${String(previousSequence)}, got ${event.sequence} (rewind, or jump >${SEQUENCE_LARGE_JUMP})`,
-          );
-        } else if (seq.status === "resync" && import.meta.env.DEV) {
-          console.debug(
-            "[pty-output] sequence resync",
-            event.session_id,
-            "incoming=",
-            event.sequence,
-            "newBaseline=",
-            seq.next,
-          );
-        }
-
-        if (!pendingOutputRef.current[event.session_id]) {
-          pendingOutputRef.current[event.session_id] = [];
-        }
-        pendingOutputRef.current[event.session_id].push(event.data);
-
-        if (rafFlushRef.current === null) {
-          rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
-        }
-      });
-
       lifecycleUnlisten = await onPtyLifecycle((event: PtyLifecycleEvent) => {
         const sid = event.session_id;
         if (event.status === "running") {
+          // Reset sequence baseline for a fresh run, but do NOT clear pending output:
+          // with the raw-bytes channel, PTY chunks often arrive before this lifecycle
+          // event (especially on multi-tab cold restore). Clearing pending here was
+          // wiping shell prompts that already landed.
           delete lastSequenceRef.current[sid];
-          delete pendingOutputRef.current[sid];
           setSessionExited((current) => clearExitedInfo(current, sid));
         }
 
@@ -1192,11 +972,6 @@ function App() {
     void bindEvents();
 
     return () => {
-      visibilityCleanup?.();
-      if (rafFlushRef.current !== null) {
-        window.cancelAnimationFrame(rafFlushRef.current);
-      }
-      outputUnlisten?.();
       lifecycleUnlisten?.();
       cwdUnlisten?.();
       markerUnlisten?.();
@@ -1313,6 +1088,7 @@ function App() {
         spawnProfile = { ...spawnProfile, cwd: cwdOverride };
       }
       const created = await ptySpawn({ profile: spawnProfile });
+      recordSpawnArgs(created.id, spawnProfile);
       setSessions((current) => {
         const next = current.some((session) => session.id === created.id) ? current : [...current, created];
         const priorSessionIds = current.map((session) => session.id);
@@ -1326,7 +1102,7 @@ function App() {
     } finally {
       createSessionInFlightRef.current = false;
     }
-  }, [ensureChatKey]);
+  }, [ensureChatKey, recordSpawnArgs]);
 
   const openNewTabPicker = useCallback(() => {
     setNewTabPickerOpen(true);
@@ -1429,6 +1205,16 @@ function App() {
       delete nextThrottle[sessionId];
       resizeThrottleRef.current = nextThrottle;
     }
+    delete pendingOutputRef.current[sessionId];
+    delete lastSequenceRef.current[sessionId];
+    setSessionSpawnArgs((current) => {
+      if (!(sessionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
     setSessionUiSurface((current) => {
       const next = { ...current };
       delete next[sessionId];
@@ -1501,6 +1287,7 @@ function App() {
         setTerminalFontSize(profile.font_size);
         const displacedId = displacedSessionIdForSplitCap(persistSnapshotRef.current.workspace);
         const created = await ptySpawn({ profile });
+        recordSpawnArgs(created.id, profile);
         setSessions((current) => {
           const withoutDisplaced = displacedId ? current.filter((session) => session.id !== displacedId) : current;
           const next = withoutDisplaced.some((session) => session.id === created.id)
@@ -1532,7 +1319,7 @@ function App() {
         splitSessionInFlightRef.current = false;
       }
     },
-    [clearSessionFromUiState, ensureChatKey],
+    [clearSessionFromUiState, ensureChatKey, recordSpawnArgs],
   );
 
   const closeTabGroup = useCallback(
@@ -2324,6 +2111,14 @@ function App() {
   useEffect(() => {
     focusGroupComposerRef.current = groupComposer.focusComposerInput;
   }, [groupComposer.focusComposerInput]);
+
+  useWorkspaceFocus({
+    activeGroupId: workspace.activeGroupId,
+    activePaneId: activeLayout.activePaneId,
+    activeSessionId,
+    sessionInputModes,
+    focusGroupComposer: () => focusGroupComposerRef.current?.(),
+  });
 
   const handleGroupComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

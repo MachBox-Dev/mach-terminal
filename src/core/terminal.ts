@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { WorkspaceLayout } from "../state/workspace";
 import type { ProviderDescriptor, ProviderSettings } from "./providers";
@@ -678,8 +678,97 @@ export async function aiExecute(request: AiExecuteRequest) {
   return aiExecuteResponseFromWire(response);
 }
 
-export function onPtyOutput(handler: (event: PtyOutputEvent) => void): Promise<UnlistenFn> {
-  return listen<PtyOutputEvent>("pty-output", ({ payload }) => handler(payload));
+/** Max frames buffered when output arrives before the UI handler is wired (boot race). */
+const PTY_OUTPUT_PREHANDLER_BACKLOG = 512;
+
+type PtyOutputHandler = (event: PtyOutputEvent) => void;
+
+let ptyOutputHandler: PtyOutputHandler | null = null;
+let ptyOutputSubscribePromise: Promise<void> | null = null;
+const ptyOutputSequenceBySession: Record<string, number> = {};
+const ptyOutputPreHandlerBacklog: PtyOutputEvent[] = [];
+const ptyOutputFrameDecoder = new TextDecoder();
+
+function parsePtyOutputFrame(message: unknown): PtyOutputEvent | null {
+  // The channel may surface the raw payload as an ArrayBuffer or a Uint8Array
+  // view; normalize to a fresh Uint8Array (respects any byteOffset) either way.
+  const bytes = new Uint8Array(message as ArrayBuffer);
+  if (bytes.byteLength < 2) {
+    return null;
+  }
+  const idLength = bytes[0] | (bytes[1] << 8);
+  if (idLength > bytes.byteLength - 2) {
+    return null;
+  }
+  const sessionId = ptyOutputFrameDecoder.decode(bytes.subarray(2, 2 + idLength));
+  const data = ptyOutputFrameDecoder.decode(bytes.subarray(2 + idLength));
+  const sequence = (ptyOutputSequenceBySession[sessionId] =
+    (ptyOutputSequenceBySession[sessionId] ?? 0) + 1);
+  return { session_id: sessionId, data, sequence };
+}
+
+function deliverPtyOutputEvent(event: PtyOutputEvent): void {
+  const handler = ptyOutputHandler;
+  if (handler) {
+    handler(event);
+    return;
+  }
+  if (ptyOutputPreHandlerBacklog.length < PTY_OUTPUT_PREHANDLER_BACKLOG) {
+    ptyOutputPreHandlerBacklog.push(event);
+  }
+}
+
+function setPtyOutputHandler(handler: PtyOutputHandler | null): void {
+  ptyOutputHandler = handler;
+  if (!handler || ptyOutputPreHandlerBacklog.length === 0) {
+    return;
+  }
+  const backlog = ptyOutputPreHandlerBacklog.splice(0);
+  for (const event of backlog) {
+    handler(event);
+  }
+}
+
+/**
+ * Register the raw-bytes PTY output channel once. Safe to call from boot before
+ * `onPtyOutput` wires the handler — frames that arrive early are backlog-buffered
+ * and replayed when the handler is attached.
+ */
+export function ensurePtyOutputSubscribed(): Promise<void> {
+  if (ptyOutputSubscribePromise) {
+    return ptyOutputSubscribePromise;
+  }
+  ptyOutputSubscribePromise = (async () => {
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (message) => {
+      const event = parsePtyOutputFrame(message);
+      if (event) {
+        deliverPtyOutputEvent(event);
+      }
+    };
+    await invoke<void>("pty_subscribe_output", { onOutput: channel });
+  })().catch((error) => {
+    ptyOutputSubscribePromise = null;
+    throw error;
+  });
+  return ptyOutputSubscribePromise;
+}
+
+/**
+ * Subscribe to streamed PTY output over a Tauri `Channel` of raw bytes instead of
+ * the (JSON-serializing, not-built-for-throughput) event system. The backend frames
+ * each chunk as `[u16 LE session_id length][session_id utf8][chunk utf8]` and the
+ * channel guarantees ordered delivery, so we synthesize a per-session monotonic
+ * sequence to keep the downstream coalescing/anomaly contract (`nextSequenceState`)
+ * unchanged — callers still receive the exact `PtyOutputEvent` shape.
+ */
+export function onPtyOutput(handler: PtyOutputHandler): Promise<UnlistenFn> {
+  setPtyOutputHandler(handler);
+  return ensurePtyOutputSubscribed().then(() => () => {
+    if (ptyOutputHandler === handler) {
+      setPtyOutputHandler(null);
+    }
+  });
 }
 
 export function onPtyLifecycle(handler: (event: PtyLifecycleEvent) => void): Promise<UnlistenFn> {
