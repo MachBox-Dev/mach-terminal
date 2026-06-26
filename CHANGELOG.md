@@ -4,6 +4,17 @@ All notable changes to Mach Terminal are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **TER-37:** Unified session registry (`sessionRegistry.ts`) — `pruneAllSessionScopedState` / `removeSessionFromRegistry` for all per-session maps and transient PTY refs.
+- **TER-39:** PTY scrollback store (`sessionBufferStore.ts`, `useSessionBuffer`) — scrollback off React state; panes subscribe per session.
+- **TER-29–36 (UX audit):** Command palette WAI-ARIA combobox + focus trap; titlebar tab scroll; global focus-visible rings; tab rename F2; design token cleanup; titlebar menu keyboard nav; focus-vs-target coach mark.
+- Linear audit scripts (`linear-create-ux-audit.mjs`, `linear-create-foundation-audit.mjs`).
+
+### Fixed
+
+- **Workspace split/tab:** Split inherits active pane shell/cwd; append-only `addNewSessionTab`; functional `setWorkspace` for split/new-tab; solo-tab `exit` closes tab; tab X uses fresh workspace ref; `reconcileWorkspaceInPlace` on session removal (no orphan-tab explosion).
+
 ## [0.1.0-rc.9] - 2026-06-25
 
 ### Added

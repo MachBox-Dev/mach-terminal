@@ -10,8 +10,8 @@ mach-terminal/
 │   ├── App.css           # All app styling (hand-rolled)
 │   ├── components/       # Presentational + interactive UI (.tsx) + their smoke tests
 │   ├── core/             # PURE logic + the IPC bridge (terminal.ts). Heavily unit-tested
-│   ├── hooks/            # React hooks (useProviderAiState, useGroupComposer, usePtyOutputStream, useSessionBoot, useWorkspaceFocus)
-│   └── state/            # workspace.ts + splitTree.ts: tab groups + binary split layout
+│   ├── hooks/            # React hooks (useProviderAiState, useGroupComposer, usePtyOutputStream, useSessionBoot, useWorkspaceFocus, useSessionBuffer)
+│   └── state/            # workspace.ts, splitTree.ts, sessionRegistry.ts, sessionBufferStore.ts
 ├── src-tauri/            # Rust backend (Tauri)
 │   ├── src/              # Backend modules (see below)
 │   ├── tests/            # Cargo integration tests (pty_behavior, provider_host_behavior, invoke smoke)

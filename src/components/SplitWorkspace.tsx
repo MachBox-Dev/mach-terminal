@@ -13,7 +13,6 @@ import { findPane } from "../state/splitTree";
 interface SplitWorkspaceProps {
   layout: GroupLayoutSnapshot;
   sessionsById: Record<string, PtySessionInfo>;
-  sessionBuffers: Record<string, string>;
   sessionStatuses: Record<string, SessionStatus>;
   sessionMessages: Record<string, string | undefined>;
   sessionExited: Record<string, SessionExitedInfo>;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSessionBuffer } from "../hooks/useSessionBuffer";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { FOCUS_ACTIVE_TERMINAL_EVENT } from "../core/workspaceFocus";
 import { PTY_OUTPUT_MAX_FLUSH_LATENCY_MS } from "../core/ptyOutputFlushSchedule";
@@ -135,7 +136,6 @@ export function clampContextMenuPosition(args: {
 
 interface TerminalSurfaceProps {
   activeSession?: PtySessionInfo;
-  activeBuffer: string;
   activeStatus: SessionStatus;
   activeMessage?: string;
   /** When set, the session this pane is wired to has exited and the overlay should render. */
@@ -187,7 +187,6 @@ interface TerminalSurfaceProps {
 
 export function TerminalSurface({
   activeSession,
-  activeBuffer,
   activeStatus,
   activeMessage,
   exitedInfo = null,
@@ -218,6 +217,7 @@ export function TerminalSurface({
   onRequestRestartSession,
   onRequestCloseSession,
 }: TerminalSurfaceProps) {
+  const activeBuffer = useSessionBuffer(activeSession?.id);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);

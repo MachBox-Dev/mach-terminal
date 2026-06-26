@@ -37,6 +37,10 @@ interface MachStatusStripProps {
   onToggleComposerSubmitKind?: () => void;
   /** Canonical terminal interaction state for this pane/session. */
   uiSurfaceState?: UiSurfaceState | null;
+  /** Multi-pane focus index (1-based) for the active tab group. */
+  focusPaneIndex?: number | null;
+  /** Multi-pane composer target index (1-based) for the active tab group. */
+  targetPaneIndex?: number | null;
 }
 
 export function MachStatusStrip({
@@ -47,6 +51,8 @@ export function MachStatusStrip({
   composerSubmitKind = null,
   onToggleComposerSubmitKind,
   uiSurfaceState = null,
+  focusPaneIndex = null,
+  targetPaneIndex = null,
 }: MachStatusStripProps) {
   const [settings, setSettings] = useState<StatusStripSettings>(() => loadStatusStripSettings());
   const [shellCtx, setShellCtx] = useState<ShellContextSnapshot | null>(null);
@@ -158,6 +164,14 @@ export function MachStatusStrip({
           >
             {composerSubmitKindLabel(composerSubmitKind)}
           </button>
+        ) : null}
+        {focusPaneIndex != null && targetPaneIndex != null ? (
+          <span
+            className="mach-status-chip mach-status-chip-muted"
+            title="Keyboard focus pane versus composer target pane"
+          >
+            Focus {focusPaneIndex} · Target {targetPaneIndex}
+          </span>
         ) : null}
         {settings.showShell && shellLabel ? (
           <span className="mach-status-chip mach-status-chip-muted" title={shellExe ?? undefined}>

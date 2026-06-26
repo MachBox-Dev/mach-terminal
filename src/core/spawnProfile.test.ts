@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { spawnProfileFromShellSelection } from "./spawnProfile";
-import type { TerminalProfile } from "./terminal";
+import { spawnProfileForLiveSession, spawnProfileFromShellSelection } from "./spawnProfile";
+import type { PtySessionInfo, TerminalProfile } from "./terminal";
 
 describe("spawnProfileFromShellSelection", () => {
   const base: TerminalProfile = {
@@ -42,5 +42,42 @@ describe("spawnProfileFromShellSelection", () => {
     });
     expect(profile.shell).toBeUndefined();
     expect(profile.args).toBeUndefined();
+  });
+});
+
+describe("spawnProfileForLiveSession", () => {
+  const base: TerminalProfile = {
+    shell: "pwsh.exe",
+    args: ["-NoLogo"],
+    cwd: "C:\\Users\\me",
+    env: {},
+    font_size: 14,
+    minimal_shell_prompt: true,
+  };
+
+  const session: PtySessionInfo = {
+    id: "session-1",
+    shell: "wsl.exe",
+    cwd: "/home/me",
+    status: "running",
+  };
+
+  it("inherits shell, spawn args, and cwd from the live session", () => {
+    const profile = spawnProfileForLiveSession(
+      base,
+      session,
+      { "session-1": ["-d", "Ubuntu"] },
+      { "session-1": "/home/me/projects" },
+    );
+    expect(profile.shell).toBe("wsl.exe");
+    expect(profile.args).toEqual(["-d", "Ubuntu"]);
+    expect(profile.cwd).toBe("/home/me/projects");
+  });
+
+  it("falls back to profile shell and session cwd when maps are empty", () => {
+    const profile = spawnProfileForLiveSession(base, session, {}, {});
+    expect(profile.shell).toBe("wsl.exe");
+    expect(profile.args).toEqual(["-NoLogo"]);
+    expect(profile.cwd).toBe("/home/me");
   });
 });

@@ -18,15 +18,12 @@ import { APP_COMMANDS, DEV_PALETTE_COMMANDS, type AppCommandId } from "./core/co
 import {
   clearExitedInfo,
   deriveExitedInfo,
-  pruneExitedForSessions,
   type SessionExitedInfo,
 } from "./core/sessionLifecycle";
 import { appendTerminalInputLine, isShellExitCommand } from "./core/shellExitCommand";
 import {
   applyCwdChange,
-  clearCwd,
   getRestartCwd,
-  pruneCwdForSessions,
   type SessionCwdMap,
 } from "./core/sessionCwd";
 import { collectExitedSessionIds } from "./core/sessionTabStatus";
@@ -142,7 +139,6 @@ import {
   appendChatMessage,
   attachmentBlockForContext,
   createChatMessageId,
-  pruneAiChatForSessions,
   type AiChatState,
   type AiContextAttachment,
 } from "./core/aiChatState";
@@ -169,7 +165,7 @@ import {
 import { isAiAssistReady } from "./core/providerUiState";
 import { historyAiContract, useProviderAiState } from "./hooks/useProviderAiState";
 import { HISTORY_UI_LIMIT, prependHistoryEntry } from "./core/historySync";
-import { spawnProfileFromShellSelection, type ShellSpawnSelection } from "./core/spawnProfile";
+import { spawnProfileFromShellSelection, spawnProfileForLiveSession, type ShellSpawnSelection } from "./core/spawnProfile";
 import {
   fetchShellPresets,
   parseShellPresetPaletteId,
@@ -185,12 +181,17 @@ import {
 import { isTauri } from "./core/tauriRuntime";
 import {
   appendCommandSubmitted,
-  removeSessionRuns,
   serializePinnedMap,
   toggleRunPin,
   type RunLedgerState,
   type RunRecord,
 } from "./core/runLedger";
+import { sessionBufferStore } from "./state/sessionBufferStore";
+import {
+  pruneAllSessionScopedState,
+  removeSessionFromRegistry,
+  type SessionRegistryContext,
+} from "./state/sessionRegistry";
 
 const MAX_SESSION_BUFFER = 120_000;
 const RESIZE_THROTTLE_MS = 100;
@@ -218,9 +219,10 @@ function App() {
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetricsSnapshot | null>(null);
   const [sessions, setSessions] = useState<PtySessionInfo[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceState>(createWorkspaceState);
-  const [sessionBuffers, setSessionBuffers] = useState<Record<string, string>>({});
-  const sessionBuffersRef = useRef(sessionBuffers);
-  sessionBuffersRef.current = sessionBuffers;
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const composerDraftRef = useRef("");
   const createSessionInFlightRef = useRef(false);
   const cachedProfileRef = useRef<TerminalProfile | null>(null);
@@ -228,6 +230,7 @@ function App() {
   const lastPaneSplitAtRef = useRef(0);
   const focusGroupComposerRef = useRef<(() => void) | null>(null);
   const closePaneByIdRef = useRef<(paneId: string) => Promise<void>>(async () => {});
+  const closeTabGroupRef = useRef<(groupId: string) => Promise<void>>(async () => {});
   const sessionCommandLineRef = useRef<Record<string, string>>({});
   const [runLedger, setRunLedger] = useState<RunLedgerState>({});
   const runLedgerRef = useRef(runLedger);
@@ -270,6 +273,8 @@ function App() {
   const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
   const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [renameRequestSessionId, setRenameRequestSessionId] = useState<string | null>(null);
+  const handleRenameRequestHandled = useCallback(() => setRenameRequestSessionId(null), []);
   /** Spawn-time shell args per session (WSL distros, login flags, etc.) for restore. */
   const [sessionSpawnArgs, setSessionSpawnArgs] = useState<Record<string, string[]>>({});
   const [shellPresets, setShellPresets] = useState<ShellPreset[]>([]);
@@ -355,9 +360,35 @@ function App() {
 
   const { pendingOutputRef, lastSequenceRef } = usePtyOutputStream({
     maxSessionBuffer: MAX_SESSION_BUFFER,
-    setSessionBuffers,
     setRuntimeError,
   });
+
+  const sessionRegistryRef = useRef<SessionRegistryContext>(null!);
+  sessionRegistryRef.current = {
+    setters: {
+      setRunLedger,
+      setSessionStatus,
+      setSessionMessages,
+      setSessionExited,
+      setSessionCwd,
+      setSessionNames,
+      setSessionInputModes,
+      setComposerSubmitKinds,
+      setSessionCommandFailures,
+      setAiChatState,
+      setSessionChatKeys,
+      setAiPendingAttachments,
+      setSessionSpawnArgs,
+      setSessionUiSurface,
+      setSessionOsc133Hints,
+    },
+    transientRefs: {
+      pendingOutputRef,
+      lastSequenceRef,
+      resizeThrottleRef,
+      sessionCommandLineRef,
+    },
+  };
 
   const activeLayout = useMemo(() => activeGroupLayout(workspace), [workspace]);
 
@@ -417,14 +448,14 @@ function App() {
       return undefined;
     }
     const cwd = sessionCwd[activeSession.id] ?? activeSession.cwd ?? undefined;
-    const rawBuffer = sessionBuffers[activeSession.id] ?? "";
+    const rawBuffer = sessionBufferStore.get(activeSession.id);
     const output_excerpt = trimAiContextExcerpt(rawBuffer);
     return {
       cwd,
       shell: activeSession.shell ?? undefined,
       output_excerpt,
     };
-  }, [activeSession, sessionBuffers, sessionCwd]);
+  }, [activeSession, sessionCwd]);
 
   const openAiRail = useCallback(() => {
     setSideRailTab("ai");
@@ -609,8 +640,8 @@ function App() {
     buildAiPromptContext,
     buildAiToolContext: (sessionId: string) => ({
       sessionId,
-      runLedger,
-      sessionBuffers,
+      runLedger: runLedgerRef.current,
+      sessionBuffers: sessionBufferStore.getAll(),
     }),
     enableAiTools: aiBehaviorSettings.enableAiTools,
     onAiAssistantReply: ({ output, sessionId }) => {
@@ -881,14 +912,16 @@ function App() {
         if (exitedInfo) {
           delete pendingOutputRef.current[sid];
           delete lastSequenceRef.current[sid];
-          const host = findSessionPaneHost(persistSnapshotRef.current.workspace, sid);
-          const autoClosePane = Boolean(host && host.paneCount > 1);
-          if (!autoClosePane) {
+          const host = findSessionPaneHost(workspaceRef.current, sid);
+          if (!host) {
             setSessionExited((current) => ({ ...current, [sid]: exitedInfo }));
-          }
-          if (autoClosePane && host) {
+          } else {
             queueMicrotask(() => {
-              void closePaneByIdRef.current(host.paneId);
+              if (host.paneCount > 1) {
+                void closePaneByIdRef.current(host.paneId);
+              } else {
+                void closeTabGroupRef.current(host.groupId);
+              }
             });
           }
         }
@@ -945,7 +978,7 @@ function App() {
           return;
         }
         const sid = event.session_id;
-        const bufLen = sessionBuffersRef.current[sid]?.length ?? 0;
+        const bufLen = sessionBufferStore.get(sid).length;
         setRunLedger((ledger) =>
           appendCommandSubmitted(ledger, {
             sessionId: sid,
@@ -981,87 +1014,7 @@ function App() {
 
   useEffect(() => {
     const aliveIds = sessions.map((session) => session.id);
-    setSessionExited((current) => pruneExitedForSessions(current, aliveIds));
-    setSessionCwd((current) => pruneCwdForSessions(current, aliveIds));
-    setSessionOsc133Hints((current) => {
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!aliveIds.includes(id)) {
-          delete next[id];
-        }
-      }
-      return next;
-    });
-    setSessionUiSurface((current) => {
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!aliveIds.includes(id)) {
-          delete next[id];
-        }
-      }
-      return next;
-    });
-    setSessionInputModes((current) => {
-      const alive = new Set(aliveIds);
-      let changed = false;
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-    setComposerSubmitKinds((current) => {
-      const alive = new Set(aliveIds);
-      let changed = false;
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-    setSessionCommandFailures((current) => {
-      const alive = new Set(aliveIds);
-      let changed = false;
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-    setAiChatState((current) => pruneAiChatForSessions(current, aliveIds));
-    setSessionChatKeys((current) => {
-      const alive = new Set(aliveIds);
-      let changed = false;
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-    setAiPendingAttachments((current) => {
-      const alive = new Set(aliveIds);
-      let changed = false;
-      const next = { ...current };
-      for (const id of Object.keys(next)) {
-        if (!alive.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
+    pruneAllSessionScopedState(aliveIds, sessionRegistryRef.current);
   }, [sessions]);
 
   /**
@@ -1089,10 +1042,13 @@ function App() {
       }
       const created = await ptySpawn({ profile: spawnProfile });
       recordSpawnArgs(created.id, spawnProfile);
-      setSessions((current) => {
-        const next = current.some((session) => session.id === created.id) ? current : [...current, created];
-        const priorSessionIds = current.map((session) => session.id);
-        setWorkspace((currentWorkspace) => addNewSessionTab(currentWorkspace, priorSessionIds, created.id));
+
+      setSessions((current) =>
+        current.some((session) => session.id === created.id) ? current : [...current, created],
+      );
+      setWorkspace((currentWorkspace) => {
+        const next = addNewSessionTab(currentWorkspace, [], created.id);
+        workspaceRef.current = next;
         return next;
       });
       setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
@@ -1120,114 +1076,16 @@ function App() {
   );
 
   const clearSessionFromUiState = useCallback((sessionId: string) => {
-    setSessions((current) => {
-      const nextSessions = current.filter((session) => session.id !== sessionId);
-      const nextSessionIds = nextSessions.map((session) => session.id);
-      setWorkspace((currentWorkspace) => removeSessionFromWorkspace(currentWorkspace, sessionId, nextSessionIds));
-      return nextSessions;
-    });
-    setSessionBuffers((current) => {
-      const next = { ...current };
-      delete next[sessionId];
+    const nextSessions = sessionsRef.current.filter((session) => session.id !== sessionId);
+    const nextSessionIds = nextSessions.map((session) => session.id);
+    sessionsRef.current = nextSessions;
+    setSessions(nextSessions);
+    setWorkspace((currentWorkspace) => {
+      const next = removeSessionFromWorkspace(currentWorkspace, sessionId, nextSessionIds);
+      workspaceRef.current = next;
       return next;
     });
-    setRunLedger((current) => removeSessionRuns(current, sessionId));
-    setSessionStatus((current) => {
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionMessages((current) => {
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionExited((current) => clearExitedInfo(current, sessionId));
-    setSessionCwd((current) => clearCwd(current, sessionId));
-    setSessionNames((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionInputModes((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setComposerSubmitKinds((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionCommandFailures((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setAiChatState((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionChatKeys((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setAiPendingAttachments((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    if (sessionId in resizeThrottleRef.current) {
-      const nextThrottle = { ...resizeThrottleRef.current };
-      delete nextThrottle[sessionId];
-      resizeThrottleRef.current = nextThrottle;
-    }
-    delete pendingOutputRef.current[sessionId];
-    delete lastSequenceRef.current[sessionId];
-    setSessionSpawnArgs((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionUiSurface((current) => {
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-    setSessionOsc133Hints((current) => {
-      if (!(sessionId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
+    removeSessionFromRegistry(sessionId, sessionRegistryRef.current);
   }, []);
 
   const updateSessionUiSurfaceState = useCallback((sessionId: string, patch: UiSurfaceStatePatch) => {
@@ -1282,23 +1140,52 @@ function App() {
       lastPaneSplitAtRef.current = now;
       splitSessionInFlightRef.current = true;
       try {
-        const profile = cachedProfileRef.current ?? (await profileGet());
-        cachedProfileRef.current = profile;
-        setTerminalFontSize(profile.font_size);
-        const displacedId = displacedSessionIdForSplitCap(persistSnapshotRef.current.workspace);
-        const created = await ptySpawn({ profile });
-        recordSpawnArgs(created.id, profile);
-        setSessions((current) => {
-          const withoutDisplaced = displacedId ? current.filter((session) => session.id !== displacedId) : current;
-          const next = withoutDisplaced.some((session) => session.id === created.id)
+        const snapshot = persistSnapshotRef.current;
+        const ws = workspaceRef.current;
+        const layout = activeGroupLayout(ws);
+        const paneToSplit =
+          layout.panes.find((pane) => pane.id === layout.targetPaneId) ??
+          layout.panes.find((pane) => pane.id === layout.activePaneId);
+        const sourceSession = paneToSplit?.sessionId
+          ? snapshot.sessionsById[paneToSplit.sessionId]
+          : undefined;
+
+        const baseProfile = cachedProfileRef.current ?? (await profileGet());
+        cachedProfileRef.current = baseProfile;
+        setTerminalFontSize(baseProfile.font_size);
+        const spawnProfile = sourceSession
+          ? spawnProfileForLiveSession(
+              baseProfile,
+              sourceSession,
+              snapshot.sessionSpawnArgs,
+              snapshot.sessionCwd,
+            )
+          : baseProfile;
+        const displacedId = displacedSessionIdForSplitCap(ws);
+        const created = await ptySpawn({ profile: spawnProfile });
+        recordSpawnArgs(created.id, spawnProfile);
+
+        const priorIds = sessionsRef.current.map((session) => session.id);
+        const nextSessionIds = [
+          ...priorIds.filter((id) => id !== displacedId),
+          ...(priorIds.includes(created.id) ? [] : [created.id]),
+        ];
+        const nextSessions = (() => {
+          const withoutDisplaced = displacedId
+            ? sessionsRef.current.filter((session) => session.id !== displacedId)
+            : sessionsRef.current;
+          return withoutDisplaced.some((session) => session.id === created.id)
             ? withoutDisplaced
             : [...withoutDisplaced, created];
-          const nextSessionIds = next.map((session) => session.id);
-          setWorkspace((currentWorkspace) => {
-            const split = splitWorkspaceForNewSession(currentWorkspace, created.id, splitDirection);
-            return reconcileWorkspaceAfterPaneSpawn(split, nextSessionIds);
-          });
-          return next;
+        })();
+        sessionsRef.current = nextSessions;
+        setSessions(nextSessions);
+
+        setWorkspace((currentWorkspace) => {
+          const split = splitWorkspaceForNewSession(currentWorkspace, created.id, splitDirection);
+          const reconciled = reconcileWorkspaceAfterPaneSpawn(split, nextSessionIds);
+          workspaceRef.current = reconciled;
+          return reconciled;
         });
         setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
         ensureChatKey(created.id);
@@ -1324,7 +1211,7 @@ function App() {
 
   const closeTabGroup = useCallback(
     async (groupId: string) => {
-      const group = workspace.groups.find((candidate) => candidate.id === groupId);
+      const group = workspaceRef.current.groups.find((candidate) => candidate.id === groupId);
       if (!group) {
         return;
       }
@@ -1333,7 +1220,7 @@ function App() {
         await closeSession(sessionId);
       }
     },
-    [closeSession, workspace.groups],
+    [closeSession],
   );
 
   const handleInput = useCallback(async (sessionId: string, data: string) => {
@@ -1377,7 +1264,7 @@ function App() {
           void handleInput(sessionId, `${echo}\r`);
         }
       }
-      const scrollbackExcerpt = trimAiContextExcerpt(sessionBuffers[sessionId] ?? "");
+      const scrollbackExcerpt = trimAiContextExcerpt(sessionBufferStore.get(sessionId));
       const attachmentBlock =
         attachments.length > 0 ? attachmentBlockForContext(attachments) : undefined;
       const output_excerpt = mergeOutputExcerpts(scrollbackExcerpt, attachmentBlock);
@@ -1396,7 +1283,6 @@ function App() {
       openAiRail,
       routing.ai_context_budget_chars,
       runAiPromptWithText,
-      sessionBuffers,
     ],
   );
 
@@ -1408,15 +1294,12 @@ function App() {
       }
       const runs = runLedger[sessionId] ?? [];
       const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
-      const excerpt = failureOutputExcerpt(sessionBuffers[sessionId] ?? "", lastRun);
+      const excerpt = failureOutputExcerpt(sessionBufferStore.get(sessionId), lastRun);
       const question = buildFailureAiQuestion(failure, excerpt);
       void submitAiChat(sessionId, question);
     },
-    [runLedger, sessionBuffers, sessionCommandFailures, submitAiChat],
+    [runLedger, sessionCommandFailures, submitAiChat],
   );
-
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
 
   const handleResize = useCallback(async (sessionId: string, cols: number, rows: number) => {
     if (!sessionsRef.current.some((session) => session.id === sessionId)) {
@@ -1629,7 +1512,9 @@ function App() {
         if (paneCount <= 1) {
           return current;
         }
-        return closePane(current, paneId);
+        const next = closePane(current, paneId);
+        workspaceRef.current = next;
+        return next;
       });
 
       if (sessionId) {
@@ -1644,39 +1529,36 @@ function App() {
     [closeSession, closeTabGroup],
   );
 
+  const closeSessionAfterShellExit = useCallback(
+    async (sessionId: string) => {
+      const host = findSessionPaneHost(workspaceRef.current, sessionId);
+      if (!host) {
+        return;
+      }
+      if (host.paneCount > 1) {
+        await closePaneById(host.paneId);
+        return;
+      }
+      await closeTabGroup(host.groupId);
+    },
+    [closePaneById, closeTabGroup],
+  );
+
   const closePaneForSession = useCallback(
     async (sessionId: string) => {
-      let paneId: string | null = null;
-      setWorkspace((current) => {
-        const host = findSessionPaneHost(current, sessionId);
-        if (host && host.paneCount > 1) {
-          paneId = host.paneId;
-        }
-        return current;
-      });
-      if (paneId) {
-        await closePaneById(paneId);
-      }
+      await closeSessionAfterShellExit(sessionId);
     },
-    [closePaneById],
+    [closeSessionAfterShellExit],
   );
 
   const closeComposerTargetPane = useCallback(async () => {
-    let paneId: string | null = null;
-    setWorkspace((current) => {
-      const layout = activeGroupLayout(current);
-      if (layout.panes.length <= 1) {
-        return current;
-      }
-      if (layout.panes.some((pane) => pane.id === layout.targetPaneId)) {
-        paneId = layout.targetPaneId;
-      }
-      return current;
-    });
-    if (paneId) {
-      await closePaneById(paneId);
+    const layout = activeGroupLayout(workspaceRef.current);
+    const targetPane = layout.panes.find((pane) => pane.id === layout.targetPaneId);
+    if (!targetPane?.sessionId) {
+      return;
     }
-  }, [closePaneById]);
+    await closeSessionAfterShellExit(targetPane.sessionId);
+  }, [closeSessionAfterShellExit]);
 
   const closePanesForBroadcastExit = useCallback(
     async (sessionIds: readonly string[]) => {
@@ -1716,7 +1598,8 @@ function App() {
 
   useEffect(() => {
     closePaneByIdRef.current = closePaneById;
-  }, [closePaneById]);
+    closeTabGroupRef.current = closeTabGroup;
+  }, [closePaneById, closeTabGroup]);
 
   const closeActivePane = useCallback(async () => {
     let paneId: string | null = null;
@@ -1849,6 +1732,11 @@ function App() {
           break;
         case "session.newWithProfile":
           openNewTabPicker();
+          break;
+        case "session.rename":
+          if (activeSessionId) {
+            setRenameRequestSessionId(activeSessionId);
+          }
           break;
         case "session.restart":
           await restartActiveSession();
@@ -2172,12 +2060,20 @@ function App() {
         tabs={
           <TabBar
             groups={tabBarGroups}
-            onSelect={(groupId) => setWorkspace((current) => selectTabGroup(current, groupId))}
+            onSelect={(groupId) =>
+              setWorkspace((current) => {
+                const next = selectTabGroup(current, groupId);
+                workspaceRef.current = next;
+                return next;
+              })
+            }
             onCreate={() => void createSession()}
             onCreateWithProfile={() => openNewTabPicker()}
             onClose={(groupId) => void closeTabGroup(groupId)}
             onRestartSession={(sessionId) => void restartSessionById(sessionId)}
             onRename={renameSession}
+            renameRequestSessionId={renameRequestSessionId}
+            onRenameRequestHandled={handleRenameRequestHandled}
           />
         }
       />
@@ -2202,7 +2098,6 @@ function App() {
           <SplitWorkspace
             layout={activeLayout}
             sessionsById={sessionsById}
-            sessionBuffers={sessionBuffers}
             sessionStatuses={sessionStatus}
             sessionMessages={sessionMessages}
             sessionExited={sessionExited}
@@ -2298,7 +2193,6 @@ function App() {
             filter={opsFilter}
             onFilterChange={setOpsFilter}
             entries={filteredRunsForOps}
-            scrollBuffer={activeSessionId ? sessionBuffers[activeSessionId] ?? "" : ""}
             selectedRunId={opsSelectedRunId}
             onSelectRun={setOpsSelectedRunId}
             onTogglePin={handleOpsTogglePin}

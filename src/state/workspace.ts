@@ -192,19 +192,15 @@ export function activeGroupLayout(state: WorkspaceState): GroupLayoutSnapshot {
 }
 
 function updateActiveGroup(state: WorkspaceState, updater: (group: TabGroup) => TabGroup): WorkspaceState {
-  const activeId = state.activeGroupId;
-  let found = false;
-  const groups = state.groups.map((group) => {
-    if (group.id !== activeId) {
-      return group;
-    }
-    found = true;
-    return updater(group);
-  });
-  if (!found && groups.length > 0) {
-    return { groups: [updater(groups[0]), ...groups.slice(1)], activeGroupId: groups[0].id };
+  let activeId = state.activeGroupId;
+  if (!state.groups.some((group) => group.id === activeId)) {
+    activeId = state.groups[0]?.id ?? activeId;
   }
-  return { ...state, groups };
+  if (!state.groups.some((group) => group.id === activeId)) {
+    return state;
+  }
+  const groups = state.groups.map((group) => (group.id === activeId ? updater(group) : group));
+  return { ...state, groups, activeGroupId: activeId };
 }
 
 function createSinglePaneGroup(sessionId: string | null = null, groupId = newTabGroupId()): TabGroup {
@@ -250,14 +246,13 @@ export function addGroupForSession(state: WorkspaceState, sessionId: string): Wo
   };
 }
 
-/** New top-level tab for a freshly spawned session (avoids reconcile + addGroup double-create). */
+/** New top-level tab for a freshly spawned session — append one group; do not reconcile orphans into tabs. */
 export function addNewSessionTab(
   state: WorkspaceState,
-  existingSessionIds: readonly string[],
+  _existingSessionIds: readonly string[],
   newSessionId: string,
 ): WorkspaceState {
-  const repaired = reconcileWorkspace(state, [...existingSessionIds]);
-  return addGroupForSession(repaired, newSessionId);
+  return addGroupForSession(state, newSessionId);
 }
 
 export function selectTabGroup(state: WorkspaceState, groupId: string): WorkspaceState {
@@ -515,6 +510,48 @@ function collectAssignedSessionIds(groups: readonly TabGroup[]): Set<string> {
     }
   }
   return assigned;
+}
+
+/** Session ids already bound to a pane anywhere in the workspace tree. */
+export function sessionIdsBoundInWorkspace(state: WorkspaceState): string[] {
+  return [...collectAssignedSessionIds(state.groups)];
+}
+
+/**
+ * Repair pane bindings and fill empty/split slots on existing tab groups only.
+ * Unlike {@link reconcileWorkspace}, never opens new top-level tabs for orphan sessions.
+ */
+export function reconcileWorkspaceInPlace(
+  state: WorkspaceState,
+  availableSessionIds: readonly string[],
+): WorkspaceState {
+  const available = new Set(availableSessionIds);
+  const activeGroupId =
+    state.groups.some((group) => group.id === state.activeGroupId)
+      ? state.activeGroupId
+      : (state.groups[0]?.id ?? createWorkspaceState().activeGroupId);
+
+  let groups =
+    state.groups.length > 0
+      ? state.groups.map((group) => reconcileGroup(group, available))
+      : createWorkspaceState().groups;
+
+  let assigned = collectAssignedSessionIds(groups);
+  let unassigned = availableSessionIds.filter((sessionId) => !assigned.has(sessionId));
+  if (unassigned.length > 0) {
+    const filled = assignUnassignedSessionsToEmptyPanes(groups, activeGroupId, unassigned);
+    groups = filled.groups;
+    unassigned = filled.remaining;
+    assigned = collectAssignedSessionIds(groups);
+  }
+
+  let next: WorkspaceState = { groups, activeGroupId };
+  if (unassigned.length > 0) {
+    const appended = appendUnassignedSessionsAsPanes(next, unassigned);
+    next = appended.state;
+  }
+
+  return finalizeReconciledWorkspace(next, available, activeGroupId);
 }
 
 export function splitWorkspaceForNewSession(
@@ -778,9 +815,16 @@ export function reconcileWorkspaceAfterPaneSpawn(
 
   let next: WorkspaceState = { groups, activeGroupId: state.activeGroupId };
   if (unassigned.length > 0) {
-    const appended = appendUnassignedSessionsAsPanes(next, unassigned);
-    next = appended.state;
-    unassigned = appended.remaining;
+    const active = getActiveGroup(next);
+    const boundOnActive = active ? new Set(collectSessionIds(active.layout)) : new Set<string>();
+    const toAppend = unassigned.filter((sessionId) => !boundOnActive.has(sessionId));
+    if (toAppend.length > 0) {
+      const appended = appendUnassignedSessionsAsPanes(next, toAppend);
+      next = appended.state;
+      unassigned = appended.remaining;
+    } else {
+      unassigned = [];
+    }
   }
 
   return finalizeReconciledWorkspace(next, available, state.activeGroupId);
@@ -840,7 +884,7 @@ export function removeSessionFromWorkspace(state: WorkspaceState, sessionId: str
     const primarySessionId = group.primarySessionId === sessionId ? "" : group.primarySessionId;
     return collapseGroupAfterSessionRemoval({ ...group, layout: cleared, primarySessionId });
   });
-  return reconcileWorkspace({ ...state, groups }, availableSessionIds.filter((candidate) => candidate !== sessionId));
+  return reconcileWorkspaceInPlace({ ...state, groups }, availableSessionIds.filter((candidate) => candidate !== sessionId));
 }
 
 function mapSessionsOnTree(node: SplitNode, sessionId: string): SplitNode {

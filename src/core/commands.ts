@@ -3,6 +3,7 @@ import type { PaletteCommand } from "../components/CommandPalette";
 export type AppCommandId =
   | "session.new"
   | "session.newWithProfile"
+  | "session.rename"
   | "session.restart"
   | "session.close"
   | "sessions.closeAllExited"
@@ -90,6 +91,12 @@ export const APP_COMMANDS: AppCommand[] = [
     id: "session.newWithProfile",
     label: "New tab with shell picker",
     description: "Choose shell and arguments before spawning (WSL distros, custom args).",
+  },
+  {
+    id: "session.rename",
+    label: "Rename active tab",
+    shortcut: "F2",
+    description: "Edit the custom name of the active tab (double-click also works).",
   },
   {
     id: "session.restart",

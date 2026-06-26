@@ -1,8 +1,10 @@
 import type { RefObject } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MachStatusStrip } from "./MachStatusStrip";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import type { SessionInputMode } from "../core/inputMode";
 import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
+import { dismissFocusTargetHint, shouldShowFocusTargetHint } from "../core/focusTargetHint";
 import { formatPaneFocusShortcut, formatPaneTargetShortcut } from "../core/keymap";
 import { isBroadcastArmed, type BroadcastMode, broadcastModeLabel } from "../core/broadcastMode";
 import type { PanePill } from "../hooks/useGroupComposer";
@@ -68,6 +70,22 @@ export function GroupComposer({
   shellExe = null,
   osc133Hint = null,
 }: GroupComposerViewProps) {
+  const [showFocusTargetHint, setShowFocusTargetHint] = useState(false);
+  const focusPaneIndex = useMemo(
+    () => panePills.find((pill) => pill.isActive)?.index ?? null,
+    [panePills],
+  );
+  const targetPaneIndex = useMemo(
+    () => panePills.find((pill) => pill.isTarget)?.index ?? null,
+    [panePills],
+  );
+
+  useEffect(() => {
+    if (panePills.length > 1 && shouldShowFocusTargetHint()) {
+      setShowFocusTargetHint(true);
+    }
+  }, [panePills.length]);
+
   if (!visible) {
     return null;
   }
@@ -81,10 +99,30 @@ export function GroupComposer({
         composerSubmitKind={composerSubmitKind}
         onToggleComposerSubmitKind={onToggleComposerSubmitKind}
         uiSurfaceState={{ followOutput: true, findOpen: false, findQuery: "" }}
+        focusPaneIndex={panePills.length > 1 ? focusPaneIndex : null}
+        targetPaneIndex={panePills.length > 1 ? targetPaneIndex : null}
       />
       {panePills.length > 1 ? (
         <>
-        <div className="group-composer-pane-legend" aria-hidden="true">
+        {showFocusTargetHint ? (
+          <div className="group-composer-focus-target-hint" role="note">
+            <p>
+              <strong>Focus</strong> is where the terminal and AI listen ({formatPaneFocusShortcut(1).replace("1", "N")}).
+              <strong> Target</strong> is where the composer sends Enter ({formatPaneTargetShortcut(1).replace("1", "N")}).
+            </p>
+            <button
+              type="button"
+              className="inline-btn ghost"
+              onClick={() => {
+                dismissFocusTargetHint();
+                setShowFocusTargetHint(false);
+              }}
+            >
+              Got it
+            </button>
+          </div>
+        ) : null}
+        <div className="group-composer-pane-legend" role="note" aria-label="Focus versus target legend">
           <span className="group-composer-legend-focus">
             <span className="group-composer-legend-swatch group-composer-legend-swatch-focus" />
             Focus — terminal / AI context ({formatPaneFocusShortcut(1).replace("1", "N")})

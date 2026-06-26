@@ -22,6 +22,8 @@ import {
   splitActivePane,
   bootstrapWorkspaceFromSessions,
   reconcileWorkspaceAfterPaneSpawn,
+  reconcileWorkspaceInPlace,
+  sessionIdsBoundInWorkspace,
   splitWorkspaceForNewSession,
   displacedSessionIdForSplitCap,
   inactivePaneSessionId,
@@ -191,6 +193,55 @@ describe("tab groups", () => {
     expect(workspace.activeGroupId).toBe(workspace.groups[1].id);
   });
 
+  it("addNewSessionTab after split keeps both panes in the first tab", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    workspace = splitWorkspaceForNewSession(workspace, "session-b", "column");
+    workspace = reconcileWorkspaceAfterPaneSpawn(workspace, ["session-a", "session-b"]);
+    const next = addNewSessionTab(workspace, ["session-a", "session-b"], "session-c");
+    expect(next.groups).toHaveLength(2);
+    expect(sessionIdsInGroup(next.groups[0]).sort()).toEqual(["session-a", "session-b"]);
+    expect(sessionIdsInGroup(next.groups[1])).toEqual(["session-c"]);
+    expect(next.activeGroupId).toBe(next.groups[1].id);
+  });
+
+  it("addNewSessionTab with stale session list keeps split pane bindings", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    workspace = splitWorkspaceForNewSession(workspace, "session-b", "column");
+    workspace = reconcileWorkspaceAfterPaneSpawn(workspace, ["session-a", "session-b"]);
+    const next = addNewSessionTab(workspace, ["session-a"], "session-c");
+    expect(next.groups).toHaveLength(2);
+    expect(sessionIdsInGroup(next.groups[0]).sort()).toEqual(["session-a", "session-b"]);
+    expect(sessionIdsInGroup(next.groups[1])).toEqual(["session-c"]);
+  });
+
+  it("simulates split then Ctrl+T without reconciling orphans into tabs", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    const split = splitWorkspaceForNewSession(workspace, "session-b", "column");
+    workspace = reconcileWorkspaceAfterPaneSpawn(split, ["session-a", "session-b"]);
+    workspace = addNewSessionTab(workspace, [], "session-c");
+    expect(workspace.groups).toHaveLength(2);
+    expect(sessionIdsInGroup(workspace.groups[0]).sort()).toEqual(["session-a", "session-b"]);
+    expect(sessionIdsInGroup(workspace.groups[1])).toEqual(["session-c"]);
+    expect(workspace.activeGroupId).toBe(workspace.groups[1].id);
+  });
+
+  it("sessionIdsBoundInWorkspace collects ids from split layout", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    workspace = splitWorkspaceForNewSession(workspace, "session-b", "column");
+    expect(sessionIdsBoundInWorkspace(workspace).sort()).toEqual(["session-a", "session-b"]);
+  });
+
+  it("reconcileWorkspaceInPlace never opens orphan top-level tabs", () => {
+    const empty: WorkspaceState = { groups: [], activeGroupId: "" };
+    const repaired = reconcileWorkspaceInPlace(empty, ["session-a", "session-b", "session-c"]);
+    expect(repaired.groups).toHaveLength(1);
+    expect(sessionIdsInGroup(repaired.groups[0]).sort()).toEqual(["session-a", "session-b", "session-c"]);
+  });
+
   it("reconcileWorkspace drops duplicate tab groups that host the same session", () => {
     let workspace = createWorkspaceState();
     workspace = setPaneSession(workspace, paneId(workspace), "session-a");
@@ -294,6 +345,22 @@ describe("tab groups", () => {
     expect(repaired.groups).toHaveLength(1);
     expect(sessionIdsInGroup(repaired.groups[0]).sort()).toEqual(["session-a", "session-b", "session-c"]);
     expect(layoutOf(repaired).panes.every((pane) => pane.sessionId)).toBe(true);
+  });
+
+  it("split on second tab stays in that tab without double-splitting tab zero", () => {
+    let workspace = createWorkspaceState();
+    workspace = setPaneSession(workspace, paneId(workspace), "session-a");
+    workspace = addGroupForSession(workspace, "session-b");
+    const secondTabId = workspace.groups[1].id;
+    workspace = selectTabGroup(workspace, secondTabId);
+    workspace = splitWorkspaceForNewSession(workspace, "session-c", "column");
+    workspace = reconcileWorkspaceAfterPaneSpawn(workspace, ["session-a", "session-b", "session-c"]);
+    expect(workspace.groups).toHaveLength(2);
+    expect(workspace.activeGroupId).toBe(secondTabId);
+    expect(sessionIdsInGroup(workspace.groups[0])).toEqual(["session-a"]);
+    expect(sessionIdsInGroup(workspace.groups[1]).sort()).toEqual(["session-b", "session-c"]);
+    expect(layoutOf(workspace).panes).toHaveLength(2);
+    expect(layoutOf(workspace).panes.every((pane) => pane.sessionId)).toBe(true);
   });
 
   it("prunes empty panes after reconcile", () => {

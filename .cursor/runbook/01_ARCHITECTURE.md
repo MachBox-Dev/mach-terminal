@@ -61,7 +61,8 @@ shell stdout → PTY reader thread (session_manager.rs)
   → sequence validation (ptyOutputCoalesce.ts: duplicate/gap/resync)
   → buffered in pendingOutputRef, flushed per requestAnimationFrame
      with a per-frame byte budget (MAX_PTY_FLUSH_BYTES_PER_FRAME=48k)
-  → sessionBuffers state → xterm.write() in TerminalSurface
+  → sessionBufferStore (ref-backed, outside React) → useSessionBuffer(sessionId)
+     in TerminalSurface → xterm.write() delta per pane (App does not re-render on output)
      (xterm renders via the WebGL addon (`@xterm/addon-webgl`); on GPU
       context-loss/init failure it disposes the addon and falls back to the
       DOM renderer transparently)

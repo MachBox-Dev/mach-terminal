@@ -20,7 +20,6 @@ import { isPaneLeaf, isSplitBranch, type SplitNode } from "../state/splitTree";
 interface PaneLayoutProps {
   layout: GroupLayoutSnapshot;
   sessionsById: Record<string, PtySessionInfo>;
-  sessionBuffers: Record<string, string>;
   sessionStatuses: Record<string, SessionStatus>;
   sessionMessages: Record<string, string | undefined>;
   sessionExited: Record<string, SessionExitedInfo>;
@@ -50,7 +49,6 @@ interface PaneLayoutProps {
 export function PaneLayout({
   layout,
   sessionsById,
-  sessionBuffers,
   sessionStatuses,
   sessionMessages,
   sessionExited,
@@ -80,7 +78,6 @@ export function PaneLayout({
 
   const renderPane = (paneId: string, sessionId: string | null): ReactNode => {
     const session = sessionId ? sessionsById[sessionId] : undefined;
-    const buffer = session ? sessionBuffers[session.id] ?? "" : "";
     const status = session ? sessionStatuses[session.id] ?? session.status : "idle";
     const message = session ? sessionMessages[session.id] : undefined;
     const exitedInfo = session ? sessionExited[session.id] ?? null : null;
@@ -126,7 +123,6 @@ export function PaneLayout({
         <div className="split-pane-body">
         <TerminalSurface
           activeSession={session}
-          activeBuffer={buffer}
           activeStatus={status}
           activeMessage={message}
           exitedInfo={exitedInfo}

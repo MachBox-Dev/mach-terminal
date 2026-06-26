@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { AiChatMessage, AiContextAttachment } from "../core/aiChatState";
 import type { RunRecord } from "../core/runLedger";
 import { sliceBufferForRun } from "../core/runLedger";
+import { sessionBufferStore } from "../state/sessionBufferStore";
 import { AiChatPanel, type SideRailTab } from "./AiChatPanel";
 
 export type OpsRailFilter = "all" | "pinned";
@@ -15,7 +16,6 @@ interface OpsRailProps {
   filter: OpsRailFilter;
   onFilterChange: (next: OpsRailFilter) => void;
   entries: RunRecord[];
-  scrollBuffer: string;
   selectedRunId: string | null;
   onSelectRun: (runId: string | null) => void;
   onTogglePin: (runId: string) => void;
@@ -41,7 +41,6 @@ export function OpsRail({
   filter,
   onFilterChange,
   entries,
-  scrollBuffer,
   selectedRunId,
   onSelectRun,
   onTogglePin,
@@ -61,12 +60,10 @@ export function OpsRail({
     void navigator.clipboard.writeText(text);
   }, []);
 
-  const copySlice = useCallback(
-    (run: RunRecord) => {
-      void navigator.clipboard.writeText(sliceBufferForRun(scrollBuffer, run));
-    },
-    [scrollBuffer],
-  );
+  const copySlice = useCallback((run: RunRecord) => {
+    const scrollBuffer = sessionBufferStore.get(run.sessionId);
+    void navigator.clipboard.writeText(sliceBufferForRun(scrollBuffer, run));
+  }, []);
 
   const expandToTab = (tab: SideRailTab) => {
     onTabChange(tab);

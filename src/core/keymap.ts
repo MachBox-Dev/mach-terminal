@@ -45,6 +45,7 @@ export function formatPaneTargetShortcut(paneIndex: number): string {
 
 export const DEFAULT_KEYMAP: ShortcutBinding[] = [
   { command: "session.new", key: "t", ...modifierFlags() },
+  { command: "session.rename", key: "F2" },
   { command: "pane.split", key: "\\", ...modifierFlags() },
   { command: "pane.split.row", key: "\\", shiftKey: true, ...modifierFlags() },
   { command: "pane.close", key: "w", ...modifierFlags() },
@@ -150,6 +151,7 @@ export const GLOBAL_SHORTCUT_COMMANDS: ReadonlySet<AppCommandId> = new Set([
   "palette.toggle",
   "session.new",
   "session.newWithProfile",
+  "session.rename",
   "ops.toggleRail",
   "pane.split",
   "pane.split.column",

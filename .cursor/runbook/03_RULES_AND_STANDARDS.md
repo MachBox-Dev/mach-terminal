@@ -79,7 +79,7 @@ Adding/altering a backend command or event:
 - **Composer-first input is intentional:** xterm has `disableStdin=true`. Do not "fix" the viewport to accept stdin — typing belongs in the composer. Focus follows the composer.
 - **Debug-only commands:** `runtime_debug_snapshot` and `settings_schema_dump` error unless built with debug assertions. Diagnostics UI only appears in `import.meta.env.DEV`.
 - **CSP is `null`** — the trust boundary is the Rust command surface, not the webview. Keep validating at the boundary.
-- **Per-session map leaks:** any new `Record<sessionId,...>` you add MUST be added to the prune effect, or you leak state for dead sessions.
+- **Per-session map leaks:** any new `Record<sessionId,...>` you add MUST be registered in `src/state/sessionRegistry.ts` (`SessionRegistrySetters` + `removeSessionFromRegistry` / `pruneAllSessionScopedState`). Do not add ad-hoc prune loops in `App.tsx`.
 - **Keymap vs input fields:** the global keydown handler bails when focus is in `INPUT`/`TEXTAREA`/contentEditable — terminal commands route through focused-pane intents, not raw global shortcuts, when typing. **Exception:** `pane.focus*` / `pane.target*` / split / close / broadcast still work from the group composer field.
 - **Multi-pane focus vs target:** `activePaneId` (Focus) and `targetPaneId` (Target) are **independent** in Operator mode. Focus hotkeys (`Ctrl+Alt+N` Win) must not retarget the composer; target hotkeys (`Ctrl+Alt+Shift+N` Win) must not move xterm focus. Composer `exit` closes the **target** pane only. `closePane` syncs both ids to the survivor.
 - **OSC 7 / OSC 133 are opt-in:** absence of these events is the expected steady state; never assume cwd/markers are present.

@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { decideTitleBarMenuKeyAction } from "../core/titleBarMenuKeyboard";
 import { isTauri } from "../core/tauriRuntime";
 
 export interface CustomTitleBarProps {
@@ -26,44 +27,107 @@ function TitleBarMenu({
 }: Required<Pick<CustomTitleBarProps, "onOpenSettings" | "onOpenDiagnostics" | "showDiagnostics">>) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const menuItems = useMemo(
+    () =>
+      [
+        { label: "Settings", action: onOpenSettings },
+        showDiagnostics ? { label: "Diagnostics", action: onOpenDiagnostics } : null,
+      ].filter((entry): entry is { label: string; action: () => void } => entry !== null),
+    [onOpenDiagnostics, onOpenSettings, showDiagnostics],
+  );
+
+  const closeMenu = useCallback((restoreFocus = true) => {
+    setOpen(false);
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) {
       return;
     }
+    const frame = window.requestAnimationFrame(() => {
+      itemRefs.current[0]?.focus();
+    });
     const onDocPointer = (event: MouseEvent | PointerEvent) => {
       const el = wrapRef.current;
       if (el && event.target instanceof Node && !el.contains(event.target)) {
-        setOpen(false);
+        closeMenu(false);
       }
     };
-    const onKey = (event: KeyboardEvent) => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        setOpen(false);
+        closeMenu(true);
       }
     };
     document.addEventListener("pointerdown", onDocPointer, true);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onDocPointer, true);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [closeMenu, open]);
 
   const run = (fn: () => void) => {
-    setOpen(false);
+    closeMenu(true);
     fn();
+  };
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = itemRefs.current.findIndex((element) => element === document.activeElement);
+    const decision = decideTitleBarMenuKeyAction({
+      key: event.key,
+      activeIndex: currentIndex,
+      itemCount: menuItems.length,
+    });
+    if (!decision?.handled) {
+      if (event.key === "Enter" || event.key === " ") {
+        const active = itemRefs.current[currentIndex];
+        if (active) {
+          event.preventDefault();
+          run(menuItems[currentIndex].action);
+        }
+      }
+      return;
+    }
+    event.preventDefault();
+    if (decision.shouldClose) {
+      closeMenu(true);
+      return;
+    }
+    itemRefs.current[decision.nextIndex]?.focus();
+    itemRefs.current.forEach((element, index) => {
+      if (element) {
+        element.tabIndex = index === decision.nextIndex ? 0 : -1;
+      }
+    });
   };
 
   return (
     <div ref={wrapRef} className="custom-titlebar-menu-wrap">
       <button
+        ref={triggerRef}
         type="button"
         className="custom-titlebar-menu-trigger custom-titlebar-logo-trigger"
         aria-label="Open app menu"
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((previous) => !previous)}
+        onKeyDown={(event) => {
+          if ((event.key === "Enter" || event.key === " ") && !open) {
+            event.preventDefault();
+            setOpen(true);
+          }
+          if (event.key === "ArrowDown" && !open) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
         <img
           src="/mach-terminal-logo.png"
@@ -75,20 +139,26 @@ function TitleBarMenu({
         />
       </button>
       {open ? (
-        <div className="custom-titlebar-menu-dropdown" role="menu">
-          <button type="button" className="custom-titlebar-menu-item" role="menuitem" onClick={() => run(onOpenSettings)}>
-            Settings
-          </button>
-          {showDiagnostics ? (
+        <div
+          className="custom-titlebar-menu-dropdown"
+          role="menu"
+          onKeyDown={onMenuKeyDown}
+        >
+          {menuItems.map((item, index) => (
             <button
+              key={item.label}
+              ref={(element) => {
+                itemRefs.current[index] = element;
+              }}
               type="button"
               className="custom-titlebar-menu-item"
               role="menuitem"
-              onClick={() => run(onOpenDiagnostics)}
+              tabIndex={index === 0 ? 0 : -1}
+              onClick={() => run(item.action)}
             >
-              Diagnostics
+              {item.label}
             </button>
-          ) : null}
+          ))}
         </div>
       ) : null}
     </div>

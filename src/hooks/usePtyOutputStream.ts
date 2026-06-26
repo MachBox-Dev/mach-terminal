@@ -1,4 +1,4 @@
-import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef } from "react";
 import {
   drainChunksUpToByteBudget,
   nextSequenceState,
@@ -10,30 +10,21 @@ import {
   shouldSkipVisibilityOutputKick,
 } from "../core/ptyOutputFlushSchedule";
 import { onPtyOutput } from "../core/terminal";
+import { sessionBufferStore } from "../state/sessionBufferStore";
 
 const MAX_PTY_FLUSH_BYTES_PER_FRAME = 48_000;
 
-function appendBoundedOutput(previous: string, nextChunk: string, maxBuffer: number): string {
-  const combined = `${previous}${nextChunk}`;
-  if (combined.length <= maxBuffer) {
-    return combined;
-  }
-  return combined.slice(combined.length - maxBuffer);
-}
-
 export interface UsePtyOutputStreamOptions {
   maxSessionBuffer: number;
-  setSessionBuffers: Dispatch<SetStateAction<Record<string, string>>>;
-  setRuntimeError: Dispatch<SetStateAction<string | null>>;
+  setRuntimeError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 /**
  * Subscribes to the raw-bytes PTY output channel, coalesces chunks per session,
- * and flushes to sessionBuffers on requestAnimationFrame with a per-frame byte budget.
+ * and flushes scrollback into `sessionBufferStore` on requestAnimationFrame.
  */
 export function usePtyOutputStream({
   maxSessionBuffer,
-  setSessionBuffers,
   setRuntimeError,
 }: UsePtyOutputStreamOptions): {
   pendingOutputRef: React.MutableRefObject<Record<string, string[]>>;
@@ -43,9 +34,7 @@ export function usePtyOutputStream({
   const rafFlushRef = useRef<number | null>(null);
   const flushDeadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSequenceRef = useRef<Record<string, number>>({});
-  const setSessionBuffersRef = useRef(setSessionBuffers);
   const setRuntimeErrorRef = useRef(setRuntimeError);
-  setSessionBuffersRef.current = setSessionBuffers;
   setRuntimeErrorRef.current = setRuntimeError;
 
   useEffect(() => {
@@ -68,7 +57,6 @@ export function usePtyOutputStream({
     };
 
     const flushPendingOutput = () => {
-      const updates: Record<string, string> = {};
       let hadRemainder = false;
 
       for (const [sessionId, chunks] of Object.entries(pendingOutputRef.current)) {
@@ -78,7 +66,7 @@ export function usePtyOutputStream({
         }
         const { merged, rest } = drainChunksUpToByteBudget(chunks, MAX_PTY_FLUSH_BYTES_PER_FRAME);
         if (merged.length > 0) {
-          updates[sessionId] = merged;
+          sessionBufferStore.append(sessionId, merged, maxSessionBuffer);
         }
         if (rest.length > 0) {
           pendingOutputRef.current[sessionId] = rest;
@@ -86,16 +74,6 @@ export function usePtyOutputStream({
         } else {
           delete pendingOutputRef.current[sessionId];
         }
-      }
-
-      if (Object.keys(updates).length > 0) {
-        setSessionBuffersRef.current((current) => {
-          const next = { ...current };
-          for (const [sessionId, merged] of Object.entries(updates)) {
-            next[sessionId] = appendBoundedOutput(next[sessionId] ?? "", merged, maxSessionBuffer);
-          }
-          return next;
-        });
       }
 
       if (hadRemainder) {
