@@ -4,6 +4,11 @@ import {
   nextSequenceState,
   SEQUENCE_LARGE_JUMP,
 } from "../core/ptyOutputCoalesce";
+import {
+  PTY_OUTPUT_MAX_FLUSH_LATENCY_MS,
+  shouldForceOutputFlushOnWake,
+  shouldSkipVisibilityOutputKick,
+} from "../core/ptyOutputFlushSchedule";
 import { onPtyOutput } from "../core/terminal";
 
 const MAX_PTY_FLUSH_BYTES_PER_FRAME = 48_000;
@@ -36,6 +41,7 @@ export function usePtyOutputStream({
 } {
   const pendingOutputRef = useRef<Record<string, string[]>>({});
   const rafFlushRef = useRef<number | null>(null);
+  const flushDeadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSequenceRef = useRef<Record<string, number>>({});
   const setSessionBuffersRef = useRef(setSessionBuffers);
   const setRuntimeErrorRef = useRef(setRuntimeError);
@@ -45,6 +51,21 @@ export function usePtyOutputStream({
   useEffect(() => {
     let outputUnlisten: (() => void) | undefined;
     let visibilityCleanup: (() => void) | undefined;
+
+    const clearFlushDeadline = () => {
+      if (flushDeadlineRef.current !== null) {
+        window.clearTimeout(flushDeadlineRef.current);
+        flushDeadlineRef.current = null;
+      }
+    };
+
+    const cancelScheduledFlush = () => {
+      if (rafFlushRef.current !== null) {
+        window.cancelAnimationFrame(rafFlushRef.current);
+        rafFlushRef.current = null;
+      }
+      clearFlushDeadline();
+    };
 
     const flushPendingOutput = () => {
       const updates: Record<string, string> = {};
@@ -78,21 +99,40 @@ export function usePtyOutputStream({
       }
 
       if (hadRemainder) {
-        rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
+        scheduleOutputFlush();
       } else {
         rafFlushRef.current = null;
+        clearFlushDeadline();
+      }
+    };
+
+    const scheduleOutputFlush = () => {
+      if (rafFlushRef.current === null) {
+        rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
+      }
+      if (flushDeadlineRef.current === null) {
+        flushDeadlineRef.current = window.setTimeout(() => {
+          flushDeadlineRef.current = null;
+          const hasPending = Object.values(pendingOutputRef.current).some((chunks) => chunks.length > 0);
+          if (!hasPending) {
+            return;
+          }
+          cancelScheduledFlush();
+          flushPendingOutput();
+        }, PTY_OUTPUT_MAX_FLUSH_LATENCY_MS);
       }
     };
 
     const kickOutputFlush = () => {
-      if (document.visibilityState === "hidden") {
+      if (shouldSkipVisibilityOutputKick(document.visibilityState)) {
         return;
       }
       const hasPending = Object.values(pendingOutputRef.current).some((chunks) => chunks.length > 0);
-      if (!hasPending || rafFlushRef.current !== null) {
+      if (!shouldForceOutputFlushOnWake(hasPending)) {
         return;
       }
-      rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
+      cancelScheduledFlush();
+      flushPendingOutput();
     };
 
     const bind = async () => {
@@ -122,10 +162,7 @@ export function usePtyOutputStream({
           pendingOutputRef.current[event.session_id] = [];
         }
         pendingOutputRef.current[event.session_id].push(event.data);
-
-        if (rafFlushRef.current === null) {
-          rafFlushRef.current = window.requestAnimationFrame(flushPendingOutput);
-        }
+        scheduleOutputFlush();
       });
 
       document.addEventListener("visibilitychange", kickOutputFlush);
@@ -140,9 +177,7 @@ export function usePtyOutputStream({
 
     return () => {
       visibilityCleanup?.();
-      if (rafFlushRef.current !== null) {
-        window.cancelAnimationFrame(rafFlushRef.current);
-      }
+      cancelScheduledFlush();
       outputUnlisten?.();
     };
   }, [maxSessionBuffer]);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { FOCUS_ACTIVE_TERMINAL_EVENT } from "../core/workspaceFocus";
+import { PTY_OUTPUT_MAX_FLUSH_LATENCY_MS } from "../core/ptyOutputFlushSchedule";
 import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -227,6 +228,7 @@ export function TerminalSurface({
   const onResizeRef = useRef(onResize);
   const pendingWriteRef = useRef("");
   const writeFrameRef = useRef<number | null>(null);
+  const writeDeadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasViewportAtBottomRef = useRef(true);
   const lastResizeSentRef = useRef<{ sessionId?: string; cols: number; rows: number }>({
     cols: 0,
@@ -295,6 +297,17 @@ export function TerminalSurface({
   const terminalPanelRef = useRef<HTMLElement | null>(null);
   const composerLocked = !activeSession || Boolean(exitedInfo);
 
+  const cancelScheduledWritePump = useCallback(() => {
+    if (writeFrameRef.current !== null) {
+      window.cancelAnimationFrame(writeFrameRef.current);
+      writeFrameRef.current = null;
+    }
+    if (writeDeadlineRef.current !== null) {
+      window.clearTimeout(writeDeadlineRef.current);
+      writeDeadlineRef.current = null;
+    }
+  }, []);
+
   const pumpPendingTerminalWrites = useCallback(() => {
     if (writeFrameRef.current !== null) {
       return;
@@ -303,6 +316,10 @@ export function TerminalSurface({
       writeFrameRef.current = null;
       const terminal = terminalRef.current;
       if (!terminal || pendingWriteRef.current.length === 0) {
+        if (writeDeadlineRef.current !== null) {
+          window.clearTimeout(writeDeadlineRef.current);
+          writeDeadlineRef.current = null;
+        }
         return;
       }
       const chunk = pendingWriteRef.current;
@@ -317,10 +334,38 @@ export function TerminalSurface({
       refreshTerminalViewport(terminal);
       if (pendingWriteRef.current.length > 0) {
         writeFrameRef.current = window.requestAnimationFrame(run);
+      } else if (writeDeadlineRef.current !== null) {
+        window.clearTimeout(writeDeadlineRef.current);
+        writeDeadlineRef.current = null;
       }
     };
     writeFrameRef.current = window.requestAnimationFrame(run);
-  }, []);
+    if (writeDeadlineRef.current === null && pendingWriteRef.current.length > 0) {
+      writeDeadlineRef.current = window.setTimeout(() => {
+        writeDeadlineRef.current = null;
+        if (pendingWriteRef.current.length === 0) {
+          return;
+        }
+        cancelScheduledWritePump();
+        pumpPendingTerminalWrites();
+      }, PTY_OUTPUT_MAX_FLUSH_LATENCY_MS);
+    }
+  }, [cancelScheduledWritePump]);
+
+  const kickTerminalPaint = useCallback(() => {
+    if (document.visibilityState === "hidden") {
+      return;
+    }
+    cancelScheduledWritePump();
+    if (pendingWriteRef.current.length > 0) {
+      pumpPendingTerminalWrites();
+      return;
+    }
+    const terminal = terminalRef.current;
+    if (terminal) {
+      refreshTerminalViewport(terminal);
+    }
+  }, [cancelScheduledWritePump, pumpPendingTerminalWrites]);
   const boundedHistoryEntries = useMemo(() => historyEntries.slice(0, COMPOSER_HISTORY_WINDOW), [historyEntries]);
 
   pendingPasteRef.current = pendingPaste;
@@ -1181,6 +1226,9 @@ export function TerminalSurface({
       if (writeFrameRef.current !== null) {
         window.cancelAnimationFrame(writeFrameRef.current);
       }
+      if (writeDeadlineRef.current !== null) {
+        window.clearTimeout(writeDeadlineRef.current);
+      }
       if (resizeTimerRef.current !== null) {
         window.clearTimeout(resizeTimerRef.current);
       }
@@ -1307,41 +1355,19 @@ export function TerminalSurface({
       return;
     }
     const id = window.requestAnimationFrame(() => {
-      const terminal = terminalRef.current;
-      if (!terminal) {
-        return;
-      }
-      if (pendingWriteRef.current.length > 0) {
-        pumpPendingTerminalWrites();
-      } else {
-        refreshTerminalViewport(terminal);
-      }
+      kickTerminalPaint();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [isFocused, pumpPendingTerminalWrites]);
+  }, [isFocused, kickTerminalPaint]);
 
   useEffect(() => {
-    const repaintWhenVisible = () => {
-      if (document.visibilityState === "hidden") {
-        return;
-      }
-      const terminal = terminalRef.current;
-      if (!terminal) {
-        return;
-      }
-      if (pendingWriteRef.current.length > 0) {
-        pumpPendingTerminalWrites();
-      } else {
-        refreshTerminalViewport(terminal);
-      }
-    };
-    document.addEventListener("visibilitychange", repaintWhenVisible);
-    window.addEventListener("focus", repaintWhenVisible);
+    document.addEventListener("visibilitychange", kickTerminalPaint);
+    window.addEventListener("focus", kickTerminalPaint);
     return () => {
-      document.removeEventListener("visibilitychange", repaintWhenVisible);
-      window.removeEventListener("focus", repaintWhenVisible);
+      document.removeEventListener("visibilitychange", kickTerminalPaint);
+      window.removeEventListener("focus", kickTerminalPaint);
     };
-  }, [pumpPendingTerminalWrites]);
+  }, [kickTerminalPaint]);
 
   useEffect(() => {
     if (exitedInfo) {
