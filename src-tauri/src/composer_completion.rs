@@ -315,11 +315,11 @@ fn executable_extensions() -> HashSet<String> {
     }
 }
 
-fn is_executable_candidate(path: &Path, extensions: &HashSet<String>) -> bool {
+fn is_executable_candidate(path: &Path, _extensions: &HashSet<String>) -> bool {
     #[cfg(target_os = "windows")]
     {
         if let Some(ext) = path.extension().and_then(|value| value.to_str()) {
-            return extensions.contains(&format!(".{}", ext.to_lowercase()));
+            return _extensions.contains(&format!(".{}", ext.to_lowercase()));
         }
         false
     }

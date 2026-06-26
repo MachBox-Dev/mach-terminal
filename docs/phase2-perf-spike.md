@@ -9,7 +9,7 @@ Phase 0/1 landed:
 - WebGL xterm renderer (`@xterm/addon-webgl`) with DOM fallback
 - Raw-bytes `Channel` PTY transport (`pty_subscribe_output`)
 - Streaming UTF-8 decode across 8 KB `read()` boundaries
-- `npm run test:perf` floor (~50 MiB/s debug; observed ~75 MiB/s on decode+chunk pipeline)
+- `npm run test:perf` floor (~50 MiB/s local, ~35 MiB/s when `CI=true`; observed ~75 MiB/s local, ~43 MiB/s GHA cold on decode+chunk pipeline)
 
 `MAX_PENDING_CHUNKS` (64) is **effectively dead** at current read sizes: an 8 KB read → ≤4 chunks after `split_chunk(2048)`. Drops only matter under sustained floods that fill the pending deque faster than the channel drains.
 
