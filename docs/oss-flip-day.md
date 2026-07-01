@@ -99,7 +99,8 @@ All done — kept for historical reference.
 | Apple signing secrets | On org repo |
 | Full `NOTICE` dep regeneration (TER-58) | Before stable `v0.1.0` |
 | Mach Cloud / `api.machbox.dev` | When relay exists |
-| `machterm://ai-note` deep link (TER-54) | Terminal side done; Triage "Send to Terminal" button pending |
+| `machterm://ai-note` deep link (TER-54) | Done — Terminal side smoke-tested; Triage "Send to Terminal" button pending |
+| `machterm://composer` deep link (TER-59) | Terminal side done; Triage "Send to Composer" button pending |
 
 ---
 

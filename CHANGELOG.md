@@ -6,6 +6,7 @@ All notable changes to Mach Terminal are documented in this file.
 
 ### Added
 
+- **TER-59:** `machterm://composer` deep link — sibling to TER-54's `ai-note` scheme; lands Armory-sent text (or a newline-separated set of commands) in the terminal composer as a reviewable, never-auto-submitted draft.
 - **TER-37:** Unified session registry (`sessionRegistry.ts`) — `pruneAllSessionScopedState` / `removeSessionFromRegistry` for all per-session maps and transient PTY refs.
 - **TER-39:** PTY scrollback store (`sessionBufferStore.ts`, `useSessionBuffer`) — scrollback off React state; panes subscribe per session.
 - **TER-29–36 (UX audit):** Command palette WAI-ARIA combobox + focus trap; titlebar tab scroll; global focus-visible rings; tab rename F2; design token cleanup; titlebar menu keyboard nav; focus-vs-target coach mark.
