@@ -20,22 +20,59 @@ pub mod workspace_store;
 mod telemetry;
 
 use crate::models::{
-    AiExecuteRequest, AiExecuteResponse, HistoryEntry, HistoryQueryRequest, ProfilePatch, ProviderApiKeyStatus,
-    ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings, PtySessionInfo,
-    PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot, RuntimeMetricsSnapshot, SettingsSchemaDebug,
-    ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset, TerminalProfile, WorkspaceLayout, PluginExecutionResult,
-    PluginExecuteRequest, PluginGrantRequest, PluginGrantSnapshot, PluginMetricsSnapshot, PluginPolicyDecision,
+    AiExecuteRequest, AiExecuteResponse, AiNotePayload, HistoryEntry, HistoryQueryRequest, ProfilePatch,
+    ProviderApiKeyStatus, ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings,
+    PtySessionInfo, PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot, RuntimeMetricsSnapshot,
+    SettingsSchemaDebug, ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset, TerminalProfile,
+    WorkspaceLayout, PluginExecutionResult, PluginExecuteRequest, PluginGrantRequest, PluginGrantSnapshot,
+    PluginMetricsSnapshot, PluginPolicyDecision,
 };
 use crate::composer_completion::{ComposerCompletionRequest, ComposerCompletionResponse};
 use crate::plugin_host::PluginHost;
 use crate::session_manager::SessionManager;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::{Channel, Response};
-use tauri::{AppHandle, Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::{error, info, instrument, warn};
 
 struct AiRuntime {
     client: reqwest::Client,
+}
+
+/// Matches `AI_CONTEXT_OUTPUT_MAX_CHARS` in `src/core/terminal.ts` so both sides of the
+/// IPC boundary agree on one AI-context size budget instead of drifting independently.
+const AI_NOTE_MAX_CHARS: usize = 6000;
+const AI_NOTE_SCHEME_PREFIX: &str = "machterm://ai-note";
+
+/// Handle a `machterm://ai-note?text=...&label=...` deep link from a sibling Mach app
+/// (e.g. Triage's Armory). See `docs/deep-link-contract.md` for the contract. Focuses the
+/// window and emits the note to the frontend as a pending AI-context attachment; never
+/// submits anything to a provider on its own.
+fn handle_ai_note_deep_link(app: &AppHandle, url_str: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+
+    if !url_str.starts_with(AI_NOTE_SCHEME_PREFIX) {
+        return;
+    }
+
+    let Ok(parsed) = reqwest::Url::parse(url_str) else {
+        warn!("failed to parse ai-note deep link");
+        return;
+    };
+
+    let Some(text) = parsed.query_pairs().find(|(k, _)| k == "text").map(|(_, v)| v.to_string()) else {
+        warn!("ai-note deep link missing required text param");
+        return;
+    };
+    let label = parsed.query_pairs().find(|(k, _)| k == "label").map(|(_, v)| v.to_string());
+
+    let capped_text: String = text.chars().take(AI_NOTE_MAX_CHARS).collect();
+    let _ = app.emit("deep-link://ai-note", AiNotePayload { label, text: capped_text });
 }
 
 #[tauri::command]
@@ -427,12 +464,55 @@ pub fn run() {
         }
     };
 
-    let app = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .manage(SessionManager::default())
         .manage(PluginHost::default())
         .manage(AiRuntime { client: runtime_client })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init());
+
+    // tauri-plugin-single-instance only targets desktop; forwards a second launch's argv
+    // (Windows/Linux) to this instance instead of spawning a duplicate process. On macOS
+    // the OS already routes a second `machterm://` launch to `on_open_url` below, but the
+    // plugin keeps focus behavior consistent across all three desktop platforms.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            for arg in argv.iter().filter(|a| a.starts_with(AI_NOTE_SCHEME_PREFIX)) {
+                handle_ai_note_deep_link(app, arg);
+            }
+        }));
+    }
+
+    let app = builder
+        .setup(|app| {
+            if let Err(error) = app.deep_link().register("machterm") {
+                warn!("failed to register machterm deep-link scheme: {error}");
+            }
+
+            let app_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    handle_ai_note_deep_link(&app_handle, url.as_str());
+                }
+            });
+
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                let app_handle = app.handle().clone();
+                for url in urls {
+                    handle_ai_note_deep_link(&app_handle, url.as_str());
+                }
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             runtime_capabilities,
             detect_shells,

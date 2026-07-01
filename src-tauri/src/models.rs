@@ -430,6 +430,14 @@ pub struct PtyCommandMarkerEvent {
     pub timestamp_ms: u64,
 }
 
+/// Payload for a `machterm://ai-note` deep link handoff from a sibling Mach app
+/// (e.g. Triage's Armory). See `docs/deep-link-contract.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiNotePayload {
+    pub label: Option<String>,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PtyLifecycleEvent {
     pub session_id: String,

@@ -121,6 +121,15 @@ export interface AiContextEvent {
   source: "pty" | "input" | "system";
 }
 
+/**
+ * Mirrors `AiNotePayload` in `src-tauri/src/models.rs`. Delivered via the
+ * `machterm://ai-note` deep link — see `docs/deep-link-contract.md`.
+ */
+export interface AiNotePayload {
+  label?: string;
+  text: string;
+}
+
 export interface ProviderRoutingSettings {
   default_provider: string;
   ollama_model: string;
@@ -789,4 +798,8 @@ export function onPtyCommandMarker(
 
 export function onAiContext(handler: (event: AiContextEvent) => void): Promise<UnlistenFn> {
   return listen<AiContextEvent>("ai-context", ({ payload }) => handler(payload));
+}
+
+export function onAiNoteDeepLink(handler: (event: AiNotePayload) => void): Promise<UnlistenFn> {
+  return listen<AiNotePayload>("deep-link://ai-note", ({ payload }) => handler(payload));
 }

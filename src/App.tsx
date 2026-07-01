@@ -50,6 +50,7 @@ import {
   historyReplay,
   composerComplete,
   onAiContext,
+  onAiNoteDeepLink,
   onPtyCwdChanged,
   onPtyCommandMarker,
   onPtyLifecycle,
@@ -68,6 +69,7 @@ import {
   ptyResize,
   ptySpawn,
   ptyWrite,
+  type AiNotePayload,
   type HistoryEntry,
   type PtyCommandMarkerEvent,
   type PtyLifecycleEvent,
@@ -138,6 +140,7 @@ import {
 import {
   appendChatMessage,
   attachmentBlockForContext,
+  attachmentFromAiNote,
   createChatMessageId,
   type AiChatState,
   type AiContextAttachment,
@@ -271,6 +274,8 @@ function App() {
   const [aiChatState, setAiChatState] = useState<AiChatState>({});
   const [sessionChatKeys, setSessionChatKeys] = useState<Record<string, string>>({});
   const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
+  /** Queued `machterm://ai-note` deep link, attached once a session is active (handles cold start). */
+  const [pendingAiNote, setPendingAiNote] = useState<AiNotePayload | null>(null);
   const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [renameRequestSessionId, setRenameRequestSessionId] = useState<string | null>(null);
@@ -680,6 +685,17 @@ function App() {
     [openAiRail],
   );
 
+  // Attaches a queued `machterm://ai-note` deep link once a session is active. On cold
+  // start `activeSessionId` starts null until session boot finishes, so this naturally
+  // waits rather than dropping the note (see docs/deep-link-contract.md).
+  useEffect(() => {
+    if (!pendingAiNote || !activeSessionId) {
+      return;
+    }
+    queueAiSelection(activeSessionId, attachmentFromAiNote(pendingAiNote));
+    setPendingAiNote(null);
+  }, [activeSessionId, pendingAiNote, queueAiSelection]);
+
   const explainCommandToChat = useCallback(
     (command: string) => {
       if (!activeSessionId) {
@@ -889,6 +905,7 @@ function App() {
     let cwdUnlisten: (() => void) | undefined;
     let markerUnlisten: (() => void) | undefined;
     let contextUnlisten: (() => void) | undefined;
+    let aiNoteUnlisten: (() => void) | undefined;
 
     const bindEvents = async () => {
       lifecycleUnlisten = await onPtyLifecycle((event: PtyLifecycleEvent) => {
@@ -1000,6 +1017,10 @@ function App() {
           .then((entries) => setHistoryEntries(entries))
           .catch(() => undefined);
       });
+
+      aiNoteUnlisten = await onAiNoteDeepLink((event) => {
+        setPendingAiNote(event);
+      });
     };
 
     void bindEvents();
@@ -1009,6 +1030,7 @@ function App() {
       cwdUnlisten?.();
       markerUnlisten?.();
       contextUnlisten?.();
+      aiNoteUnlisten?.();
     };
   }, []);
 

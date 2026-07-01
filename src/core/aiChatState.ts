@@ -1,3 +1,5 @@
+import { trimAiContextExcerpt, type AiNotePayload } from "./terminal";
+
 export interface AiContextAttachment {
   id: string;
   /** Short label, e.g. `lines 42–48`. */
@@ -26,6 +28,20 @@ export function createAttachmentId(): string {
 
 export function createChatMessageId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Shapes an incoming `machterm://ai-note` deep link (see `docs/deep-link-contract.md`)
+ * into a pending AI-context attachment, matching how a terminal-selection "Ask AI"
+ * attachment is built. Falls back to a generic label and trims text to the same budget
+ * used elsewhere for AI context.
+ */
+export function attachmentFromAiNote(payload: AiNotePayload): AiContextAttachment {
+  return {
+    id: createAttachmentId(),
+    label: payload.label?.trim() || "Armory note",
+    text: trimAiContextExcerpt(payload.text) ?? payload.text,
+  };
 }
 
 export function appendChatMessage(state: AiChatState, sessionId: string, message: AiChatMessage): AiChatState {
