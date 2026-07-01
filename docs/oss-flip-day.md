@@ -71,13 +71,15 @@ Site polish does **not** block using GitHub as canonical docs.
 
 ## Phase D — Product bugs (Linear)
 
-| ID | Issue |
-| --- | --- |
-| TER-1 | New-tab profile picker |
-| TER-2 | OS code signing (Apple wired; Windows OV optional) |
-| TER-3 | Bundle id migration (code done) |
-| TER-4 | Commander mode scroll alignment at buffer bottom |
-| TER-5 | Command history stale until manual refresh |
+All done — kept for historical reference.
+
+| ID | Issue | Status |
+| --- | --- | --- |
+| TER-1 | New-tab profile picker | Done |
+| TER-2 | OS code signing (Apple wired; Windows OV optional) | Done |
+| TER-3 | Bundle id migration | Done |
+| TER-4 | Commander mode scroll alignment at buffer bottom | Done |
+| TER-5 | Command history stale until manual refresh | Done |
 
 ---
 
@@ -92,11 +94,12 @@ Site polish does **not** block using GitHub as canonical docs.
 
 | Item | Status |
 | --- | --- |
-| New-tab profile picker (TER-1) | Backlog |
-| Bundle id `com.machbox.terminal` (TER-3) | Done on main — ship in `v0.1.0-rc.2` |
+| New-tab profile picker (TER-1) | Done |
+| Bundle id `com.machbox.terminal` (TER-3) | Done — shipped in `v0.1.0-rc.2` |
 | Apple signing secrets | On org repo |
-| Full `NOTICE` dep regeneration | Before stable `v0.1.0` |
+| Full `NOTICE` dep regeneration (TER-58) | Before stable `v0.1.0` |
 | Mach Cloud / `api.machbox.dev` | When relay exists |
+| `machterm://ai-note` deep link (TER-54) | Terminal side done; Triage "Send to Terminal" button pending |
 
 ---
 
