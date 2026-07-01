@@ -20,7 +20,7 @@ pub mod workspace_store;
 mod telemetry;
 
 use crate::models::{
-    AiExecuteRequest, AiExecuteResponse, AiNotePayload, HistoryEntry, HistoryQueryRequest, ProfilePatch,
+    AiExecuteRequest, AiExecuteResponse, AiNotePayload, ComposerPayload, HistoryEntry, HistoryQueryRequest, ProfilePatch,
     ProviderApiKeyStatus, ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings,
     PtySessionInfo, PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot, RuntimeMetricsSnapshot,
     SettingsSchemaDebug, ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset, TerminalProfile,
@@ -44,35 +44,69 @@ struct AiRuntime {
 /// IPC boundary agree on one AI-context size budget instead of drifting independently.
 const AI_NOTE_MAX_CHARS: usize = 6000;
 const AI_NOTE_SCHEME_PREFIX: &str = "machterm://ai-note";
+/// Shares the same size budget as `AI_NOTE_MAX_CHARS` — see that constant's comment.
+const COMPOSER_MAX_CHARS: usize = 6000;
+const COMPOSER_SCHEME_PREFIX: &str = "machterm://composer";
 
-/// Handle a `machterm://ai-note?text=...&label=...` deep link from a sibling Mach app
-/// (e.g. Triage's Armory). See `docs/deep-link-contract.md` for the contract. Focuses the
-/// window and emits the note to the frontend as a pending AI-context attachment; never
-/// submits anything to a provider on its own.
-fn handle_ai_note_deep_link(app: &AppHandle, url_str: &str) {
+fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
 
-    if !url_str.starts_with(AI_NOTE_SCHEME_PREFIX) {
-        return;
-    }
-
+/// Parse `text`/`label` query params shared by the `ai-note` and `composer` deep-link
+/// schemes. Returns `None` (and logs) when the URL doesn't parse or is missing `text`.
+fn parse_text_label_deep_link(url_str: &str, kind: &str) -> Option<(String, Option<String>)> {
     let Ok(parsed) = reqwest::Url::parse(url_str) else {
-        warn!("failed to parse ai-note deep link");
-        return;
+        warn!(kind, "failed to parse deep link");
+        return None;
     };
 
     let Some(text) = parsed.query_pairs().find(|(k, _)| k == "text").map(|(_, v)| v.to_string()) else {
-        warn!("ai-note deep link missing required text param");
-        return;
+        warn!(kind, "deep link missing required text param");
+        return None;
     };
     let label = parsed.query_pairs().find(|(k, _)| k == "label").map(|(_, v)| v.to_string());
+    Some((text, label))
+}
 
+/// Dispatch an incoming `machterm://` deep link to the handler matching its scheme.
+/// Unrecognized schemes are logged and dropped — never crash the app. Always focuses the
+/// window first so the user sees why Terminal just came to the foreground.
+fn handle_deep_link(app: &AppHandle, url_str: &str) {
+    focus_main_window(app);
+
+    if url_str.starts_with(AI_NOTE_SCHEME_PREFIX) {
+        handle_ai_note_deep_link(app, url_str);
+    } else if url_str.starts_with(COMPOSER_SCHEME_PREFIX) {
+        handle_composer_deep_link(app, url_str);
+    }
+}
+
+/// Handle a `machterm://ai-note?text=...&label=...` deep link from a sibling Mach app
+/// (e.g. Triage's Armory). See `docs/deep-link-contract.md` for the contract. Emits the
+/// note to the frontend as a pending AI-context attachment; never submits anything to a
+/// provider on its own.
+fn handle_ai_note_deep_link(app: &AppHandle, url_str: &str) {
+    let Some((text, label)) = parse_text_label_deep_link(url_str, "ai-note") else {
+        return;
+    };
     let capped_text: String = text.chars().take(AI_NOTE_MAX_CHARS).collect();
     let _ = app.emit("deep-link://ai-note", AiNotePayload { label, text: capped_text });
+}
+
+/// Handle a `machterm://composer?text=...&label=...` deep link from a sibling Mach app
+/// (e.g. Triage's Armory). See `docs/deep-link-contract.md` for the contract. Emits the
+/// text to the frontend as a pending composer draft; never submits it to a shell on its
+/// own — the user still has to review it and press Enter.
+fn handle_composer_deep_link(app: &AppHandle, url_str: &str) {
+    let Some((text, label)) = parse_text_label_deep_link(url_str, "composer") else {
+        return;
+    };
+    let capped_text: String = text.chars().take(COMPOSER_MAX_CHARS).collect();
+    let _ = app.emit("deep-link://composer", ComposerPayload { label, text: capped_text });
 }
 
 #[tauri::command]
@@ -485,8 +519,11 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
-            for arg in argv.iter().filter(|a| a.starts_with(AI_NOTE_SCHEME_PREFIX)) {
-                handle_ai_note_deep_link(app, arg);
+            for arg in argv
+                .iter()
+                .filter(|a| a.starts_with(AI_NOTE_SCHEME_PREFIX) || a.starts_with(COMPOSER_SCHEME_PREFIX))
+            {
+                handle_deep_link(app, arg);
             }
         }));
     }
@@ -500,14 +537,14 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
-                    handle_ai_note_deep_link(&app_handle, url.as_str());
+                    handle_deep_link(&app_handle, url.as_str());
                 }
             });
 
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 let app_handle = app.handle().clone();
                 for url in urls {
-                    handle_ai_note_deep_link(&app_handle, url.as_str());
+                    handle_deep_link(&app_handle, url.as_str());
                 }
             }
 

@@ -21,6 +21,7 @@ import {
   type SessionExitedInfo,
 } from "./core/sessionLifecycle";
 import { appendTerminalInputLine, isShellExitCommand } from "./core/shellExitCommand";
+import { canApplyPendingComposerText } from "./core/composerDeepLink";
 import {
   applyCwdChange,
   getRestartCwd,
@@ -51,6 +52,7 @@ import {
   composerComplete,
   onAiContext,
   onAiNoteDeepLink,
+  onComposerDeepLink,
   onPtyCwdChanged,
   onPtyCommandMarker,
   onPtyLifecycle,
@@ -70,6 +72,7 @@ import {
   ptySpawn,
   ptyWrite,
   type AiNotePayload,
+  type ComposerPayload,
   type HistoryEntry,
   type PtyCommandMarkerEvent,
   type PtyLifecycleEvent,
@@ -276,6 +279,8 @@ function App() {
   const [aiPendingAttachments, setAiPendingAttachments] = useState<Record<string, AiContextAttachment[]>>({});
   /** Queued `machterm://ai-note` deep link, attached once a session is active (handles cold start). */
   const [pendingAiNote, setPendingAiNote] = useState<AiNotePayload | null>(null);
+  /** Queued `machterm://composer` deep link, applied once the composer is usable (handles cold start). */
+  const [pendingComposerText, setPendingComposerText] = useState<ComposerPayload | null>(null);
   const [aiBehaviorSettings, setAiBehaviorSettings] = useState<AiBehaviorSettings>(() => loadAiBehaviorSettings());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [renameRequestSessionId, setRenameRequestSessionId] = useState<string | null>(null);
@@ -906,6 +911,7 @@ function App() {
     let markerUnlisten: (() => void) | undefined;
     let contextUnlisten: (() => void) | undefined;
     let aiNoteUnlisten: (() => void) | undefined;
+    let composerDeepLinkUnlisten: (() => void) | undefined;
 
     const bindEvents = async () => {
       lifecycleUnlisten = await onPtyLifecycle((event: PtyLifecycleEvent) => {
@@ -1021,6 +1027,10 @@ function App() {
       aiNoteUnlisten = await onAiNoteDeepLink((event) => {
         setPendingAiNote(event);
       });
+
+      composerDeepLinkUnlisten = await onComposerDeepLink((event) => {
+        setPendingComposerText(event);
+      });
     };
 
     void bindEvents();
@@ -1030,6 +1040,7 @@ function App() {
       cwdUnlisten?.();
       markerUnlisten?.();
       contextUnlisten?.();
+      composerDeepLinkUnlisten?.();
       aiNoteUnlisten?.();
     };
   }, []);
@@ -2021,6 +2032,28 @@ function App() {
   useEffect(() => {
     focusGroupComposerRef.current = groupComposer.focusComposerInput;
   }, [groupComposer.focusComposerInput]);
+
+  // Applies a queued `machterm://composer` deep link once the composer is usable (an
+  // operator-mode session active) AND empty. Mirrors the `pendingAiNote` queue above so a
+  // cold start or a locked composer waits rather than dropping the handoff (see
+  // docs/deep-link-contract.md); the empty-draft check additionally avoids silently
+  // clobbering a command the user is already mid-typing. Only ever populates the draft —
+  // the user still has to review it and press Enter, same "never auto-submit" rule as the
+  // AI-note attachment.
+  useEffect(() => {
+    if (!canApplyPendingComposerText(pendingComposerText, groupComposer.composerLocked, groupComposer.composerDraft)) {
+      return;
+    }
+    groupComposer.setComposerDraft(pendingComposerText.text);
+    groupComposer.focusComposerInput();
+    setPendingComposerText(null);
+  }, [
+    pendingComposerText,
+    groupComposer.composerLocked,
+    groupComposer.composerDraft,
+    groupComposer.setComposerDraft,
+    groupComposer.focusComposerInput,
+  ]);
 
   useWorkspaceFocus({
     activeGroupId: workspace.activeGroupId,

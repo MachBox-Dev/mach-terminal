@@ -130,6 +130,15 @@ export interface AiNotePayload {
   text: string;
 }
 
+/**
+ * Mirrors `ComposerPayload` in `src-tauri/src/models.rs`. Delivered via the
+ * `machterm://composer` deep link — see `docs/deep-link-contract.md`.
+ */
+export interface ComposerPayload {
+  label?: string;
+  text: string;
+}
+
 export interface ProviderRoutingSettings {
   default_provider: string;
   ollama_model: string;
@@ -802,4 +811,8 @@ export function onAiContext(handler: (event: AiContextEvent) => void): Promise<U
 
 export function onAiNoteDeepLink(handler: (event: AiNotePayload) => void): Promise<UnlistenFn> {
   return listen<AiNotePayload>("deep-link://ai-note", ({ payload }) => handler(payload));
+}
+
+export function onComposerDeepLink(handler: (event: ComposerPayload) => void): Promise<UnlistenFn> {
+  return listen<ComposerPayload>("deep-link://composer", ({ payload }) => handler(payload));
 }
