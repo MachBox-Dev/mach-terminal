@@ -930,11 +930,55 @@ async fn run_anthropic(
     parse_anthropic_chat_result(&payload.content, payload.stop_reason.as_deref())
 }
 
+/// TER audit 2026-06 (CRITICAL): `AiExecuteRequest` came from the IPC boundary with no
+/// size limits on `prompt`, `history`, or `provider_messages`, so a compromised/buggy
+/// frontend (or a crafted deep-link payload) could hand the provider client an
+/// arbitrarily large request. These caps are generous for real usage — a human-typed
+/// prompt or a `history[]` built from actual chat turns is nowhere close — and exist
+/// only to reject a pathological single call before it reaches the provider dispatch.
+const AI_EXECUTE_MAX_PROMPT_BYTES: usize = 32 * 1024;
+const AI_EXECUTE_MAX_HISTORY_TURNS: usize = 50;
+const AI_EXECUTE_MAX_TURN_BYTES: usize = 32 * 1024;
+const AI_EXECUTE_MAX_PROVIDER_MESSAGES_BYTES: usize = 256 * 1024;
+
+pub fn validate_ai_execute_request(request: &AiExecuteRequest) -> Result<(), String> {
+    if request.prompt.len() > AI_EXECUTE_MAX_PROMPT_BYTES {
+        return Err(format!(
+            "ai_execute prompt too large ({} bytes, max {AI_EXECUTE_MAX_PROMPT_BYTES})",
+            request.prompt.len()
+        ));
+    }
+    if let Some(history) = &request.history {
+        if history.len() > AI_EXECUTE_MAX_HISTORY_TURNS {
+            return Err(format!(
+                "ai_execute history has too many turns ({}, max {AI_EXECUTE_MAX_HISTORY_TURNS})",
+                history.len()
+            ));
+        }
+        if let Some(oversize) = history.iter().find(|turn| turn.content.len() > AI_EXECUTE_MAX_TURN_BYTES) {
+            return Err(format!(
+                "ai_execute history turn too large ({} bytes, max {AI_EXECUTE_MAX_TURN_BYTES})",
+                oversize.content.len()
+            ));
+        }
+    }
+    if let Some(provider_messages) = &request.provider_messages {
+        let serialized_len = serde_json::to_string(provider_messages).map(|s| s.len()).unwrap_or(usize::MAX);
+        if serialized_len > AI_EXECUTE_MAX_PROVIDER_MESSAGES_BYTES {
+            return Err(format!(
+                "ai_execute provider_messages too large ({serialized_len} bytes, max {AI_EXECUTE_MAX_PROVIDER_MESSAGES_BYTES})"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn execute_ai_request(
     client: &Client,
     settings: &AppSettings,
     request: &AiExecuteRequest,
 ) -> Result<AiExecuteResponse, String> {
+    validate_ai_execute_request(request)?;
     if !settings.provider_routing.ai_feature_enabled {
         return Err(AiExecutionError::RoutingDisabled.to_string());
     }
@@ -1218,6 +1262,80 @@ mod assemble_tests {
             "qwen2.5-coder"
         );
         assert_eq!(routing_model_for_provider("ollama", &routing), "llama3.2");
+    }
+}
+
+#[cfg(test)]
+mod validate_ai_execute_request_tests {
+    use crate::models::{AiChatTurn, AiExecuteRequest, AiProviderMessage};
+    use crate::provider_host::validate_ai_execute_request;
+
+    #[test]
+    fn accepts_a_normal_request() {
+        let request = AiExecuteRequest {
+            prompt: "Explain the error.".into(),
+            history: Some(vec![AiChatTurn {
+                role: "user".into(),
+                content: "hello".into(),
+            }]),
+            ..Default::default()
+        };
+        assert!(validate_ai_execute_request(&request).is_ok());
+    }
+
+    #[test]
+    fn rejects_oversize_prompt() {
+        let request = AiExecuteRequest {
+            prompt: "x".repeat(33 * 1024),
+            ..Default::default()
+        };
+        assert!(validate_ai_execute_request(&request).is_err());
+    }
+
+    #[test]
+    fn rejects_too_many_history_turns() {
+        let request = AiExecuteRequest {
+            prompt: "hi".into(),
+            history: Some(
+                (0..51)
+                    .map(|_| AiChatTurn {
+                        role: "user".into(),
+                        content: "hi".into(),
+                    })
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        assert!(validate_ai_execute_request(&request).is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_history_turn() {
+        let request = AiExecuteRequest {
+            prompt: "hi".into(),
+            history: Some(vec![AiChatTurn {
+                role: "user".into(),
+                content: "x".repeat(33 * 1024),
+            }]),
+            ..Default::default()
+        };
+        assert!(validate_ai_execute_request(&request).is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_provider_messages() {
+        let request = AiExecuteRequest {
+            prompt: "hi".into(),
+            provider_messages: Some(vec![AiProviderMessage {
+                role: "user".into(),
+                content: Some("x".repeat(300 * 1024)),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(validate_ai_execute_request(&request).is_err());
     }
 }
 

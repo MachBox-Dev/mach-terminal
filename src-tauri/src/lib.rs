@@ -47,6 +47,10 @@ const AI_NOTE_SCHEME_PREFIX: &str = "machterm://ai-note";
 /// Shares the same size budget as `AI_NOTE_MAX_CHARS` — see that constant's comment.
 const COMPOSER_MAX_CHARS: usize = 6000;
 const COMPOSER_SCHEME_PREFIX: &str = "machterm://composer";
+/// Hard cap on a single `pty_write` invoke's payload (TER audit 2026-06, CRITICAL).
+/// Legitimate input (typed keys, reasonable pastes) is nowhere near this; it exists to
+/// reject a pathological single-call payload before it reaches the session writer.
+const PTY_WRITE_MAX_BYTES: usize = 1024 * 1024;
 
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -329,6 +333,12 @@ fn pty_write(
     session_id: String,
     data: String,
 ) -> Result<(), String> {
+    if data.len() > PTY_WRITE_MAX_BYTES {
+        return Err(format!(
+            "pty_write payload too large ({} bytes, max {PTY_WRITE_MAX_BYTES})",
+            data.len()
+        ));
+    }
     manager.write_input(&app, &session_id, &data)
 }
 
