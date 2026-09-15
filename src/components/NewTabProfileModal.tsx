@@ -1,21 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { profileGet } from "../core/terminal";
+import { fetchShellPresets, type ShellPreset } from "../core/shellPresets";
+import { validateShellSpawnSelection } from "../core/shellProfiles";
 import { ShellProfilePicker } from "./ShellProfilePicker";
-
-export interface NewTabShellSelection {
-  shell: string | undefined;
-  args: string[];
-}
+import type { ShellSpawnSelection } from "../core/spawnProfile";
 
 type Props = {
   open: boolean;
   onClose: () => void;
-  onConfirm: (selection: NewTabShellSelection) => void | Promise<void>;
+  onConfirm: (selection: ShellSpawnSelection) => void | Promise<void>;
 };
 
 export function NewTabProfileModal({ open, onClose, onConfirm }: Props) {
   const [shell, setShell] = useState<string | undefined>(undefined);
   const [args, setArgs] = useState<string[]>([]);
+  const [presets, setPresets] = useState<ShellPreset[]>([]);
   const [profileLoading, setProfileLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,13 +26,14 @@ export function NewTabProfileModal({ open, onClose, onConfirm }: Props) {
     let cancelled = false;
     setProfileLoading(true);
     setError(null);
-    void profileGet()
-      .then((profile) => {
+    void Promise.all([profileGet(), fetchShellPresets()])
+      .then(([profile, loadedPresets]) => {
         if (cancelled) {
           return;
         }
         setShell(profile.shell);
         setArgs(profile.args ?? []);
+        setPresets(loadedPresets);
       })
       .catch((e) => {
         if (cancelled) {
@@ -52,6 +52,13 @@ export function NewTabProfileModal({ open, onClose, onConfirm }: Props) {
   }, [open]);
 
   const handleConfirm = useCallback(async () => {
+    const validationError = validateShellSpawnSelection(shell, args, {
+      requireExplicitShell: false,
+    });
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -88,12 +95,16 @@ export function NewTabProfileModal({ open, onClose, onConfirm }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="new-tab-profile-title">New tab</h2>
-        <p className="muted-block">Choose which shell to run in this tab. Your default profile cwd and env still apply.</p>
-        {profileLoading ? <p className="muted-block">Loading default shell…</p> : null}
+        <p className="muted-block">
+          Choose which shell to run in this tab. Saved shells from Settings appear at the top; use Advanced for a one-off
+          custom executable + args. Your default profile cwd and env still apply.
+        </p>
+        {profileLoading ? <p className="muted-block">Loading shells…</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
         <ShellProfilePicker
           shell={shell}
           args={args}
+          presets={presets}
           onChange={(selection) => {
             setShell(selection.shell);
             setArgs(selection.args);

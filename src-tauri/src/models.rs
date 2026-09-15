@@ -346,12 +346,47 @@ pub struct LegacyAppSettings {
     pub provider_routing: ProviderRoutingSettings,
 }
 
+/// Patch fields use `Option<Option<T>>`: absent = no change, `null` = clear, value = set.
+fn deserialize_patch_option_string<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = Option<Option<String>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("null or a string")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(Some(None))
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(Some(None))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+            Ok(Some(Some(value.to_string())))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+            Ok(Some(Some(value)))
+        }
+    }
+
+    deserializer.deserialize_any(Visitor)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfilePatch {
+    #[serde(default, deserialize_with = "deserialize_patch_option_string")]
     pub shell: Option<Option<String>>,
     /// `Some(vec)` replaces args wholesale; omit for no change.
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_patch_option_string")]
     pub cwd: Option<Option<String>>,
     pub font_size: Option<u8>,
     #[serde(default)]

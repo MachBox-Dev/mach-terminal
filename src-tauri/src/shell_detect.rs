@@ -197,15 +197,22 @@ fn find_git_bash() -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn list_wsl_distros(wsl_exe: &str) -> Vec<String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    /// Hide the probe console so Windows Terminal (default terminal app) does not steal focus.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     const WSL_LIST_TIMEOUT: Duration = Duration::from_secs(2);
     let wsl_exe = wsl_exe.to_string();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let output = Command::new(&wsl_exe).args(["-l", "-q"]).output();
+        let output = Command::new(&wsl_exe)
+            .args(["-l", "-q"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
         let _ = tx.send(output);
     });
     match rx.recv_timeout(WSL_LIST_TIMEOUT) {

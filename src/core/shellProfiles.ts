@@ -3,6 +3,9 @@ import type { ShellCandidate } from "./terminal";
 /** Sentinel option id for the "type your own shell" path in the picker. */
 export const CUSTOM_SHELL_OPTION_ID = "__custom__";
 
+/** Dropdown value prefix for saved shell presets in the picker. */
+export const PRESET_SHELL_OPTION_PREFIX = "preset:";
+
 const GROUP_LABELS: Record<string, string> = {
   native: "Installed shells",
   wsl: "WSL distros",
@@ -63,7 +66,11 @@ export function selectedCandidateId(
   candidates: ShellCandidate[],
   shell: string | null | undefined,
   args: string[],
+  presetOptionId?: string | null,
 ): string {
+  if (presetOptionId) {
+    return presetOptionId;
+  }
   const exe = (shell ?? "").trim();
   if (!exe) {
     const fallbackDefault = candidates.find((candidate) => candidate.is_default && candidate.available);
@@ -122,4 +129,31 @@ export function shellCandidatePaletteId(candidateId: string): string {
 
 export function parseShellCandidatePaletteId(commandId: string): string | null {
   return commandId.startsWith("shell:") ? commandId.slice("shell:".length) : null;
+}
+
+export function shellPresetOptionId(presetId: string): string {
+  return `${PRESET_SHELL_OPTION_PREFIX}${presetId}`;
+}
+
+export function parseShellPresetOptionId(optionId: string): string | null {
+  return optionId.startsWith(PRESET_SHELL_OPTION_PREFIX)
+    ? optionId.slice(PRESET_SHELL_OPTION_PREFIX.length)
+    : null;
+}
+
+/** User-facing validation before spawning from a picker selection. */
+export function validateShellSpawnSelection(
+  shell: string | null | undefined,
+  args: string[],
+  options?: { requireExplicitShell?: boolean },
+): string | null {
+  const exe = (shell ?? "").trim();
+  const hasArgs = args.some((arg) => arg.trim().length > 0);
+  if (options?.requireExplicitShell && !exe) {
+    return "Enter a shell executable in Advanced, or pick a shell from the list.";
+  }
+  if (!exe && hasArgs) {
+    return "Arguments need a shell executable — enter one in Advanced or pick a listed shell.";
+  }
+  return null;
 }
