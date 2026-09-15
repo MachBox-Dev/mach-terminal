@@ -185,6 +185,7 @@ import {
   shellCandidatePaletteId,
 } from "./core/shellProfiles";
 import { isTauri } from "./core/tauriRuntime";
+import { refocusMainWindow } from "./core/workspaceFocus";
 import {
   appendCommandSubmitted,
   serializePinnedMap,
@@ -1086,6 +1087,7 @@ function App() {
       });
       setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
       ensureChatKey(created.id);
+      refocusMainWindow();
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to create session.");
     } finally {

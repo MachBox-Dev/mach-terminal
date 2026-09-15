@@ -77,7 +77,7 @@ mach-terminal/
 | `CommandPalette.tsx` | `Ctrl/Cmd+K` palette over `APP_COMMANDS`. |
 | `AppSettingsModal.tsx` | Settings hub: terminal profile, providers, routing, AI, shell integration, metrics, plugin demo, shortcuts. |
 | `FirstRunSetup.tsx` | Onboarding incl. "Quick start (AI off)". Owns `ONBOARDING_STORAGE_KEY`. Uses `ShellProfilePicker` for shell selection. |
-| `ShellProfilePicker.tsx` | Shell selection control: detected-shell dropdown (native shells, WSL distros, POSIX login shells via `detect_shells`), live "will run" preview, Advanced custom shell + args editor. Controlled on `shell`/`args`. |
+| `ShellProfilePicker.tsx` | Shell selection control: detected-shell dropdown (native shells, WSL distros, POSIX login shells via `detect_shells`), optional **Saved shells** preset optgroup, live "will run" preview, Advanced custom shell + args editor. Controlled on `shell`/`args`. |
 | `TerminalProfileSection.tsx` | Self-contained "Terminal profile" Settings section: `ShellProfilePicker` + cwd + font size; loads on open, saves via `profile_patch`, calls `onProfileSaved`. |
 | `ShellIntegrationSection.tsx` | Capability-driven shell hook install/remove/backup/restore UI. |
 | `AiInsightPanel.tsx` | Renders AI explain/fix/freeform output + in-flight state. |

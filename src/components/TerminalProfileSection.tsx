@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { profileGet, profilePatch, type TerminalProfile } from "../core/terminal";
 import { ShellProfilePicker } from "./ShellProfilePicker";
 import {
@@ -41,12 +41,22 @@ export function TerminalProfileSection({
   const [status, setStatus] = useState<string | null>(null);
   const [presets, setPresets] = useState<ShellPreset[]>([]);
   const [presetName, setPresetName] = useState("");
+  const skipShellAutoSaveRef = useRef(true);
+
+  const applySavedProfile = useCallback((profile: TerminalProfile) => {
+    setShell(profile.shell ?? undefined);
+    setArgs(profile.args ?? []);
+    setCwd(profile.cwd ?? "");
+    setFontSize(profile.font_size ?? DEFAULT_FONT_SIZE);
+  }, []);
 
   useEffect(() => {
     if (!modalOpen) {
+      skipShellAutoSaveRef.current = true;
       return;
     }
     let cancelled = false;
+    skipShellAutoSaveRef.current = true;
     void (async () => {
       setLoading(true);
       setError(null);
@@ -56,10 +66,7 @@ export function TerminalProfileSection({
         if (cancelled) {
           return;
         }
-        setShell(profile.shell ?? undefined);
-        setArgs(profile.args ?? []);
-        setCwd(profile.cwd ?? "");
-        setFontSize(profile.font_size ?? DEFAULT_FONT_SIZE);
+        applySavedProfile(profile);
         setPresets(await fetchShellPresets());
       } catch (e) {
         if (!cancelled) {
@@ -68,47 +75,63 @@ export function TerminalProfileSection({
       } finally {
         if (!cancelled) {
           setLoading(false);
+          skipShellAutoSaveRef.current = false;
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [modalOpen]);
+  }, [applySavedProfile, modalOpen]);
 
-  const save = useCallback(async () => {
-    setSaving(true);
-    setError(null);
-    setStatus(null);
-    try {
-      const saved = await profilePatch({
-        shell: shell && shell.trim().length > 0 ? shell.trim() : null,
-        args,
-        cwd: cwd.trim().length > 0 ? cwd.trim() : null,
-        font_size: fontSize,
-      });
-      setStatus("Saved. New sessions (or a restart) will use this profile.");
-      await onProfileSaved?.(saved);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save terminal profile");
-    } finally {
-      setSaving(false);
-    }
-  }, [args, cwd, fontSize, onProfileSaved, shell]);
+  const save = useCallback(
+    async (overrides?: { shell?: string | undefined; args?: string[] }) => {
+      setSaving(true);
+      setError(null);
+      setStatus(null);
+      const shellValue = overrides && "shell" in overrides ? overrides.shell : shell;
+      const argsValue = overrides?.args ?? args;
+      try {
+        const saved = await profilePatch({
+          shell: shellValue && shellValue.trim().length > 0 ? shellValue.trim() : null,
+          args: argsValue,
+          cwd: cwd.trim().length > 0 ? cwd.trim() : null,
+          font_size: fontSize,
+        });
+        applySavedProfile(saved);
+        setStatus("Saved. New sessions (or a restart) will use this profile.");
+        await onProfileSaved?.(saved);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save terminal profile");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [applySavedProfile, args, cwd, fontSize, onProfileSaved, shell],
+  );
+
+  const handleShellSelectionChange = useCallback(
+    (selection: { shell: string | undefined; args: string[] }) => {
+      setShell(selection.shell);
+      setArgs(selection.args);
+      if (!skipShellAutoSaveRef.current && !loading) {
+        void save({ shell: selection.shell, args: selection.args });
+      }
+    },
+    [loading, save],
+  );
 
   return (
     <section id={sectionId}>
       <h2>Terminal profile</h2>
       <p className="muted-block">
-        Choose the shell new sessions launch. On Windows, installed WSL distros show up here as first-class entries; on
-        macOS/Linux your login shells from <code>/etc/shells</code> are listed. Use Advanced for any executable + args.
+        Choose the shell new sessions launch. Shell changes save automatically; use the button below for working
+        directory and font size. On Windows, installed WSL distros show up here as first-class entries; on macOS/Linux
+        your login shells from <code>/etc/shells</code> are listed. Use Advanced for any executable + args.
       </p>
       {error ? <p className="error-text">{error}</p> : null}
 
-      <ShellProfilePicker shell={shell} args={args} onChange={(next) => {
-        setShell(next.shell);
-        setArgs(next.args);
-      }} />
+      <ShellProfilePicker shell={shell} args={args} presets={presets} onChange={handleShellSelectionChange} />
 
       <label className="field-row">
         <span>Working directory</span>
@@ -132,15 +155,15 @@ export function TerminalProfileSection({
 
       <div className="inline-controls">
         <button type="button" className="inline-btn" onClick={() => void save()} disabled={loading || saving}>
-          {saving ? "Saving…" : "Save terminal profile"}
+          {saving ? "Saving…" : "Save working directory & font"}
         </button>
         {status ? <p className="muted-block">{status}</p> : null}
       </div>
 
       <h3 className="settings-subheading">Saved shells</h3>
       <p className="muted-block">
-        Named shortcuts for shells you open often. They appear in the command palette (<kbd>Ctrl/Cmd+K</kbd>) as{" "}
-        <strong>Open shell: …</strong>
+        Named shortcuts for shells you open often. They appear in the new-tab shell picker and command palette (
+        <kbd>Ctrl/Cmd+K</kbd>) as <strong>Open shell: …</strong>
       </p>
       <label className="field-row">
         <span>Preset name</span>

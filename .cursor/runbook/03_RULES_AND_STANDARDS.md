@@ -75,6 +75,7 @@ Adding/altering a backend command or event:
 
 - **`.cursor/` is gitignored** (`.gitignore` line `.cursor/`). This runbook lives there and is **not version-controlled by default** — see note in `04_CURRENT_STATE.md`. `.cursorrules` (repo root) IS tracked.
 - **Windows ConPTY EOF:** the PTY master must be dropped (`take()`) before joining the reader thread or `read()` may never return EOF. Don't reorder teardown in `session_manager.rs` (`close_session_handle`). Covered by `pty_reader_thread_finishes_after_child_kill`.
+- **Windows Terminal focus steal:** If Mach is launched from WT (or WT is the default terminal app), inherited `WT_*` env vars and visible `wsl.exe -l -q` probes can foreground an existing WT window on spawn. Child env strips WT markers in `win_env.rs`; WSL list probe uses `CREATE_NO_WINDOW`; frontend `refocusMainWindow()` runs after `pty_spawn`. Don't remove without manual Win11+WT smoke.
 - **`tauri/test` (MockRuntime) only on non-Windows.** Enabling the `test` feature on the lib crate breaks Windows lib tests with `STATUS_ENTRYPOINT_NOT_FOUND`. Invoke smoke uses a split Unix-integration / Windows-lib-fallback layout (see `Cargo.toml` + handoff "Shell invoke transport").
 - **Composer-first input is intentional:** xterm has `disableStdin=true`. Do not "fix" the viewport to accept stdin — typing belongs in the composer. Focus follows the composer.
 - **Debug-only commands:** `runtime_debug_snapshot` and `settings_schema_dump` error unless built with debug assertions. Diagnostics UI only appears in `import.meta.env.DEV`.

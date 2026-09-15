@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ShellCandidate } from "../core/terminal";
+import type { ShellCandidate, ShellPreset } from "../core/terminal";
 import { isTauri } from "../core/tauriRuntime";
 import { invalidateShellCandidatesCache, loadShellCandidates } from "../core/shellCandidatesCache";
 import {
@@ -8,14 +8,18 @@ import {
   formatShellCommandPreview,
   groupShellCandidates,
   parseArgsLines,
+  parseShellPresetOptionId,
   sameArgs,
   selectedCandidateId,
   selectionForCandidateId,
+  shellPresetOptionId,
 } from "../core/shellProfiles";
 
 interface ShellProfilePickerProps {
   shell: string | undefined;
   args: string[];
+  /** Saved shells shown as first-class picker entries (new tab + settings). */
+  presets?: ShellPreset[];
   onChange: (selection: { shell: string | undefined; args: string[] }) => void;
 }
 
@@ -26,12 +30,13 @@ interface ShellProfilePickerProps {
  * editor keeps a local text buffer so typing multi-line args isn't fought by the
  * trim-on-parse round-trip.
  */
-export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePickerProps) {
+export function ShellProfilePicker({ shell, args, presets = [], onChange }: ShellProfilePickerProps) {
   const [candidates, setCandidates] = useState<ShellCandidate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [forceCustom, setForceCustom] = useState(false);
+  const [selectedPresetOptionId, setSelectedPresetOptionId] = useState<string | null>(null);
   const [argsText, setArgsText] = useState(() => argsToLines(args));
   const lastPropagatedArgsRef = useRef<string[]>(args);
 
@@ -66,10 +71,24 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
     }
   }, [args]);
 
-  const computedId = selectedCandidateId(candidates, shell, args);
+  const computedId = selectedCandidateId(candidates, shell, args, selectedPresetOptionId);
   const selectedId = forceCustom ? CUSTOM_SHELL_OPTION_ID : computedId;
   const isCustom = selectedId === CUSTOM_SHELL_OPTION_ID;
   const groups = groupShellCandidates(candidates);
+
+  useEffect(() => {
+    if (selectedPresetOptionId) {
+      const presetId = parseShellPresetOptionId(selectedPresetOptionId);
+      const preset = presets.find((entry) => entry.id === presetId);
+      if (
+        !preset ||
+        preset.shell !== (shell ?? "").trim() ||
+        !sameArgs(preset.args, args)
+      ) {
+        setSelectedPresetOptionId(null);
+      }
+    }
+  }, [args, presets, selectedPresetOptionId, shell]);
 
   useEffect(() => {
     if (computedId === CUSTOM_SHELL_OPTION_ID && (shell ?? "").trim().length > 0) {
@@ -78,12 +97,27 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
   }, [computedId, shell]);
 
   const handleSelect = (id: string) => {
+    const presetId = parseShellPresetOptionId(id);
+    if (presetId) {
+      const preset = presets.find((entry) => entry.id === presetId);
+      if (!preset) {
+        return;
+      }
+      setForceCustom(false);
+      setSelectedPresetOptionId(id);
+      const nextArgs = [...preset.args];
+      lastPropagatedArgsRef.current = nextArgs;
+      onChange({ shell: preset.shell, args: nextArgs });
+      return;
+    }
     if (id === CUSTOM_SHELL_OPTION_ID) {
       setForceCustom(true);
+      setSelectedPresetOptionId(null);
       setShowAdvanced(true);
       return;
     }
     setForceCustom(false);
+    setSelectedPresetOptionId(null);
     const selection = selectionForCandidateId(candidates, id);
     if (selection) {
       lastPropagatedArgsRef.current = selection.args;
@@ -93,6 +127,8 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
 
   const handleArgsTextChange = (text: string) => {
     setArgsText(text);
+    setSelectedPresetOptionId(null);
+    setForceCustom(true);
     const parsed = parseArgsLines(text);
     lastPropagatedArgsRef.current = parsed;
     onChange({ shell, args: parsed });
@@ -108,6 +144,15 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
           disabled={loading}
           aria-label="Shell"
         >
+          {presets.length > 0 ? (
+            <optgroup label="Saved shells">
+              {presets.map((preset) => (
+                <option key={preset.id} value={shellPresetOptionId(preset.id)}>
+                  {preset.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
           {groups.map((group) => (
             <optgroup key={group.kind} label={group.label}>
               {group.items.map((item) => (
@@ -149,6 +194,7 @@ export function ShellProfilePicker({ shell, args, onChange }: ShellProfilePicker
               value={shell ?? ""}
               onChange={(e) => {
                 setForceCustom(true);
+                setSelectedPresetOptionId(null);
                 onChange({ shell: e.target.value || undefined, args });
               }}
             />

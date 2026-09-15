@@ -13,6 +13,15 @@ const MACHINE_ENV_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager
 const USER_ENV_KEY: &str = "Environment";
 const PATH_VAR: &str = "Path";
 
+/// Windows Terminal session markers inherited when Mach is launched from WT. Spawning a
+/// ConPTY child with these set can route focus to an existing WT window (OpenConsole focus bug).
+const WT_CHILD_ENV_STRIP: &[&str] = &[
+    "WT_SESSION",
+    "WT_PROFILE_ID",
+    "WT_SESSION_ID",
+    "WT_PARENT",
+];
+
 /// Merge machine and user PATH segments: machine first, then user; dedupe case-insensitively.
 pub fn merge_path_strings(machine: &str, user: &str) -> String {
     let mut seen = HashSet::new();
@@ -67,9 +76,20 @@ pub fn merged_path_from_registry() -> Result<String, String> {
     expand_environment_string(&raw)
 }
 
+/// Drop Windows Terminal ownership markers so ConPTY children do not activate WT on spawn.
+fn strip_windows_terminal_session_markers(env: &mut HashMap<String, String>) {
+    for key in WT_CHILD_ENV_STRIP {
+        env.remove(*key);
+    }
+    if env.get("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("WindowsTerminal")) {
+        env.remove("TERM_PROGRAM");
+    }
+}
+
 /// Build the environment map passed to a PTY child: process env, registry PATH override, profile overlay.
 pub fn build_child_environment(profile_env: HashMap<String, String>) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = std::env::vars().collect();
+    strip_windows_terminal_session_markers(&mut env);
     match merged_path_from_registry() {
         Ok(path) => {
             env.insert("PATH".to_string(), path);
@@ -109,5 +129,20 @@ mod tests {
         let expanded = expand_environment_string("%SystemRoot%\\System32")
             .expect("expansion should succeed");
         assert_eq!(expanded, format!("{system_root}\\System32"));
+    }
+
+    #[test]
+    fn strip_windows_terminal_session_markers_removes_wt_keys() {
+        let mut env = HashMap::from([
+            ("WT_SESSION".to_string(), "abc".to_string()),
+            ("WT_PROFILE_ID".to_string(), "pwsh".to_string()),
+            ("TERM_PROGRAM".to_string(), "WindowsTerminal".to_string()),
+            ("PATH".to_string(), "C:\\Windows".to_string()),
+        ]);
+        strip_windows_terminal_session_markers(&mut env);
+        assert!(!env.contains_key("WT_SESSION"));
+        assert!(!env.contains_key("WT_PROFILE_ID"));
+        assert!(!env.contains_key("TERM_PROGRAM"));
+        assert_eq!(env.get("PATH"), Some(&"C:\\Windows".to_string()));
     }
 }

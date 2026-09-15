@@ -568,4 +568,18 @@ mod tests {
         apply_profile_patch(&mut profile, &patch);
         assert!(profile.args.is_empty());
     }
+
+    #[test]
+    fn profile_patch_json_deserializes_shell_string() {
+        let patch: ProfilePatch =
+            serde_json::from_str(r#"{"shell":"wsl.exe","args":["-d","Ubuntu"]}"#).expect("parse patch json");
+        assert_eq!(patch.shell, Some(Some("wsl.exe".to_string())));
+        assert_eq!(patch.args.as_deref(), Some(&["-d".to_string(), "Ubuntu".to_string()][..]));
+    }
+
+    #[test]
+    fn profile_patch_json_deserializes_shell_null_as_clear() {
+        let patch: ProfilePatch = serde_json::from_str(r#"{"shell":null}"#).expect("parse patch json");
+        assert_eq!(patch.shell, Some(None));
+    }
 }

@@ -6,9 +6,12 @@ import {
   formatShellCommandPreview,
   groupShellCandidates,
   parseArgsLines,
+  parseShellPresetOptionId,
   sameArgs,
   selectedCandidateId,
   selectionForCandidateId,
+  shellPresetOptionId,
+  validateShellSpawnSelection,
 } from "./shellProfiles";
 
 function candidate(overrides: Partial<ShellCandidate> & Pick<ShellCandidate, "id" | "shell">): ShellCandidate {
@@ -76,6 +79,11 @@ describe("selectedCandidateId", () => {
     expect(selectedCandidateId(CANDIDATES, "fish", [])).toBe(CUSTOM_SHELL_OPTION_ID);
     expect(selectedCandidateId(CANDIDATES, "wsl.exe", ["-d", "Debian"])).toBe(CUSTOM_SHELL_OPTION_ID);
   });
+
+  it("prefers an active saved-preset option id", () => {
+    const presetId = shellPresetOptionId("preset-abc");
+    expect(selectedCandidateId(CANDIDATES, "fish", [], presetId)).toBe(presetId);
+  });
 });
 
 describe("groupShellCandidates", () => {
@@ -95,5 +103,29 @@ describe("selectionForCandidateId", () => {
   it("returns null for the custom sentinel or unknown id", () => {
     expect(selectionForCandidateId(CANDIDATES, CUSTOM_SHELL_OPTION_ID)).toBeNull();
     expect(selectionForCandidateId(CANDIDATES, "nope")).toBeNull();
+  });
+});
+
+describe("shellPresetOptionId", () => {
+  it("round-trips preset ids", () => {
+    expect(shellPresetOptionId("abc")).toBe("preset:abc");
+    expect(parseShellPresetOptionId("preset:abc")).toBe("abc");
+    expect(parseShellPresetOptionId("pwsh")).toBeNull();
+  });
+});
+
+describe("validateShellSpawnSelection", () => {
+  it("rejects args without a shell executable", () => {
+    expect(validateShellSpawnSelection(undefined, ["-d", "Ubuntu"])).toMatch(/shell executable/i);
+  });
+
+  it("allows empty shell for profile default", () => {
+    expect(validateShellSpawnSelection(undefined, [])).toBeNull();
+  });
+
+  it("requires explicit shell when requested", () => {
+    expect(
+      validateShellSpawnSelection("", [], { requireExplicitShell: true }),
+    ).toMatch(/Enter a shell executable/i);
   });
 });
