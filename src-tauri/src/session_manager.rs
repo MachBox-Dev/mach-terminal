@@ -25,6 +25,10 @@ const AI_CONTEXT_EVENT: &str = "ai-context";
 const MAX_HISTORY: usize = 3000;
 const MAX_CHUNK: usize = 2048;
 const MAX_PENDING_CHUNKS: usize = 64;
+/// Hard cap on the in-flight `command_buffer` used for history-line sanitization.
+/// A paste or scripted write with no CR/LF would otherwise grow this string without
+/// bound for the life of the session (TER audit 2026-06, CRITICAL).
+const MAX_COMMAND_BUFFER_BYTES: usize = 64 * 1024;
 const STATUS_RUNNING: &str = "running";
 const STATUS_STOPPED: &str = "stopped";
 const STATUS_CLOSED: &str = "closed";
@@ -490,6 +494,7 @@ impl SessionManager {
             .lock()
             .map_err(|error| format!("failed to lock command buffer: {error}"))?;
         command_buffer.push_str(data);
+        truncate_command_buffer_to_cap(&mut command_buffer, MAX_COMMAND_BUFFER_BYTES);
 
         if data.contains('\r') || data.contains('\n') {
             let command = crate::input_sanitize::sanitize_command_line_for_history(&command_buffer);
@@ -726,6 +731,22 @@ impl SessionManager {
             max_chunk_size: MAX_CHUNK,
         })
     }
+}
+
+/// Keep `buffer` within `max_bytes` by dropping from the front (oldest input first),
+/// snapped to the nearest char boundary so we never split a multi-byte UTF-8 sequence.
+/// A paste/scripted write with no CR/LF is the only way this triggers in practice; the
+/// dropped prefix only affects history-line sanitization, not what was written to the PTY.
+fn truncate_command_buffer_to_cap(buffer: &mut String, max_bytes: usize) {
+    if buffer.len() <= max_bytes {
+        return;
+    }
+    let excess = buffer.len() - max_bytes;
+    let mut cut = excess;
+    while cut < buffer.len() && !buffer.is_char_boundary(cut) {
+        cut += 1;
+    }
+    buffer.drain(..cut);
 }
 
 fn query_history_entries(history: &VecDeque<HistoryEntry>, request: &HistoryQueryRequest) -> Vec<HistoryEntry> {
@@ -966,7 +987,8 @@ pub fn default_shell() -> String {
 mod tests {
     use super::{
         decode_utf8_streaming, enqueue_output_chunk, history_store, normalize_history_replay_command,
-        query_history_entries, split_chunk, SessionManager, MAX_CHUNK, MAX_PENDING_CHUNKS,
+        query_history_entries, split_chunk, truncate_command_buffer_to_cap, SessionManager, MAX_CHUNK,
+        MAX_COMMAND_BUFFER_BYTES, MAX_PENDING_CHUNKS,
     };
     use crate::models::{HistoryEntry, HistoryQueryRequest};
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -1298,5 +1320,41 @@ mod tests {
     fn history_replay_normalization_appends_single_newline_when_missing() {
         assert_eq!(normalize_history_replay_command("echo hello"), "echo hello\n");
         assert_eq!(normalize_history_replay_command("echo hello\n"), "echo hello\n");
+    }
+
+    #[test]
+    fn truncate_command_buffer_leaves_short_buffer_untouched() {
+        let mut buffer = String::from("short input");
+        truncate_command_buffer_to_cap(&mut buffer, 64);
+        assert_eq!(buffer, "short input");
+    }
+
+    #[test]
+    fn truncate_command_buffer_drops_oldest_bytes_over_cap() {
+        let mut buffer = "a".repeat(100);
+        truncate_command_buffer_to_cap(&mut buffer, 40);
+        assert_eq!(buffer.len(), 40);
+        assert!(buffer.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn truncate_command_buffer_never_splits_a_utf8_char_boundary() {
+        // Each "é" is 2 bytes; a naive byte-offset cut at an odd length would panic/corrupt.
+        let mut buffer = "é".repeat(50);
+        let original_len = buffer.len();
+        truncate_command_buffer_to_cap(&mut buffer, original_len - 1);
+        assert!(buffer.len() <= original_len);
+        assert!(buffer.is_char_boundary(0));
+        assert!(buffer.chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn a_paste_bomb_without_newline_cannot_grow_command_buffer_unbounded() {
+        let mut buffer = String::new();
+        for _ in 0..2000 {
+            buffer.push_str(&"x".repeat(1024));
+            truncate_command_buffer_to_cap(&mut buffer, MAX_COMMAND_BUFFER_BYTES);
+            assert!(buffer.len() <= MAX_COMMAND_BUFFER_BYTES);
+        }
     }
 }
