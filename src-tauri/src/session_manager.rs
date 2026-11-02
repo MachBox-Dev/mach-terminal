@@ -619,29 +619,13 @@ impl SessionManager {
         Ok(handle.info().ok().and_then(|info| info.cwd))
     }
 
-    /// Inspect the shell PID and any child process command line for hybrid agent CLI detection.
-    pub fn inspect_session_process(
-        &self,
-        session_id: &str,
-    ) -> Result<crate::agent_inspect::SessionProcessInspection, String> {
-        let shell_pid = {
-            let sessions = self
-                .sessions
-                .lock()
-                .map_err(|error| format!("failed to lock session manager: {error}"))?;
-            let Some(handle) = sessions.get(session_id) else {
-                return Err(format!("session `{session_id}` does not exist"));
-            };
-            let pid = handle.child.lock().ok().and_then(|c| c.process_id());
-            pid
-        };
-        let child_command_line = shell_pid.and_then(crate::agent_inspect::probe_child_command_line);
-        Ok(crate::agent_inspect::SessionProcessInspection {
-            session_id: session_id.to_string(),
-            shell_pid,
-            foreground_command: child_command_line.clone(),
-            child_command_line,
-        })
+    pub fn session_shell_pid(&self, session_id: &str) -> Result<Option<u32>, String> {
+        let sessions = self.sessions.lock()
+            .map_err(|error| format!("failed to lock session manager: {error}"))?;
+        let handle = sessions.get(session_id)
+            .ok_or_else(|| format!("session `{session_id}` does not exist"))?;
+        let pid = handle.child.lock().ok().and_then(|child| child.process_id());
+        Ok(pid)
     }
 
     #[instrument(skip(self, app, request))]

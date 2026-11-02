@@ -21,6 +21,8 @@ export function isShellExitPayload(data: string): boolean {
 export function appendTerminalInputLine(currentLine: string, data: string): { line: string; submitted: string | null } {
   let line = currentLine;
   const printable = data
+    .replace(/\x1bP[\s\S]*?\x1b\\/g, "")
+    .replace(/\x1bO[A-DFHP-S]/g, "")
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\x1b[()][^]/g, "");

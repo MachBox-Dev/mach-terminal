@@ -33,6 +33,105 @@ pub fn is_known_agent_exe(exe_or_cmd: &str) -> bool {
     )
 }
 
+fn agent_script_identity(script: &str) -> Option<&'static str> {
+    let path = script.replace('\\', "/").to_ascii_lowercase();
+    let base = path.rsplit('/').next()?;
+    let stem = base
+        .strip_suffix(".exe")
+        .or_else(|| base.strip_suffix(".cmd"))
+        .or_else(|| base.strip_suffix(".js"))
+        .or_else(|| base.strip_suffix(".mjs"))
+        .or_else(|| base.strip_suffix(".py"))
+        .unwrap_or(base);
+    match stem {
+        "agy" | "antigravity" => Some("agy"),
+        "claude" | "claude-code" => Some("claude"),
+        "codex" => Some("codex"),
+        "gemini" => Some("gemini"),
+        "aider" => Some("aider"),
+        "opencode" => Some("opencode"),
+        "cursor-agent" => Some("cursor-agent"),
+        "goose" => Some("goose"),
+        "amp" => Some("amp"),
+        "copilot" => Some("copilot"),
+        _ if path.ends_with("/@anthropic-ai/claude-code/cli.js") => Some("claude"),
+        _ if path.ends_with("/@google/gemini-cli/dist/index.js") => Some("gemini"),
+        _ if path.ends_with("/@openai/codex/bin/codex.js") => Some("codex"),
+        _ => None,
+    }
+}
+
+fn is_interpreter(exe: &str) -> bool {
+    let normalized = exe.replace('\\', "/").to_ascii_lowercase();
+    let base = normalized.rsplit('/').next().unwrap_or("");
+    let stem = base.strip_suffix(".exe").unwrap_or(base);
+    matches!(stem, "node" | "nodejs" | "bun" | "python" | "python3")
+        || stem
+            .strip_prefix("python3.")
+            .is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn interpreter_agent_identity(args: &[String]) -> Option<&'static str> {
+    if !is_interpreter(args.first()?) {
+        return None;
+    }
+    let script = args.get(1)?;
+    if script == "-m" {
+        return match args.get(2)?.as_str() {
+            "aider" | "aider.main" => Some("aider"),
+            _ => None,
+        };
+    }
+    if script.starts_with('-') {
+        return None;
+    }
+    agent_script_identity(script)
+}
+
+// Preserve quoted command paths when the process snapshot includes them.
+#[cfg(any(not(target_os = "windows"), test))]
+fn command_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    for ch in command.chars() {
+        if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+        } else if quote.is_none() && ch.is_whitespace() {
+            if !token.is_empty() {
+                tokens.push(std::mem::take(&mut token));
+            }
+        } else {
+            token.push(ch);
+        }
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
+}
+
+#[cfg(windows)]
+fn windows_interpreter_identity(pid: u32) -> Option<String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    let pid = Pid::from_u32(pid);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    let process = system.process(pid)?;
+    let args: Vec<String> = process
+        .cmd()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    interpreter_agent_identity(&args).map(str::to_string)
+}
+
 /// Probe descendant processes of `shell_pid` to detect any active CLI coding agent
 /// (`agy`, `claude`, `codex`, `gemini`, `aider`, `opencode`, `cursor-agent`, `goose`, `amp`, `copilot`).
 ///
@@ -98,6 +197,11 @@ pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
                         if is_known_agent_exe(exe_name) {
                             return Some(exe_name.clone());
                         }
+                        if is_interpreter(exe_name) {
+                            if let Some(identity) = windows_interpreter_identity(*child_pid) {
+                                return Some(identity);
+                            }
+                        }
                     }
                 }
             }
@@ -146,8 +250,12 @@ fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String>
             if !visited.insert(*pid) {
                 continue;
             }
-            if is_known_agent_exe(command) {
+            let tokens = command_tokens(command);
+            if tokens.first().is_some_and(|exe| is_known_agent_exe(exe)) {
                 return Some(command.clone());
+            }
+            if let Some(identity) = interpreter_agent_identity(&tokens) {
+                return Some(identity.to_string());
             }
             queue.push_back(*pid);
         }
@@ -171,6 +279,64 @@ mod tests {
             agent_from_process_snapshot(10, "10 11 zsh\n11 10 bash"),
             None
         );
+    }
+
+    #[test]
+    fn recognizes_interpreter_scripts_without_matching_unrelated_arguments() {
+        for (cmd, expected) in [
+            (
+                "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                Some("claude"),
+            ),
+            (
+                "node /usr/lib/node_modules/@google/gemini-cli/dist/index.js",
+                Some("gemini"),
+            ),
+            ("bun /opt/codex.js", Some("codex")),
+            ("python3 -m aider", Some("aider")),
+            ("python3.13 -m aider.main", Some("aider")),
+            ("node /tmp/server.js claude", None),
+            ("node --eval claude", None),
+            ("python3 -m unrelated aider", None),
+        ] {
+            let snapshot = format!("11 10 {cmd}");
+            assert_eq!(
+                agent_from_process_snapshot(10, &snapshot).as_deref(),
+                expected
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reads_current_process_command_line_without_subprocesses() {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let mut system = System::new();
+        let pid = Pid::from_u32(std::process::id());
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+        assert!(!system.process(pid).unwrap().cmd().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_detects_a_live_node_agent_script_in_descendants() {
+        use std::os::windows::process::CommandExt;
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("claude.js");
+        std::fs::write(&script, "setTimeout(() => {}, 30000);").unwrap();
+        let mut child = std::process::Command::new("node")
+            .arg(&script)
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let detected = super::probe_child_command_line(std::process::id());
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(detected.as_deref(), Some("claude"));
     }
 
     #[test]

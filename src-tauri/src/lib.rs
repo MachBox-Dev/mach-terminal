@@ -368,11 +368,20 @@ fn pty_list_sessions(manager: State<'_, SessionManager>) -> Result<Vec<PtySessio
 
 #[tauri::command]
 #[instrument(skip(manager))]
-fn pty_inspect_session_process(
+async fn pty_inspect_session_process(
     manager: State<'_, SessionManager>,
     session_id: String,
 ) -> Result<crate::agent_inspect::SessionProcessInspection, String> {
-    manager.inspect_session_process(&session_id)
+    let shell_pid = manager.session_shell_pid(&session_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let child_command_line = shell_pid.and_then(crate::agent_inspect::probe_child_command_line);
+        crate::agent_inspect::SessionProcessInspection {
+            session_id,
+            shell_pid,
+            foreground_command: child_command_line.clone(),
+            child_command_line,
+        }
+    }).await.map_err(|error| format!("process inspection failed: {error}"))
 }
 
 #[tauri::command]
