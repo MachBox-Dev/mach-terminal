@@ -187,8 +187,11 @@ it("retains interpreter-backed and manually selected agents on negative process 
     expect(shouldClearAgentAfterNegativeProbe(state, 5000, false)).toBe(true);
   }
   const probed = createAgentSessionState("s", getAgentCliProfile("claude"), "process", { nowMs: 0 });
-  expect(shouldClearAgentAfterNegativeProbe(probed, 5000)).toBe(true);
-  expect(shouldClearAgentAfterNegativeProbe({ ...probed, pinned: true }, 5000)).toBe(false);
+  expect(shouldClearAgentAfterNegativeProbe(probed, 5000)).toBe(false);
+  expect(shouldClearAgentAfterNegativeProbe(probed, 5000, null)).toBe(false);
+  expect(shouldClearAgentAfterNegativeProbe(probed, 5000, true)).toBe(false);
+  expect(shouldClearAgentAfterNegativeProbe(probed, 5000, false)).toBe(true);
+  expect(shouldClearAgentAfterNegativeProbe({ ...probed, pinned: true }, 5000, false)).toBe(false);
 });
 it("closes only shell recipients regardless of mixed broadcast target order", () => {
   const agent = createAgentSessionState("agent", getAgentCliProfile("claude"), "command");

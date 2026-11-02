@@ -1573,7 +1573,7 @@ export function reduceAgentStateOnOutput(
 }
 
 export function shouldClearAgentAfterNegativeProbe(state: AgentSessionState, nowMs: number, hasDescendants?: boolean | null): boolean {
-  return (hasDescendants === false || state.detectedVia === "process") && !state.pinned && nowMs - state.detectedAtMs >= 1800;
+  return hasDescendants === false && !state.pinned && nowMs - state.detectedAtMs >= 1800;
 }
 
 export function shellExitRecipients(ids: string[], agents: Record<string, AgentSessionState>): string[] {
