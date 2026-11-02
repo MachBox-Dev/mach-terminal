@@ -215,8 +215,7 @@ impl SessionManager {
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
-                        // Shell exited: wait on the already-dead child to grab its exit code
-                        // before the SessionHandle is dropped by the `sessions.remove` below.
+                        // EOF may arrive before process exit; keep closure available while reaping.
                         let exit_code = derive_exit_code(&child_for_thread);
                         let _ = update_status_and_emit(
                             &app_for_thread,
@@ -620,12 +619,16 @@ impl SessionManager {
     }
 
     pub fn session_shell_pid(&self, session_id: &str) -> Result<Option<u32>, String> {
-        let sessions = self.sessions.lock()
-            .map_err(|error| format!("failed to lock session manager: {error}"))?;
-        let handle = sessions.get(session_id)
-            .ok_or_else(|| format!("session `{session_id}` does not exist"))?;
-        let pid = handle.child.lock().ok().and_then(|child| child.process_id());
-        Ok(pid)
+        let child = {
+            let sessions = self.sessions.lock()
+                .map_err(|error| format!("failed to lock session manager: {error}"))?;
+            let handle = sessions.get(session_id)
+                .ok_or_else(|| format!("session `{session_id}` does not exist"))?;
+            Arc::clone(&handle.child)
+        };
+        let process = child.try_lock()
+            .map_err(|error| format!("session process is unavailable: {error}"))?;
+        Ok(process.process_id())
     }
 
     #[instrument(skip(self, app, request))]
@@ -846,19 +849,15 @@ fn update_status_and_emit(
     emit_result.map_err(|error| format!("failed to emit lifecycle event: {error}"))
 }
 
-/// Lock the shared child handle and wait for it, returning the exit code as an `i32`.
-///
-/// Called from the reader thread after an EOF (`Ok(0)`) signals the shell exited, so
-/// `wait()` should be an effectively non-blocking reap. `portable_pty::ExitStatus::exit_code()`
-/// returns `u32`; we downcast to `i32` so the JSON payload keeps conventional signedness
-/// (POSIX shells conventionally expose `128 + signal_number` for signal deaths, and those
-/// fit comfortably in `i32`). We do not plumb a separate `signal` field in this tranche.
+/// EOF can precede child exit. Poll without retaining the child lock so close can kill it.
 fn derive_exit_code(child: &Arc<Mutex<Box<dyn portable_pty::Child + Send>>>) -> Option<i32> {
-    child
-        .lock()
-        .ok()
-        .and_then(|mut c| c.wait().ok())
-        .map(|status| status.exit_code() as i32)
+    loop {
+        let status = child.lock().ok()?.try_wait().ok()?;
+        if let Some(status) = status {
+            return Some(status.exit_code() as i32);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 pub fn can_transition_status(current: &str, next: &str) -> bool {
@@ -1226,6 +1225,44 @@ mod tests {
         assert!(manager.take_history_recovery_notice().is_some());
         assert!(!manager.history_recovery_pending());
         assert!(manager.take_history_recovery_notice().is_none());
+    }
+
+    #[test]
+    fn eof_reaping_and_pid_probes_leave_session_closure_available() {
+        use std::sync::{Arc, Mutex, mpsc};
+        let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut command = CommandBuilder::new(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
+        if cfg!(windows) { command.arg("/Q"); }
+        let child: Box<dyn portable_pty::Child + Send> = pair.slave.spawn_command(command).unwrap();
+        let mut killer = child.clone_killer();
+        drop(pair.slave);
+        let child = Arc::new(Mutex::new(child));
+        let manager = Arc::new(SessionManager::default());
+        manager.sessions.lock().unwrap().insert("probe".into(), super::SessionHandle {
+            id: "probe".into(), shell: "test".into(), cwd: Arc::new(Mutex::new(None)),
+            status: Arc::new(Mutex::new("running".into())),
+            master: Arc::new(Mutex::new(Some(pair.master))), writer: Arc::new(Mutex::new(None)),
+            child: Arc::clone(&child), command_buffer: Arc::new(Mutex::new(String::new())), reader_thread: None,
+        });
+        let held_child = child.lock().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let probe_manager = Arc::clone(&manager);
+        let probe = std::thread::spawn(move || { sender.send(probe_manager.session_shell_pid("probe")).unwrap(); });
+        let result = receiver.recv_timeout(Duration::from_secs(1));
+        let map_available = manager.sessions.try_lock().is_ok();
+        drop(held_child);
+        probe.join().unwrap();
+        let reaped_child = Arc::clone(&child);
+        let reaper = std::thread::spawn(move || super::derive_exit_code(&reaped_child));
+        std::thread::sleep(Duration::from_millis(50));
+        let child_available = child.try_lock().is_ok();
+        let _ = killer.kill();
+        let exit_code = reaper.join().unwrap();
+        manager.close_all().unwrap();
+        assert!(result.unwrap().is_err(), "busy inspection must return promptly");
+        assert!(map_available, "busy child must not retain session map");
+        assert!(child_available, "EOF reaper must release child while it is alive");
+        assert!(exit_code.is_some(), "reaper must retain the actual exit status");
     }
 
     #[test]
