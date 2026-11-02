@@ -23,6 +23,7 @@ The existing ruleset requires all three platform matrix jobs, Stability Signoff
 and Security Baseline (ubuntu), plus its CodeQL and pull-request rules. Preserve
 these names when editing CI. DCO is installed and has produced the successful
 `DCO` check (GitHub App ID 1861); it is included in required status checks.
+The verified `CodeRabbit` check (GitHub App ID 347564) is also required.
 Node 24 is used consistently for CI and release validation. Dependabot checks
 npm, Cargo and Actions weekly; updates still require normal PR checks/review.
 
@@ -39,7 +40,10 @@ advisories requires tauri-plugin-updater 2.14.1 and zip 9; Cargo also updates
 the compatible Tauri 2 framework chain (tauri 2.12.5). No new advisory ignores
 were added. The existing scoped quick-xml build-time exceptions are unchanged.
 
-Reproduce the update with `cargo update --manifest-path src-tauri/Cargo.toml
+The committed `Cargo.lock` is the reproducible baseline; fetch its exact versions
+with `cargo fetch --manifest-path src-tauri/Cargo.toml --locked`.
+To refresh the named packages to their latest compatible versions, run
+`cargo update --manifest-path src-tauri/Cargo.toml
 -p quinn-proto -p rustls -p rustls-webpki -p webpki-root-certs -p webpki-roots`
 and `cargo update --manifest-path src-tauri/Cargo.toml -p tauri-plugin-updater
 --precise 2.14.1`. Verify with `cargo audit -f src-tauri/Cargo.lock`, the Rust
