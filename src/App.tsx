@@ -1,5 +1,5 @@
 import { shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
-import { quitAgent } from "./core/agentQuit";
+import { clearAgentAfterConfirmedQuit, quitAgent } from "./core/agentQuit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
@@ -341,6 +341,7 @@ function App() {
   const sessionAgentsRef = useRef(sessionAgents);
   sessionAgentsRef.current = sessionAgents;
   const dismissedAgentSessionsRef = useRef<Record<string, boolean>>({});
+  const agentQuitInFlightRef = useRef<Record<string, boolean>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
   const resizeThrottleRef = useRef<Record<string, number>>({});
@@ -446,6 +447,7 @@ function App() {
       setSessionAgents,
     },
     transientRefs: {
+      agentQuitInFlightRef,
       dismissedAgentSessionsRef,
       pendingOutputRef,
       lastSequenceRef,
@@ -2447,35 +2449,30 @@ function App() {
 
   const handleQuitAgent = useCallback(() => {
     const sid = targetSessionIdForComposer ?? activeSessionId;
-    if (!sid) {
-      return;
-    }
-    dismissedAgentSessionsRef.current[sid] = true;
-    setSessionAgents((current) => {
-      if (!current[sid]) {
-        return current;
-      }
-      const next = { ...current };
-      delete next[sid];
-      return next;
-    });
+    const agent = sid ? sessionAgentsRef.current[sid] : undefined;
+    if (!sid || !agent || agentQuitInFlightRef.current[sid]) return;
+    agentQuitInFlightRef.current[sid] = true;
     void quitAgent(
       (data) => handleInput(sid, data),
       async () => {
-        if (!isTauri()) return false;
+        if (!isTauri()) return "unknown";
         const snap = await ptyInspectSessionProcess(sid);
         const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
-        return Boolean(cmdLine && detectAgentFromCommandLine(cmdLine));
+        const detected = cmdLine ? detectAgentFromCommandLine(cmdLine) : null;
+        if (detected?.id === agent.agentId) return "running";
+        return snap.hasDescendants === false ? "exited" : "unknown";
       },
       (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
-    ).then((stillRunning) => {
+    ).then((outcome) => {
+      if (outcome !== "exited" || sessionAgentsRef.current[sid]?.detectedAtMs !== agent.detectedAtMs) return;
       delete dismissedAgentSessionsRef.current[sid];
-      if (stillRunning) void inspectSessionAgentProcess(sid);
+      setSessionAgents((current) => clearAgentAfterConfirmedQuit(current, sid, agent.detectedAtMs, outcome));
     }).catch(() => {
-      // An unavailable probe must never authorize another write into the shell.
-      delete dismissedAgentSessionsRef.current[sid];
+      // Failed inspection is not proof of exit; preserve pin, history and controls.
+    }).finally(() => {
+      delete agentQuitInFlightRef.current[sid];
     });
-  }, [activeSessionId, handleInput, inspectSessionAgentProcess, targetSessionIdForComposer]);
+  }, [activeSessionId, handleInput, targetSessionIdForComposer]);
 
   const handleExecuteAgentSlashCommand = useCallback(
     (cmd: AgentSlashCommand) => {
