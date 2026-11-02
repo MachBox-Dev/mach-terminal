@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { evaluateTerminalUiIntent } from "./terminalUiIntent";
 
 describe("terminal UI intent decision helper", () => {
+  it("routes composer page scrolling only to the focused pane", () => {
+    for (const direction of ["up", "down"] as const) {
+      const request = { kind: "scrollPage" as const, direction, seq: 1 };
+      const baseline = { request, consumedSeq: 0, findQuery: "", followOutput: true };
+      expect(evaluateTerminalUiIntent({ ...baseline, isFocused: true }).action)
+        .toEqual({ type: "scrollPage", direction });
+      expect(evaluateTerminalUiIntent({ ...baseline, isFocused: false }).action).toBeUndefined();
+    }
+  });
   it("ignores stale seq on focused pane", () => {
     const result = evaluateTerminalUiIntent({
       request: { kind: "openFind", seq: 3 },

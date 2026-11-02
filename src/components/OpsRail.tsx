@@ -91,8 +91,8 @@ export function OpsRail({
   }, []);
 
   const copySlice = useCallback((run: RunRecord) => {
-    const scrollBuffer = sessionBufferStore.get(run.sessionId);
-    void navigator.clipboard.writeText(sliceBufferForRun(scrollBuffer, run));
+    const scrollBuffer = sessionBufferStore.getSnapshot(run.sessionId);
+    void navigator.clipboard.writeText(sliceBufferForRun(scrollBuffer.text, run, scrollBuffer.startOffset));
   }, []);
 
   const expandToTab = (tab: SideRailTab) => {

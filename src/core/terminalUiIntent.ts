@@ -3,6 +3,7 @@ import type { TerminalUiRequest } from "./terminalUiRequest";
 export type TerminalUiIntentAction =
   | { type: "openFind" }
   | { type: "scrollToBottom" }
+  | { type: "scrollPage"; direction: "up" | "down" }
   | { type: "findNext" }
   | { type: "findPrevious" }
   | { type: "clearViewport" }
@@ -44,6 +45,8 @@ export function evaluateTerminalUiIntent(input: EvaluateTerminalUiIntentInput): 
       return { nextConsumedSeq, action: { type: "openFind" } };
     case "scrollToBottom":
       return { nextConsumedSeq, action: { type: "scrollToBottom" } };
+    case "scrollPage":
+      return { nextConsumedSeq, action: { type: "scrollPage", direction: request.direction } };
     case "findNext":
       return findQuery.trim().length > 0 ? { nextConsumedSeq, action: { type: "findNext" } } : { nextConsumedSeq };
     case "findPrevious":

@@ -32,7 +32,7 @@ import {
 } from "./core/sessionCwd";
 import { collectExitedSessionIds } from "./core/sessionTabStatus";
 import { commandToTerminalUiIntent } from "./core/terminalCommandRouting";
-import type { TerminalUiRequest } from "./core/terminalUiRequest";
+import type { TerminalUiRequest, TerminalUiRequestInput } from "./core/terminalUiRequest";
 import {
   DEFAULT_UI_SURFACE_STATE,
   mergeUiSurfaceState,
@@ -718,6 +718,7 @@ function App() {
       sessionId,
       runLedger: runLedgerRef.current,
       sessionBuffers: sessionBufferStore.getAll(),
+      sessionBufferOffsets: { [sessionId]: sessionBufferStore.getSnapshot(sessionId).startOffset },
     }),
     enableAiTools: aiBehaviorSettings.enableAiTools,
     onAiAssistantReply: ({ output, sessionId }) => {
@@ -1109,7 +1110,7 @@ function App() {
             };
           });
         }
-        const bufLen = sessionBufferStore.get(sid).length;
+        const bufLen = sessionBufferStore.getSnapshot(sid).totalAppended;
         setRunLedger((ledger) =>
           appendCommandSubmitted(ledger, {
             sessionId: sid,
@@ -1449,7 +1450,8 @@ function App() {
       }
       const runs = runLedger[sessionId] ?? [];
       const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
-      const excerpt = failureOutputExcerpt(sessionBufferStore.get(sessionId), lastRun);
+      const buffer = sessionBufferStore.getSnapshot(sessionId);
+      const excerpt = failureOutputExcerpt(buffer.text, lastRun, 2400, buffer.startOffset);
       const question = buildFailureAiQuestion(failure, excerpt);
       void submitAiChat(sessionId, question);
     },
@@ -1837,7 +1839,7 @@ function App() {
     }
   }, [closePaneById]);
 
-  const dispatchTerminalUiRequest = useCallback((payload: Omit<TerminalUiRequest, "seq">) => {
+  const dispatchTerminalUiRequest = useCallback((payload: TerminalUiRequestInput) => {
     terminalUiSeqRef.current += 1;
     setTerminalUiRequest({ ...payload, seq: terminalUiSeqRef.current } as TerminalUiRequest);
   }, []);
@@ -1941,10 +1943,7 @@ function App() {
         if (activeSessionId) {
           setSessionUiSurface((current) => {
             const baseline = current[activeSessionId] ?? DEFAULT_UI_SURFACE_STATE;
-            const nextState =
-              terminalIntent === "jumpSearch"
-                ? baseline
-                : reduceUiSurfaceStateForRequest(baseline, { kind: terminalIntent });
+            const nextState = reduceUiSurfaceStateForRequest(baseline, { kind: terminalIntent });
             return { ...current, [activeSessionId]: nextState };
           });
         }
@@ -2268,6 +2267,7 @@ function App() {
       void closePanesForBroadcastExit(sessionIds);
     },
     onRequestComposerCompletion: requestComposerCompletion,
+    onScrollOutput: (direction) => dispatchTerminalUiRequest({ kind: "scrollPage", direction }),
     onBroadcastConsumed: () => {
       setWorkspace((current) => setBroadcastMode(current, "off"));
     },
@@ -2306,49 +2306,6 @@ function App() {
     sessionInputModes,
     focusGroupComposer: () => focusGroupComposerRef.current?.(),
   });
-
-  const handleGroupComposerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (groupComposer.isComposerAiToggleKey(event)) {
-        event.preventDefault();
-        groupComposer.onToggleComposerSubmitKind?.();
-        return;
-      }
-      if (
-        aiAssistEnabled &&
-        groupComposer.isAskFailureShortcut(
-          event,
-          groupComposer.composerDraft.trim().length === 0,
-          Boolean(groupComposer.commandFailure),
-        ) &&
-        groupComposer.onAskAboutFailure
-      ) {
-        event.preventDefault();
-        groupComposer.onAskAboutFailure();
-        return;
-      }
-      if (event.key === "ArrowUp" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        event.preventDefault();
-        groupComposer.stepComposerHistory("prev");
-        return;
-      }
-      if (event.key === "ArrowDown" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        event.preventDefault();
-        groupComposer.stepComposerHistory("next");
-        return;
-      }
-      if (event.key === "Tab" && groupComposer.composerSubmitKind !== "ai") {
-        event.preventDefault();
-        void groupComposer.requestComposerCompletion();
-        return;
-      }
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        groupComposer.submitComposer();
-      }
-    },
-    [aiAssistEnabled, groupComposer],
-  );
 
   const handleLaunchAgent = useCallback(
     (agentId: AgentCliId) => {
@@ -2666,6 +2623,7 @@ function App() {
             sessionAgents={sessionAgents}
             aiAssistEnabled={aiAssistEnabled}
             groupComposerActive={showGroupComposer}
+            onFocusGroupComposer={() => focusGroupComposerRef.current?.()}
             onAskAiSelection={queueAiSelection}
             onInput={(sessionId, data) => {
               void handleTerminalInput(sessionId, data);
@@ -2733,6 +2691,7 @@ function App() {
             agentSlashMatches={groupComposer.agentSlashMatches}
             onSelectAgentSlashCommand={handleInsertAgentSlashCommand}
             onOpenAgentRail={openAgentRail}
+            uiSurfaceState={targetSessionIdForComposer ? sessionUiSurface[targetSessionIdForComposer] : undefined}
             onToggleComposerSubmitKind={groupComposer.onToggleComposerSubmitKind}
             onAskAboutFailure={groupComposer.onAskAboutFailure}
             onAiExplainComposer={() => {
@@ -2750,7 +2709,7 @@ function App() {
             onToggleBroadcast={() => setWorkspace((current) => toggleBroadcastOnce(current))}
             onArmBroadcastSticky={() => setWorkspace((current) => armBroadcastSticky(current))}
             onSelectPanePill={(paneId) => setWorkspace((current) => setTargetPane(current, paneId))}
-            onKeyDown={handleGroupComposerKeyDown}
+            onKeyDown={groupComposer.onComposerKeyDown}
           />
           </section>
           {!opsRailCollapsed ? (

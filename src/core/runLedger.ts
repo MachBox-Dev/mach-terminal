@@ -12,7 +12,7 @@ export interface RunRecord {
   sessionId: string;
   commandText: string;
   submittedAtMs: number;
-  /** UTF-16 offset into merged session scrollback string; output for this run appends from here onward. */
+  /** Absolute UTF-16 stream position, including output evicted from retained scrollback. */
   bufferStart: number;
   /** UTF-16 exclusive end offset; null until superseded by the next run or session cleanup. */
   bufferEnd: number | null;
@@ -27,7 +27,7 @@ export interface AppendCommandSubmittedInput {
   commandText: string;
   submittedAtMs: number;
   sequence: number;
-  /** Current `sessionBuffers[sessionId].length` before recording this submission (Rust event ordering). */
+  /** Total UTF-16 characters appended before recording this submission. */
   bufferLengthBefore: number;
 }
 
@@ -131,9 +131,11 @@ export function serializePinnedMap(ledger: RunLedgerState): Record<string, Recor
   return out;
 }
 
-export function sliceBufferForRun(buffer: string, run: RunRecord): string {
-  const start = Math.min(run.bufferStart, buffer.length);
-  const endExclusive = run.bufferEnd === null ? buffer.length : Math.min(run.bufferEnd, buffer.length);
+export function sliceBufferForRun(buffer: string, run: RunRecord, bufferStartOffset = 0): string {
+  const start = Math.max(0, Math.min(run.bufferStart - bufferStartOffset, buffer.length));
+  const endExclusive = run.bufferEnd === null
+    ? buffer.length
+    : Math.max(0, Math.min(run.bufferEnd - bufferStartOffset, buffer.length));
   if (start >= endExclusive) {
     return "";
   }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SessionBufferStore } from "../state/sessionBufferStore";
 import {
   appendCommandSubmitted,
   applyPinsFromStorage,
@@ -10,6 +11,26 @@ import {
 } from "./runLedger";
 
 describe("runLedger", () => {
+  it("keeps run output aligned after the retained window slides", () => {
+    const store = new SessionBufferStore();
+    let ledger: RunLedgerState = {};
+    const submit = (sequence: number) => {
+      ledger = appendCommandSubmitted(ledger, {
+        sessionId: "s", commandText: `command ${sequence}`, submittedAtMs: sequence * 1000,
+        sequence, bufferLengthBefore: store.getSnapshot("s").totalAppended,
+      });
+    };
+    submit(1);
+    store.append("s", "first!", 10);
+    submit(2);
+    store.append("s", "second", 10);
+    submit(3);
+    store.append("s", "third", 10);
+    const buffer = store.getSnapshot("s");
+    const outputs = ledger.s.map((run) => sliceBufferForRun(buffer.text, run, buffer.startOffset));
+    expect(outputs).toEqual(["", "econd", "third"]);
+    expect(ledger.s.map((run) => run.bufferStart)).toEqual([0, 6, 12]);
+  });
   it("dedupes rapid duplicate command_submitted for same buffer cursor", () => {
     let ledger: RunLedgerState = {};
     ledger = appendCommandSubmitted(ledger, {

@@ -21,27 +21,22 @@ export function useWorkspaceFocus({
   sessionInputModes,
   focusGroupComposer,
 }: UseWorkspaceFocusOptions): void {
-  const focusTokenRef = useRef("");
   const focusGroupComposerRef = useRef(focusGroupComposer);
   focusGroupComposerRef.current = focusGroupComposer;
+  const mode = activeSessionId ? sessionInputModes[activeSessionId] ?? defaultSessionInputMode() : defaultSessionInputMode();
 
   useEffect(() => {
-    const token = `${activeGroupId}:${activePaneId}:${activeSessionId ?? ""}`;
-    if (focusTokenRef.current === token) {
-      return;
-    }
-    focusTokenRef.current = token;
-
+    let cancelled = false;
     queueMicrotask(() => {
-      if (!activeSessionId) {
+      if (cancelled || !activeSessionId) {
         return;
       }
-      const mode = sessionInputModes[activeSessionId] ?? defaultSessionInputMode();
       if (inputModeUsesComposer(mode)) {
         focusGroupComposerRef.current();
       } else {
         requestFocusActiveTerminal();
       }
     });
-  }, [activeGroupId, activePaneId, activeSessionId, sessionInputModes]);
+    return () => { cancelled = true; };
+  }, [activeGroupId, activePaneId, activeSessionId, mode]);
 }

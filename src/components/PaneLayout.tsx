@@ -37,6 +37,7 @@ interface PaneLayoutProps {
   aiAssistEnabled?: boolean;
   /** When true, per-pane composers are hidden (group composer handles input). */
   groupComposerActive?: boolean;
+  onFocusGroupComposer?: () => void;
   onAskAiSelection?: (sessionId: string, attachment: import("../core/aiChatState").AiContextAttachment) => void;
   onInput: (sessionId: string, data: string) => void;
   onResize: (sessionId: string, cols: number, rows: number) => void;
@@ -66,6 +67,7 @@ export function PaneLayout({
   sessionAgents = {},
   aiAssistEnabled = false,
   groupComposerActive = false,
+  onFocusGroupComposer,
   onAskAiSelection,
   onInput,
   onResize,
@@ -142,6 +144,7 @@ export function PaneLayout({
           uiSurfaceState={session ? sessionUiSurface[session.id] : undefined}
           aiAssistEnabled={aiAssistEnabled}
           showComposer={showPerPaneComposer}
+          onFocusGroupComposer={onFocusGroupComposer}
           onAskAiSelection={
             session && onAskAiSelection ? (attachment) => onAskAiSelection(session.id, attachment) : undefined
           }
