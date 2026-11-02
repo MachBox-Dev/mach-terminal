@@ -546,6 +546,7 @@ export interface SessionProcessInspection {
   shellPid?: number | null;
   foregroundCommand?: string | null;
   childCommandLine?: string | null;
+  hasDescendants?: boolean | null;
 }
 
 export async function ptyInspectSessionProcess(sessionId: string) {

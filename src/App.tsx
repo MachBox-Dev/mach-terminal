@@ -1729,7 +1729,7 @@ function App() {
         delete dismissedAgentSessionsRef.current[sid];
         setSessionAgents((prev) => {
           const existing = prev[sid];
-          if (!existing || !shouldClearAgentAfterNegativeProbe(existing, Date.now())) {
+          if (!existing || !shouldClearAgentAfterNegativeProbe(existing, Date.now(), snap.hasDescendants)) {
             return prev;
           }
           const next = { ...prev };

@@ -1109,23 +1109,7 @@ export function isAgentExitCommand(input: string): boolean {
  * has exited and returned control to the underlying shell.
  */
 export function hasAgentExitOutputSignal(rawChunk: string, cleanOutput?: string): boolean {
-  // 1. Alternate Screen Buffer exit (`CSI ? 1049 l`, `CSI ? 1047 l`, `CSI ? 47 l`)
-  //    without re-entering alternate screen after it in the same chunk.
-  const lastAltLeave = Math.max(
-    rawChunk.lastIndexOf("\x1b[?1049l"),
-    rawChunk.lastIndexOf("\x1b[?1047l"),
-    rawChunk.lastIndexOf("\x1b[?47l"),
-  );
-  const lastAltEnter = Math.max(
-    rawChunk.lastIndexOf("\x1b[?1049h"),
-    rawChunk.lastIndexOf("\x1b[?1047h"),
-    rawChunk.lastIndexOf("\x1b[?47h"),
-  );
-  if (lastAltLeave !== -1 && lastAltLeave > lastAltEnter) {
-    return true;
-  }
-
-  // 2. Shell prompt return (PowerShell `PS C:\...>`, OSC 133 prompt start `]133;A`)
+  // Nested programs also leave alternate screen; only shell-return markers confirm exit.
   if (rawChunk.includes("\x1b]133;A") || rawChunk.includes("\x1b]133;D")) {
     return true;
   }
@@ -1588,8 +1572,8 @@ export function reduceAgentStateOnOutput(
   };
 }
 
-export function shouldClearAgentAfterNegativeProbe(state: AgentSessionState, nowMs: number): boolean {
-  return state.detectedVia === "process" && !state.pinned && nowMs - state.detectedAtMs >= 1800;
+export function shouldClearAgentAfterNegativeProbe(state: AgentSessionState, nowMs: number, hasDescendants?: boolean | null): boolean {
+  return (hasDescendants === false || state.detectedVia === "process") && !state.pinned && nowMs - state.detectedAtMs >= 1800;
 }
 
 export function shellExitRecipients(ids: string[], agents: Record<string, AgentSessionState>): string[] {

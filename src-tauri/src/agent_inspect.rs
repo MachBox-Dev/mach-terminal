@@ -138,7 +138,17 @@ fn windows_interpreter_identity(pid: u32) -> Option<String> {
 /// On Windows, uses the in-process Win32 Toolhelp32 API (`CreateToolhelp32Snapshot`) so no
 /// external console subprocess (`powershell` / `wmic`) is ever spawned.
 /// Returns `Some(exe_name)` only when a known coding agent binary is a live descendant of `shell_pid`.
+pub struct AgentProcessProbe {
+    pub command_line: Option<String>,
+    pub has_descendants: bool,
+}
+
+#[cfg(test)]
 pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
+    probe_session_process(shell_pid).and_then(|probe| probe.command_line)
+}
+
+pub fn probe_session_process(shell_pid: u32) -> Option<AgentProcessProbe> {
     #[cfg(target_os = "windows")]
     {
         use std::collections::{HashMap, HashSet, VecDeque};
@@ -156,7 +166,11 @@ pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
             };
 
             let mut children_by_parent: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
-            if Process32FirstW(snapshot, &mut entry).is_ok() {
+            if Process32FirstW(snapshot, &mut entry).is_err() {
+                let _ = CloseHandle(snapshot);
+                return None;
+            }
+            {
                 loop {
                     let pid = entry.th32ProcessID;
                     let ppid = entry.th32ParentProcessID;
@@ -195,17 +209,28 @@ pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
                             queue.push_back(*child_pid);
                         }
                         if is_known_agent_exe(exe_name) {
-                            return Some(exe_name.clone());
+                            return Some(AgentProcessProbe {
+                                command_line: Some(exe_name.clone()),
+                                has_descendants: true,
+                            });
                         }
                         if is_interpreter(exe_name) {
                             if let Some(identity) = windows_interpreter_identity(*child_pid) {
-                                return Some(identity);
+                                return Some(AgentProcessProbe {
+                                    command_line: Some(identity),
+                                    has_descendants: true,
+                                });
                             }
                         }
                     }
                 }
             }
-            None
+            Some(AgentProcessProbe {
+                command_line: None,
+                has_descendants: children_by_parent
+                    .get(&shell_pid)
+                    .is_some_and(|children| !children.is_empty()),
+            })
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -217,12 +242,15 @@ pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
         if !output.status.success() {
             return None;
         }
-        agent_from_process_snapshot(shell_pid, &String::from_utf8_lossy(&output.stdout))
+        Some(process_probe_from_snapshot(
+            shell_pid,
+            &String::from_utf8_lossy(&output.stdout),
+        ))
     }
 }
 
 #[cfg(any(not(target_os = "windows"), test))]
-fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String> {
+fn process_probe_from_snapshot(shell_pid: u32, snapshot: &str) -> AgentProcessProbe {
     use std::collections::{HashMap, HashSet, VecDeque};
     let mut children: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
     for line in snapshot.lines() {
@@ -243,6 +271,9 @@ fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String>
             .or_default()
             .push((pid, command.to_string()));
     }
+    let has_descendants = children
+        .get(&shell_pid)
+        .is_some_and(|children| !children.is_empty());
     let mut queue = VecDeque::from([shell_pid]);
     let mut visited = HashSet::from([shell_pid]);
     while let Some(parent) = queue.pop_front() {
@@ -252,15 +283,29 @@ fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String>
             }
             let tokens = command_tokens(command);
             if tokens.first().is_some_and(|exe| is_known_agent_exe(exe)) {
-                return Some(command.clone());
+                return AgentProcessProbe {
+                    command_line: Some(command.clone()),
+                    has_descendants: true,
+                };
             }
             if let Some(identity) = interpreter_agent_identity(&tokens) {
-                return Some(identity.to_string());
+                return AgentProcessProbe {
+                    command_line: Some(identity.to_string()),
+                    has_descendants: true,
+                };
             }
             queue.push_back(*pid);
         }
     }
-    None
+    AgentProcessProbe {
+        command_line: None,
+        has_descendants,
+    }
+}
+
+#[cfg(test)]
+fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String> {
+    process_probe_from_snapshot(shell_pid, snapshot).command_line
 }
 
 #[cfg(test)]
@@ -337,6 +382,12 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert_eq!(detected.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn distinguishes_unknown_live_children_from_a_returned_shell() {
+        assert!(super::process_probe_from_snapshot(10, "11 10 node unrelated.js").has_descendants);
+        assert!(!super::process_probe_from_snapshot(10, "11 1 node unrelated.js").has_descendants);
     }
 
     #[test]

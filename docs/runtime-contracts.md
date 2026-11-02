@@ -215,3 +215,5 @@ This document defines the first stable contract between the frontend shell and R
 - Runtime uses structured tracing output (`tracing`) with optional OTLP export when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - For verbose local logs, set `RUST_LOG` (for example `RUST_LOG=mach_terminal_lib=debug,info`). Failure-path counters in the PTY pipeline also emit `warn!` / `debug!` with `session_id` where applicable.
 - Burn-in workflows read machine-readable metrics snapshots to enforce regression thresholds.
+
+Agent process inspection includes optional `hasDescendants`: `false` means a successful process snapshot found no shell children; `null` means unavailable. An unmatched live child preserves command/banner/manual agent state. Alternate-screen leave alone is not proof of agent exit; shell-return signals or a confirmed no-child snapshot clear unpinned state after the detection grace period.

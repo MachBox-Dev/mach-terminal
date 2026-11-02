@@ -156,11 +156,14 @@ describe("agentTui detection & parsing", () => {
     expect(afterRedraw?.status).toBe("idle");
   });
 
-  it("clears active agent state when the TUI exits alternate screen or returns to shell prompt", () => {
+  it("preserves nested alternate-screen exits and clears confirmed shell returns", () => {
     const active = createAgentSessionState("session-1", getAgentCliProfile("agy"), "process");
 
     // 1. Alternate screen leave (\x1b[?1049l)
-    expect(reduceAgentStateOnOutput(active, "session-1", "\x1b[?1049l\x1b[?25h", 7000)).toBeUndefined();
+    for (const mode of [1049, 1047, 47]) {
+      expect(reduceAgentStateOnOutput(active, "session-1", `\x1b[?${mode}l\x1b[?25h`, 7000)).toBe(active);
+    }
+    expect(reduceAgentStateOnOutput(active, "session-1", "\x1b[?1049l\x1b]133;A\x07", 7000)).toBeUndefined();
 
     // 2. PowerShell prompt return (`PS C:\...>`)
     expect(reduceAgentStateOnOutput(active, "session-1", "PS C:\\Users\\whobs\\dev\\mach-terminal> ", 7100)).toBeUndefined();
@@ -180,6 +183,8 @@ it("retains interpreter-backed and manually selected agents on negative process 
   for (const via of ["command", "output", "manual"] as const) {
     const state = createAgentSessionState("s", getAgentCliProfile("claude"), via, { nowMs: 0 });
     expect(shouldClearAgentAfterNegativeProbe(state, 5000)).toBe(false);
+    expect(shouldClearAgentAfterNegativeProbe(state, 5000, true)).toBe(false);
+    expect(shouldClearAgentAfterNegativeProbe(state, 5000, false)).toBe(true);
   }
   const probed = createAgentSessionState("s", getAgentCliProfile("claude"), "process", { nowMs: 0 });
   expect(shouldClearAgentAfterNegativeProbe(probed, 5000)).toBe(true);

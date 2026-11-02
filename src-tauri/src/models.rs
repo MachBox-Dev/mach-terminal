@@ -720,4 +720,5 @@ pub struct SessionProcessInspection {
     pub shell_pid: Option<u32>,
     pub foreground_command: Option<String>,
     pub child_command_line: Option<String>,
+    pub has_descendants: Option<bool>,
 }
