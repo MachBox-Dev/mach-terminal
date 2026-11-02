@@ -975,7 +975,7 @@ const SUBCOMMAND_NON_INTERACTIVE_FLAGS = new Set([
 function normalizeTokenExecutable(token: string): string {
   const unquoted = token.replace(/^['"]+|['"]+$/g, "").trim();
   const parts = unquoted.split(/[/\\]/);
-  return (parts[parts.length - 1] ?? unquoted).toLowerCase();
+  return (parts[parts.length - 1] ?? unquoted).toLowerCase().replace(/\.bat$/, "");
 }
 
 /**

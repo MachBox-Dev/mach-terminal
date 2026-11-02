@@ -199,3 +199,10 @@ it("closes only shell recipients regardless of mixed broadcast target order", ()
   expect(shellExitRecipients(["agent", "shell"], { agent })).toEqual(["shell"]);
   expect(shellExitRecipients(["agent"], { agent })).toEqual([]);
 });
+
+it("recognizes Windows batch agent wrappers while preserving non-interactive exclusions", () => {
+  expect(detectAgentFromCommandLine("claude.bat")?.id).toBe("claude");
+  expect(detectAgentFromCommandLine("C:\\tools\\CODEX.BAT --resume")?.id).toBe("codex");
+  expect(detectAgentFromCommandLine("claude.bat --help")).toBeNull();
+  expect(detectAgentFromCommandLine("unrelated.bat")).toBeNull();
+});

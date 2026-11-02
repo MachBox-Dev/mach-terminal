@@ -61,7 +61,7 @@ mach-terminal/
 | `shellProfiles.ts` | Pure helpers for the shell picker: command preview, args line parse/serialize, candidate↔selection matching, optgroup grouping of `ShellCandidate`s. |
 | `statusStripGlyphs.ts`, `statusStripGlyphAssets.ts`, `statusStripSettings.ts` | Status strip glyph rendering + settings. |
 | `shellIntegrationSettings.ts`, `terminalUiFont.ts` | Shell-integration prefs, font helpers. |
-| `agentTui.ts`, `agentTui.test.ts` | Native AI coding agent CLI TUI registry (`agy`, `claude`, `codex`, `gemini`, `aider`, `opencode`, `cursor`, `goose`, `amp`, `copilot`), invocation/banner/prompt/exit detection, and quick-action/slash-command catalogs. |
+| `agentTui.ts`, `agentTui.test.ts` | Native AI coding agent CLI TUI registry (supported launchers: `agy`, `claude`, `codex`, `gemini`, `aider`, `opencode`, `cursor-agent`, `goose`, `amp`, `copilot`), invocation/banner/prompt/exit detection, and quick-action/slash-command catalogs. |
 
 > Convention: any `*.test.ts` sits next to its source; `*.smoke.test.ts` are auto-discovered by `test:ux:smoke`.
 

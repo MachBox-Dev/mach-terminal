@@ -2468,11 +2468,14 @@ function App() {
         return Boolean(cmdLine && detectAgentFromCommandLine(cmdLine));
       },
       (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
-    ).catch(() => {
+    ).then((stillRunning) => {
+      delete dismissedAgentSessionsRef.current[sid];
+      if (stillRunning) void inspectSessionAgentProcess(sid);
+    }).catch(() => {
       // An unavailable probe must never authorize another write into the shell.
       delete dismissedAgentSessionsRef.current[sid];
     });
-  }, [activeSessionId, handleInput, targetSessionIdForComposer]);
+  }, [activeSessionId, handleInput, inspectSessionAgentProcess, targetSessionIdForComposer]);
 
   const handleExecuteAgentSlashCommand = useCallback(
     (cmd: AgentSlashCommand) => {
