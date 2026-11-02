@@ -61,6 +61,7 @@ mach-terminal/
 | `shellProfiles.ts` | Pure helpers for the shell picker: command preview, args line parse/serialize, candidate↔selection matching, optgroup grouping of `ShellCandidate`s. |
 | `statusStripGlyphs.ts`, `statusStripGlyphAssets.ts`, `statusStripSettings.ts` | Status strip glyph rendering + settings. |
 | `shellIntegrationSettings.ts`, `terminalUiFont.ts` | Shell-integration prefs, font helpers. |
+| `agentTui.ts`, `agentTui.test.ts` | Native AI coding agent CLI TUI registry (`agy`, `claude`, `codex`, `gemini`, `aider`, `opencode`, `cursor`, `goose`, `amp`, `copilot`), invocation/banner/prompt/exit detection, and quick-action/slash-command catalogs. |
 
 > Convention: any `*.test.ts` sits next to its source; `*.smoke.test.ts` are auto-discovered by `test:ux:smoke`.
 
@@ -85,6 +86,8 @@ mach-terminal/
 | `HistoryPanel.tsx` | Command history search/replay + AI actions. |
 | `MachStatusStrip.tsx`, `StatusStripGlyph.tsx`, `StatusStripSettingsSection.tsx` | Status strip (cwd, elevation, OSC 133 hint) + glyph + settings. |
 | `CustomTitleBar.tsx` | Custom window chrome (decorations off) + Settings/Diagnostics entry. |
+| `AgentPromptBar.tsx` | Adaptive inline HUD above the composer for active CLI coding agents: slash-command pills, expandable command drawer, Esc/Quit CLI/Hide controls, and one-click prompt confirmation buttons. |
+| `AgentRailPanel.tsx` | Ops-rail `Agent` tab: CLI agent launcher grid, active profile switcher, pin toggle, searchable slash-command browser, and live activity feed. |
 
 ## Frontend Hooks (`src/hooks/`)
 
@@ -117,6 +120,7 @@ mach-terminal/
 | `shell_integration.rs` | Cross-shell (pwsh/bash/zsh) hook install/remove/status/backup/restore via strategy-map dispatch. |
 | `shell_detect.rs` | `detect_shells()` host probe for the profile picker: Windows native shells (pwsh/Windows PowerShell/cmd/Git Bash) + WSL distro enumeration (`wsl.exe -l -q`, UTF-16LE parse), POSIX `$SHELL` + `/etc/shells`. Also `find_on_path` (used by `default_shell` fallback). Pure parsers are unit-tested. |
 | `shell_context.rs` | `shell_context_snapshot` (elevation, git branch/short-stat). |
+| `agent_inspect.rs` | `pty_inspect_session_process` helper: probes descendant processes of `shell_pid` (Win32 `CreateToolhelp32Snapshot` on Windows, `pgrep` on Unix) to detect live coding agent CLIs without spawning console windows. |
 | `plugin_host.rs` | Capability allowlist, reason-coded policy decisions, execution, grants + metrics snapshots. |
 | `input_sanitize.rs` | Input sanitization helpers. |
 | `telemetry.rs` | `tracing` + OTLP init/shutdown. |

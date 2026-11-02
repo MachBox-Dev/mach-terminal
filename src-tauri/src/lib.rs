@@ -1,3 +1,4 @@
+pub mod agent_inspect;
 pub mod models;
 mod child_env;
 #[cfg(windows)]
@@ -366,6 +367,15 @@ fn pty_list_sessions(manager: State<'_, SessionManager>) -> Result<Vec<PtySessio
 }
 
 #[tauri::command]
+#[instrument(skip(manager))]
+fn pty_inspect_session_process(
+    manager: State<'_, SessionManager>,
+    session_id: String,
+) -> Result<crate::agent_inspect::SessionProcessInspection, String> {
+    manager.inspect_session_process(&session_id)
+}
+
+#[tauri::command]
 #[instrument(skip(app, manager, request))]
 fn history_query(
     app: AppHandle,
@@ -586,6 +596,7 @@ pub fn run() {
             pty_resize,
             pty_close,
             pty_list_sessions,
+            pty_inspect_session_process,
             history_query,
             history_recovery_take,
             history_replay,

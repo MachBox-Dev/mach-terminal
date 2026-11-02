@@ -7,6 +7,7 @@ import { FirstRunSetup, ONBOARDING_STORAGE_KEY } from "./components/FirstRunSetu
 import { NewTabProfileModal } from "./components/NewTabProfileModal";
 import { SplitWorkspace, sessionIdForPane } from "./components/SplitWorkspace";
 import { GroupComposer } from "./components/GroupComposer";
+import { AgentPromptBar } from "./components/AgentPromptBar";
 import { CustomTitleBar } from "./components/CustomTitleBar";
 import { TabBar } from "./components/TabBar";
 import { OpsRail, type OpsRailFilter } from "./components/OpsRail";
@@ -68,6 +69,7 @@ import {
   runtimeMetricsSnapshot,
   settingsSchemaDump,
   ptyClose,
+  ptyInspectSessionProcess,
   ptyResize,
   ptySpawn,
   ptyWrite,
@@ -199,6 +201,17 @@ import {
   removeSessionFromRegistry,
   type SessionRegistryContext,
 } from "./state/sessionRegistry";
+import {
+  createAgentSessionState,
+  detectAgentFromCommandLine,
+  getAgentCliProfile,
+  isAgentExitCommand,
+  reduceAgentStateOnOutput,
+  type AgentCliId,
+  type AgentPromptOption,
+  type AgentSessionState,
+  type AgentSlashCommand,
+} from "./core/agentTui";
 
 const MAX_SESSION_BUFFER = 120_000;
 const RESIZE_THROTTLE_MS = 100;
@@ -322,6 +335,10 @@ function App() {
   const [showComposerAssistMetrics, setShowComposerAssistMetrics] = useState(false);
   const [sessionOsc133Hints, setSessionOsc133Hints] = useState<Record<string, string>>({});
   const [sessionUiSurface, setSessionUiSurface] = useState<Record<string, UiSurfaceState>>({});
+  const [sessionAgents, setSessionAgents] = useState<Record<string, AgentSessionState>>({});
+  const sessionAgentsRef = useRef(sessionAgents);
+  sessionAgentsRef.current = sessionAgents;
+  const dismissedAgentSessionsRef = useRef<Record<string, boolean>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
   const resizeThrottleRef = useRef<Record<string, number>>({});
@@ -372,6 +389,38 @@ function App() {
   const { pendingOutputRef, lastSequenceRef } = usePtyOutputStream({
     maxSessionBuffer: MAX_SESSION_BUFFER,
     setRuntimeError,
+    onSessionOutputFlushed: (sessionId, chunk) => {
+      const existingSnapshot = sessionAgentsRef.current[sessionId];
+      if (!existingSnapshot && dismissedAgentSessionsRef.current[sessionId]) {
+        return;
+      }
+      const hadExisting = Boolean(existingSnapshot);
+      const probed = reduceAgentStateOnOutput(existingSnapshot, sessionId, chunk);
+      if (probed && !hadExisting) {
+        setSideRailTab("agent");
+        setOpsRailCollapsed(false);
+      }
+      setSessionAgents((current) => {
+        const existing = current[sessionId];
+        if (!existing && dismissedAgentSessionsRef.current[sessionId]) {
+          return current;
+        }
+        const next = reduceAgentStateOnOutput(existing, sessionId, chunk);
+        if (!next) {
+          if (!existing) {
+            return current;
+          }
+          delete dismissedAgentSessionsRef.current[sessionId];
+          const copy = { ...current };
+          delete copy[sessionId];
+          return copy;
+        }
+        if (next === existing) {
+          return current;
+        }
+        return { ...current, [sessionId]: next };
+      });
+    },
   });
 
   const sessionRegistryRef = useRef<SessionRegistryContext>(null!);
@@ -392,6 +441,7 @@ function App() {
       setSessionSpawnArgs,
       setSessionUiSurface,
       setSessionOsc133Hints,
+      setSessionAgents,
     },
     transientRefs: {
       pendingOutputRef,
@@ -987,6 +1037,18 @@ function App() {
                   : "OSC 133 · output";
           return { ...prev, [event.session_id]: label };
         });
+        if (event.phase === "outputEnd" || event.phase === "promptStart") {
+          delete dismissedAgentSessionsRef.current[event.session_id];
+          setSessionAgents((prev) => {
+            const currentAgent = prev[event.session_id];
+            if (!currentAgent || currentAgent.pinned) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[event.session_id];
+            return next;
+          });
+        }
         if (event.phase === "outputEnd") {
           const runs = runLedgerRef.current[event.session_id] ?? [];
           const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
@@ -1002,6 +1064,42 @@ function App() {
           return;
         }
         const sid = event.session_id;
+        const submittedText = event.payload.trim();
+        const detectedProfile = detectAgentFromCommandLine(submittedText);
+        if (detectedProfile) {
+          delete dismissedAgentSessionsRef.current[sid];
+          setSessionAgents((prev) => ({
+            ...prev,
+            [sid]: createAgentSessionState(sid, detectedProfile, "command", {
+              launchedCommand: submittedText,
+              nowMs: event.timestamp_ms,
+            }),
+          }));
+          setSideRailTab("agent");
+          setOpsRailCollapsed(false);
+        } else {
+          setSessionAgents((prev) => {
+            const existing = prev[sid];
+            if (!existing) {
+              return prev;
+            }
+            if (!existing.pinned && isAgentExitCommand(submittedText)) {
+              delete dismissedAgentSessionsRef.current[sid];
+              const next = { ...prev };
+              delete next[sid];
+              return next;
+            }
+            return {
+              ...prev,
+              [sid]: {
+                ...existing,
+                status: "working",
+                activeQuestion: null,
+                lastActivityAtMs: event.timestamp_ms,
+              },
+            };
+          });
+        }
         const bufLen = sessionBufferStore.get(sid).length;
         setRunLedger((ledger) =>
           appendCommandSubmitted(ledger, {
@@ -1616,19 +1714,99 @@ function App() {
     [closePaneById],
   );
 
+  const inspectSessionAgentProcess = useCallback(async (sid: string) => {
+    if (!isTauri() || !sid) {
+      return;
+    }
+    try {
+      const snap = await ptyInspectSessionProcess(sid);
+      const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
+      const detected = cmdLine ? detectAgentFromCommandLine(cmdLine) : null;
+      if (!cmdLine || !detected) {
+        delete dismissedAgentSessionsRef.current[sid];
+        setSessionAgents((prev) => {
+          const existing = prev[sid];
+          if (!existing || existing.pinned || Date.now() - existing.detectedAtMs < 1800) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[sid];
+          return next;
+        });
+        return;
+      }
+      if (dismissedAgentSessionsRef.current[sid] && !sessionAgentsRef.current[sid]) {
+        return;
+      }
+      if (!sessionAgentsRef.current[sid]) {
+        setSideRailTab("agent");
+        setOpsRailCollapsed(false);
+      }
+      setSessionAgents((prev) => {
+        const existing = prev[sid];
+        if (existing) {
+          if (existing.detectedVia === "output" && existing.agentId !== detected.id && !existing.pinned) {
+            return {
+              ...prev,
+              [sid]: {
+                ...existing,
+                agentId: detected.id,
+                detectedVia: "process",
+                launchedCommand: cmdLine,
+              },
+            };
+          }
+          return prev;
+        }
+        return {
+          ...prev,
+          [sid]: createAgentSessionState(sid, detected, "process", {
+            launchedCommand: cmdLine,
+          }),
+        };
+      });
+    } catch {
+      /* ignore inspection errors for closed/remote sessions */
+    }
+  }, []);
+
   const handleTerminalInput = useCallback(
     async (sessionId: string, data: string) => {
-      const tracked = appendTerminalInputLine(sessionCommandLineRef.current[sessionId] ?? "", data);
+      const tracked = data.startsWith("\x1b")
+        ? { line: sessionCommandLineRef.current[sessionId] ?? "", submitted: null }
+        : appendTerminalInputLine(sessionCommandLineRef.current[sessionId] ?? "", data);
       sessionCommandLineRef.current[sessionId] = tracked.line;
+      const hadActiveAgent = Boolean(sessionAgentsRef.current[sessionId]);
       try {
         await handleInput(sessionId, data);
       } finally {
-        if (tracked.submitted && isShellExitCommand(tracked.submitted)) {
-          await closePaneForSession(sessionId);
+        if (tracked.submitted && isAgentExitCommand(tracked.submitted) && hadActiveAgent) {
+          delete dismissedAgentSessionsRef.current[sessionId];
+          setSessionAgents((current) => {
+            const existing = current[sessionId];
+            if (!existing || existing.pinned) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[sessionId];
+            return next;
+          });
+        } else if (tracked.submitted && isShellExitCommand(tracked.submitted)) {
+          if (!hadActiveAgent) {
+            await closePaneForSession(sessionId);
+          }
+        }
+        if (
+          hadActiveAgent &&
+          (data.includes("\x03") || data.includes("\x04") || data.includes("\r") || data.includes("\n"))
+        ) {
+          window.setTimeout(() => void inspectSessionAgentProcess(sessionId), 120);
+          window.setTimeout(() => void inspectSessionAgentProcess(sessionId), 380);
+          window.setTimeout(() => void inspectSessionAgentProcess(sessionId), 850);
         }
       }
     },
-    [closePaneForSession, handleInput],
+    [closePaneForSession, handleInput, inspectSessionAgentProcess],
   );
 
   useEffect(() => {
@@ -1841,6 +2019,10 @@ function App() {
         case "ops.toggleRail":
           setOpsRailCollapsed((current) => !current);
           break;
+        case "ops.openAgentTab":
+          setSideRailTab("agent");
+          setOpsRailCollapsed(false);
+          break;
         case "ops.selectNextRun":
           setOpsSelectedRunId((prev) => stepRunSelection(filteredRunsForOps, prev, 1));
           break;
@@ -1992,6 +2174,48 @@ function App() {
     : defaultSessionInputMode();
   const showGroupComposer = Boolean(activeSessionId) && inputModeUsesComposer(activeInputMode);
   const targetSessionIdForComposer = sessionIdForPane(activeLayout, activeLayout.targetPaneId);
+  const activeAgentSessionId = targetSessionIdForComposer ?? activeSessionId;
+  const activeAgentState = activeAgentSessionId ? (sessionAgents[activeAgentSessionId] ?? null) : null;
+
+  const openAgentRail = useCallback(() => {
+    setSideRailTab("agent");
+    setOpsRailCollapsed(false);
+    if (activeAgentSessionId) {
+      setSessionAgents((current) => {
+        const existing = current[activeAgentSessionId];
+        if (!existing || !existing.promptBarDismissed) {
+          return current;
+        }
+        return {
+          ...current,
+          [activeAgentSessionId]: {
+            ...existing,
+            promptBarDismissed: false,
+          },
+        };
+      });
+    }
+    requestAnimationFrame(() => {
+      const searchInput = document.querySelector<HTMLInputElement>(".agent-rail-search");
+      searchInput?.focus();
+    });
+  }, [activeAgentSessionId]);
+
+  // Hybrid child-process tree inspection: periodically probe OS child processes of the active shell
+  // so agents started via aliases, scripts, or subshells are also detected automatically, and manual
+  // exits inside the PTY session are detected within ~1s.
+  useEffect(() => {
+    if (!isTauri() || !activeAgentSessionId) {
+      return;
+    }
+    void inspectSessionAgentProcess(activeAgentSessionId);
+    const interval = window.setInterval(() => {
+      void inspectSessionAgentProcess(activeAgentSessionId);
+    }, 1200);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeAgentSessionId, inspectSessionAgentProcess]);
 
   const groupComposer = useGroupComposer({
     groupId: workspace.activeGroupId,
@@ -2003,6 +2227,7 @@ function App() {
     tabLabels,
     sessionInputModes,
     composerSubmitKinds,
+    sessionAgents,
     commandFailure: targetSessionIdForComposer
       ? (sessionCommandFailures[targetSessionIdForComposer] ?? null)
       : null,
@@ -2016,7 +2241,15 @@ function App() {
     onAiComposerSubmit: (sessionId, text) => void submitAiChat(sessionId, text),
     onSubmitToPty: (sessionIds, payload) => {
       for (const sessionId of sessionIds) {
-        void handleInput(sessionId, payload);
+        if (sessionAgentsRef.current[sessionId] && payload.endsWith("\r") && payload.length > 1) {
+          const textBody = payload.slice(0, -1);
+          void handleInput(sessionId, textBody);
+          window.setTimeout(() => {
+            void handleInput(sessionId, "\r");
+          }, 35);
+        } else {
+          void handleInput(sessionId, payload);
+        }
       }
     },
     onShellExitSubmitted: () => {
@@ -2108,6 +2341,289 @@ function App() {
     [aiAssistEnabled, groupComposer],
   );
 
+  const handleLaunchAgent = useCallback(
+    (agentId: AgentCliId) => {
+      const sid = targetSessionIdForComposer ?? activeSessionId;
+      if (!sid) {
+        return;
+      }
+      delete dismissedAgentSessionsRef.current[sid];
+      const profile = getAgentCliProfile(agentId);
+      setSessionAgents((current) => ({
+        ...current,
+        [sid]: createAgentSessionState(sid, profile, "command", {
+          launchedCommand: profile.launchCommand,
+        }),
+      }));
+      void handleInput(sid, `${profile.launchCommand}\r`);
+    },
+    [activeSessionId, handleInput, targetSessionIdForComposer],
+  );
+
+  const handleActivateAgentProfile = useCallback(
+    (agentId: AgentCliId, pinned = true) => {
+      const sid = targetSessionIdForComposer ?? activeSessionId;
+      if (!sid) {
+        return;
+      }
+      delete dismissedAgentSessionsRef.current[sid];
+      const profile = getAgentCliProfile(agentId);
+      setSessionAgents((current) => {
+        const existing = current[sid];
+        const base = createAgentSessionState(sid, profile, "manual", { pinned });
+        return {
+          ...current,
+          [sid]: {
+            ...base,
+            pinned,
+            promptBarDismissed: false,
+            discoveredCommands: existing?.agentId === agentId ? existing.discoveredCommands : [],
+            recentActivities: existing?.agentId === agentId ? existing.recentActivities : [],
+          },
+        };
+      });
+    },
+    [activeSessionId, targetSessionIdForComposer],
+  );
+
+  const handleTogglePinAgent = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    setSessionAgents((current) => {
+      const existing = current[sid];
+      if (!existing) {
+        return current;
+      }
+      return {
+        ...current,
+        [sid]: {
+          ...existing,
+          pinned: !existing.pinned,
+        },
+      };
+    });
+  }, [activeSessionId, targetSessionIdForComposer]);
+
+  const handleDismissAgentBar = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    setSessionAgents((current) => {
+      const existing = current[sid];
+      if (!existing) {
+        return current;
+      }
+      return {
+        ...current,
+        [sid]: {
+          ...existing,
+          promptBarDismissed: true,
+        },
+      };
+    });
+  }, [activeSessionId, targetSessionIdForComposer]);
+
+  const handleDismissAgent = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    dismissedAgentSessionsRef.current[sid] = true;
+    setSessionAgents((current) => {
+      if (!current[sid]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sid];
+      return next;
+    });
+  }, [activeSessionId, targetSessionIdForComposer]);
+
+  const handleQuitAgent = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    dismissedAgentSessionsRef.current[sid] = true;
+    setSessionAgents((current) => {
+      if (!current[sid]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[sid];
+      return next;
+    });
+    // 1. Send Escape (\x1b) + Ctrl+U (\x15) to close any TUI modal and clear the input line.
+    // 2. Send Ctrl+D Ctrl+D (\x04, \x04) which cleanly exits Antigravity (`agy`), Claude Code, Codex, Gemini, etc.
+    // 3. If the child agent process is still alive at 220ms (e.g. line-oriented REPL), send `/exit\r`.
+    void handleInput(sid, "\u001b\u0015");
+    window.setTimeout(() => {
+      void handleInput(sid, "\u0004");
+    }, 35);
+    window.setTimeout(() => {
+      void handleInput(sid, "\u0004");
+    }, 75);
+    window.setTimeout(() => {
+      void (async () => {
+        try {
+          if (!isTauri()) {
+            return;
+          }
+          const snap = await ptyInspectSessionProcess(sid);
+          const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
+          if (cmdLine && detectAgentFromCommandLine(cmdLine)) {
+            await handleInput(sid, "\u0015/exit");
+            window.setTimeout(() => {
+              void handleInput(sid, "\r");
+            }, 40);
+          } else {
+            delete dismissedAgentSessionsRef.current[sid];
+          }
+        } catch {
+          delete dismissedAgentSessionsRef.current[sid];
+        }
+      })();
+    }, 220);
+  }, [activeSessionId, handleInput, targetSessionIdForComposer]);
+
+  const handleExecuteAgentSlashCommand = useCallback(
+    (cmd: AgentSlashCommand) => {
+      const sid = targetSessionIdForComposer ?? activeSessionId;
+      if (!sid) {
+        return;
+      }
+      if (isAgentExitCommand(cmd.command)) {
+        handleQuitAgent();
+        return;
+      }
+      if (!cmd.submitImmediately) {
+        groupComposer.setComposerDraft(`${cmd.command} `);
+        groupComposer.focusComposerInput();
+        return;
+      }
+      // Clear any partial TUI input line with Ctrl+U (\x15), write the slash command,
+      // and send Enter (\r) after a short delay so BubbleTea/Ink TUIs submit it cleanly.
+      void handleInput(sid, `\x15${cmd.command}`);
+      window.setTimeout(() => {
+        void handleInput(sid, "\r");
+      }, 45);
+      setSessionAgents((current) => {
+        const existing = current[sid];
+        if (!existing) {
+          return current;
+        }
+        return {
+          ...current,
+          [sid]: {
+            ...existing,
+            activeQuestion: null,
+          },
+        };
+      });
+    },
+    [activeSessionId, groupComposer, handleInput, handleQuitAgent, targetSessionIdForComposer],
+  );
+
+  const handleInsertAgentSlashCommand = useCallback(
+    (cmd: AgentSlashCommand) => {
+      groupComposer.setComposerDraft(!cmd.submitImmediately || cmd.argHint ? `${cmd.command} ` : cmd.command);
+      groupComposer.focusComposerInput();
+    },
+    [groupComposer],
+  );
+
+  const handleRespondToAgentPrompt = useCallback(
+    (option: AgentPromptOption) => {
+      const sid = targetSessionIdForComposer ?? activeSessionId;
+      if (!sid) {
+        return;
+      }
+      if (option.payload.endsWith("\r") && option.payload.length > 1) {
+        void handleInput(sid, option.payload.slice(0, -1));
+        window.setTimeout(() => {
+          void handleInput(sid, "\r");
+        }, 35);
+      } else {
+        void handleInput(sid, option.payload);
+      }
+      setSessionAgents((current) => {
+        const existing = current[sid];
+        if (!existing) {
+          return current;
+        }
+        return {
+          ...current,
+          [sid]: {
+            ...existing,
+            status: "working",
+            activeQuestion: null,
+          },
+        };
+      });
+    },
+    [activeSessionId, handleInput, targetSessionIdForComposer],
+  );
+
+  const handleDismissAgentPrompt = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    setSessionAgents((current) => {
+      const existing = current[sid];
+      if (!existing?.activeQuestion) {
+        return current;
+      }
+      return {
+        ...current,
+        [sid]: {
+          ...existing,
+          status: "idle",
+          activeQuestion: null,
+        },
+      };
+    });
+  }, [activeSessionId, targetSessionIdForComposer]);
+
+  const handleInterruptAgent = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (!sid) {
+      return;
+    }
+    // Send Escape (\x1b) to cancel active generation/menus, followed by Ctrl+U (\x15) to clear any stuck TUI input line.
+    void handleInput(sid, "\u001b");
+    window.setTimeout(() => {
+      void handleInput(sid, "\u0015");
+    }, 35);
+    setSessionAgents((current) => {
+      const existing = current[sid];
+      if (!existing) {
+        return current;
+      }
+      return {
+        ...current,
+        [sid]: {
+          ...existing,
+          status: "idle",
+          activeQuestion: null,
+        },
+      };
+    });
+  }, [activeSessionId, handleInput, targetSessionIdForComposer]);
+
+  const handleFocusAgentCustomReply = useCallback(() => {
+    const sid = targetSessionIdForComposer ?? activeSessionId;
+    if (sid && (sessionInputModes[sid] ?? "operator") !== "operator") {
+      setSessionInputModes((current) => ({ ...current, [sid]: "operator" }));
+    }
+    requestAnimationFrame(() => {
+      groupComposer.focusComposerInput();
+    });
+  }, [activeSessionId, groupComposer, sessionInputModes, targetSessionIdForComposer]);
+
   return (
     <div className="app-frame">
       <CustomTitleBar
@@ -2167,6 +2683,7 @@ function App() {
             sessionInputModes={sessionInputModes}
             composerSubmitKinds={composerSubmitKinds}
             sessionCommandFailures={sessionCommandFailures}
+            sessionAgents={sessionAgents}
             aiAssistEnabled={aiAssistEnabled}
             groupComposerActive={showGroupComposer}
             onAskAiSelection={queueAiSelection}
@@ -2191,6 +2708,20 @@ function App() {
               void closePaneById(paneId);
             }}
           />
+          {activeAgentState ? (
+            <AgentPromptBar
+              agentState={activeAgentState}
+              onExecuteSlashCommand={handleExecuteAgentSlashCommand}
+              onInsertSlashCommand={handleInsertAgentSlashCommand}
+              onRespondToPrompt={handleRespondToAgentPrompt}
+              onDismissPrompt={handleDismissAgentPrompt}
+              onFocusCustomReply={handleFocusAgentCustomReply}
+              onOpenAgentRail={openAgentRail}
+              onSendInterrupt={handleInterruptAgent}
+              onDismissAgentSession={handleDismissAgentBar}
+              onQuitAgent={handleQuitAgent}
+            />
+          ) : null}
           <GroupComposer
             visible={showGroupComposer}
             composerDraft={groupComposer.composerDraft}
@@ -2218,6 +2749,10 @@ function App() {
             osc133Hint={
               targetSessionIdForComposer ? (sessionOsc133Hints[targetSessionIdForComposer] ?? null) : null
             }
+            agentState={activeAgentState}
+            agentSlashMatches={groupComposer.agentSlashMatches}
+            onSelectAgentSlashCommand={handleInsertAgentSlashCommand}
+            onOpenAgentRail={openAgentRail}
             onToggleComposerSubmitKind={groupComposer.onToggleComposerSubmitKind}
             onAskAboutFailure={groupComposer.onAskAboutFailure}
             onAiExplainComposer={() => {
@@ -2289,6 +2824,17 @@ function App() {
               void submitAiChat(activeSessionId, text);
             }}
             onOpenAiSettings={() => openSettings(SETTINGS_SECTION_AI_PROVIDERS)}
+            agentState={activeAgentState}
+            onLaunchAgent={handleLaunchAgent}
+            onActivateAgentProfile={handleActivateAgentProfile}
+            onTogglePinAgent={handleTogglePinAgent}
+            onDismissAgent={handleDismissAgent}
+            onQuitAgent={handleQuitAgent}
+            onExecuteAgentSlashCommand={handleExecuteAgentSlashCommand}
+            onInsertAgentSlashCommand={handleInsertAgentSlashCommand}
+            onRespondToAgentPrompt={handleRespondToAgentPrompt}
+            onDismissAgentPrompt={handleDismissAgentPrompt}
+            onFocusAgentCustomReply={handleFocusAgentCustomReply}
           />
           </div>
         </section>

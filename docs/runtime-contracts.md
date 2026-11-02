@@ -27,6 +27,7 @@ This document defines the first stable contract between the frontend shell and R
 - `pty_resize(session_id: string, cols: number, rows: number) -> void`
 - `pty_close(session_id: string) -> void`
 - `pty_list_sessions() -> PtySessionInfo[]`
+- `pty_inspect_session_process(session_id: string) -> SessionProcessInspection | null` (`{ sessionId, shellPid, foregroundCommand, childCommandLine }`)
 - `history_query(request: HistoryQueryRequest) -> HistoryEntry[]` (loads persisted history on first use)
 - `history_recovery_take() -> string | null` — one-shot user-facing message if `command_history.json` was corrupt and reset (otherwise `null`). Until consumed, `runtime_debug_snapshot().history_recovery_pending` is `true` (read-only probe; does not clear the notice).
 - `history_replay(session_id: string, command: string) -> void`

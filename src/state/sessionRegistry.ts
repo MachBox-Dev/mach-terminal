@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { AgentSessionState } from "../core/agentTui";
 import type { AiChatState, AiContextAttachment } from "../core/aiChatState";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import type { SessionInputMode } from "../core/inputMode";
@@ -100,6 +101,7 @@ export interface SessionRegistrySetters {
   setSessionSpawnArgs: Dispatch<SetStateAction<Record<string, string[]>>>;
   setSessionUiSurface: Dispatch<SetStateAction<Record<string, UiSurfaceState>>>;
   setSessionOsc133Hints: Dispatch<SetStateAction<Record<string, string>>>;
+  setSessionAgents?: Dispatch<SetStateAction<Record<string, AgentSessionState>>>;
 }
 
 export interface SessionRegistryContext {
@@ -124,6 +126,7 @@ export function pruneAllSessionScopedState(aliveIds: readonly string[], ctx: Ses
   setters.setSessionMessages((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setSessionNames((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setSessionSpawnArgs((current) => pruneRecordByAliveIds(current, aliveIds));
+  setters.setSessionAgents?.((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setRunLedger((current) => {
     const alive = new Set(aliveIds);
     let changed = false;
@@ -159,5 +162,6 @@ export function removeSessionFromRegistry(sessionId: string, ctx: SessionRegistr
   setters.setSessionSpawnArgs((current) => deleteSessionRecordKey(current, sessionId));
   setters.setSessionUiSurface((current) => deleteSessionRecordKey(current, sessionId));
   setters.setSessionOsc133Hints((current) => deleteSessionRecordKey(current, sessionId));
+  setters.setSessionAgents?.((current) => deleteSessionRecordKey(current, sessionId));
   clearSessionTransientRefs(sessionId, ctx.transientRefs);
 }

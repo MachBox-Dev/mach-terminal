@@ -13,13 +13,29 @@ const MACHINE_ENV_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager
 const USER_ENV_KEY: &str = "Environment";
 const PATH_VAR: &str = "Path";
 
-/// Windows Terminal session markers inherited when Mach is launched from WT. Spawning a
-/// ConPTY child with these set can route focus to an existing WT window (OpenConsole focus bug).
+/// Windows Terminal / outer multiplexer / parent agent session markers inherited when Mach is
+/// launched from WT, WezTerm, or an existing Antigravity CLI session. Spawning a ConPTY child
+/// with these set can route focus to an existing WT window or confuse nested agent CLIs.
 const WT_CHILD_ENV_STRIP: &[&str] = &[
     "WT_SESSION",
     "WT_PROFILE_ID",
     "WT_SESSION_ID",
     "WT_PARENT",
+    "WEZTERM_PANE",
+    "WEZTERM_UNIX_SOCKET",
+    "WEZTERM_EXECUTABLE",
+    "WEZTERM_EXECUTABLE_DIR",
+    "WEZTERM_CONFIG_FILE",
+    "WEZTERM_CONFIG_DIR",
+    "ANTIGRAVITY_AGENT",
+    "ANTIGRAVITY_AGENTAPI_EXE",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_CSRF_TOKEN",
+    "ANTIGRAVITY_LS_ADDRESS",
+    "ANTIGRAVITY_LS_VERSION",
+    "ANTIGRAVITY_PROJECT_ID",
+    "ANTIGRAVITY_SOURCE_METADATA",
+    "ANTIGRAVITY_TRAJECTORY_ID",
 ];
 
 /// Merge machine and user PATH segments: machine first, then user; dedupe case-insensitively.
@@ -81,8 +97,11 @@ fn strip_windows_terminal_session_markers(env: &mut HashMap<String, String>) {
     for key in WT_CHILD_ENV_STRIP {
         env.remove(*key);
     }
-    if env.get("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("WindowsTerminal")) {
+    if env.get("TERM_PROGRAM").is_some_and(|value| {
+        value.eq_ignore_ascii_case("WindowsTerminal") || value.eq_ignore_ascii_case("WezTerm")
+    }) {
         env.remove("TERM_PROGRAM");
+        env.remove("TERM_PROGRAM_VERSION");
     }
 }
 
@@ -90,6 +109,15 @@ fn strip_windows_terminal_session_markers(env: &mut HashMap<String, String>) {
 pub fn build_child_environment(profile_env: HashMap<String, String>) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = std::env::vars().collect();
     strip_windows_terminal_session_markers(&mut env);
+    // Ensure interactive TUIs (`agy`, `claude`, `codex`, `gemini`, `opencode`, etc.) detect
+    // full ANSI 256-color / truecolor support and enable altScreen + OSC 8 hyperlinks.
+    if env.get("TERM").map_or(true, |v| v.trim().is_empty()) {
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+    }
+    if env.get("COLORTERM").map_or(true, |v| v.trim().is_empty()) {
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
+    }
+    env.insert("TERM_PROGRAM".to_string(), "mach-terminal".to_string());
     match merged_path_from_registry() {
         Ok(path) => {
             env.insert("PATH".to_string(), path);

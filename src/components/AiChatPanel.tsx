@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiChatMessage, AiContextAttachment } from "../core/aiChatState";
 
-export type SideRailTab = "log" | "ai";
+export type SideRailTab = "log" | "agent" | "ai";
 
 export const SETTINGS_SECTION_AI_PROVIDERS = "settings-section-ai-providers";
 

@@ -1,8 +1,16 @@
 import { useCallback } from "react";
 import type { AiChatMessage, AiContextAttachment } from "../core/aiChatState";
+import {
+  getAgentCliProfile,
+  type AgentCliId,
+  type AgentPromptOption,
+  type AgentSessionState,
+  type AgentSlashCommand,
+} from "../core/agentTui";
 import type { RunRecord } from "../core/runLedger";
 import { sliceBufferForRun } from "../core/runLedger";
 import { sessionBufferStore } from "../state/sessionBufferStore";
+import { AgentRailPanel } from "./AgentRailPanel";
 import { AiChatPanel, type SideRailTab } from "./AiChatPanel";
 
 export type OpsRailFilter = "all" | "pinned";
@@ -30,6 +38,17 @@ interface OpsRailProps {
   onRemoveAiAttachment?: (attachmentId: string) => void;
   onAiChatSubmit?: (text: string) => void;
   onOpenAiSettings?: () => void;
+  agentState?: AgentSessionState | null;
+  onLaunchAgent?: (agentId: AgentCliId) => void;
+  onActivateAgentProfile?: (agentId: AgentCliId, pinned?: boolean) => void;
+  onTogglePinAgent?: () => void;
+  onDismissAgent?: () => void;
+  onQuitAgent?: () => void;
+  onExecuteAgentSlashCommand?: (cmd: AgentSlashCommand) => void;
+  onInsertAgentSlashCommand?: (cmd: AgentSlashCommand) => void;
+  onRespondToAgentPrompt?: (option: AgentPromptOption) => void;
+  onDismissAgentPrompt?: () => void;
+  onFocusAgentCustomReply?: () => void;
 }
 
 export function OpsRail({
@@ -55,6 +74,17 @@ export function OpsRail({
   onRemoveAiAttachment,
   onAiChatSubmit,
   onOpenAiSettings,
+  agentState = null,
+  onLaunchAgent,
+  onActivateAgentProfile,
+  onTogglePinAgent,
+  onDismissAgent,
+  onQuitAgent,
+  onExecuteAgentSlashCommand,
+  onInsertAgentSlashCommand,
+  onRespondToAgentPrompt,
+  onDismissAgentPrompt,
+  onFocusAgentCustomReply,
 }: OpsRailProps) {
   const copyCommand = useCallback((text: string) => {
     void navigator.clipboard.writeText(text);
@@ -72,6 +102,9 @@ export function OpsRail({
     }
   };
 
+  const activeAgentProfile = agentState ? getAgentCliProfile(agentState.agentId) : null;
+  const hasPendingAgentQuestion = Boolean(agentState?.activeQuestion);
+
   if (collapsed) {
     return (
       <aside className="ops-rail ops-rail-collapsed" aria-label="Side rail collapsed">
@@ -82,6 +115,18 @@ export function OpsRail({
           onClick={() => expandToTab("log")}
         >
           Log
+        </button>
+        <button
+          type="button"
+          className={`ops-rail-expand-tab ops-rail-expand-tab-agent ${activeTab === "agent" ? "active" : ""} ${activeAgentProfile ? "has-agent" : ""} ${hasPendingAgentQuestion ? "has-question" : ""}`}
+          title={
+            activeAgentProfile
+              ? `${activeAgentProfile.name} TUI pane${hasPendingAgentQuestion ? " (Awaiting prompt response!)" : ""}`
+              : "AI Coding Agent TUI pane"
+          }
+          onClick={() => expandToTab("agent")}
+        >
+          {activeAgentProfile ? activeAgentProfile.shortLabel : "Agent"}
         </button>
         <button
           type="button"
@@ -108,6 +153,18 @@ export function OpsRail({
               onClick={() => onTabChange("log")}
             >
               Log
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "agent"}
+              className={`ops-rail-main-tab ops-rail-main-tab-agent ${activeTab === "agent" ? "active" : ""} ${activeAgentProfile ? "has-agent" : ""} ${hasPendingAgentQuestion ? "has-question" : ""}`}
+              onClick={() => onTabChange("agent")}
+            >
+              <span>Agent</span>
+              {activeAgentProfile ? (
+                <span className="ops-rail-agent-tab-badge">{activeAgentProfile.shortLabel}</span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -168,7 +225,11 @@ export function OpsRail({
                 <div className="ops-rail-card-top">
                   <span className={`ops-rail-dot ${run.pinned ? "pinned" : ""}`} aria-hidden />
                   <time className="ops-rail-time" dateTime={new Date(run.submittedAtMs).toISOString()}>
-                    {new Date(run.submittedAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    {new Date(run.submittedAtMs).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
                   </time>
                   <button
                     type="button"
@@ -251,6 +312,20 @@ export function OpsRail({
             ))
           )}
         </div>
+      ) : activeTab === "agent" ? (
+        <AgentRailPanel
+          agentState={agentState}
+          onLaunchAgent={(id) => onLaunchAgent?.(id)}
+          onActivateAgentProfile={(id, pinned) => onActivateAgentProfile?.(id, pinned)}
+          onTogglePinAgent={() => onTogglePinAgent?.()}
+          onDismissAgent={() => onDismissAgent?.()}
+          onQuitAgent={onQuitAgent ? () => onQuitAgent() : undefined}
+          onExecuteSlashCommand={(cmd) => onExecuteAgentSlashCommand?.(cmd)}
+          onInsertSlashCommand={(cmd) => onInsertAgentSlashCommand?.(cmd)}
+          onRespondToPrompt={(opt) => onRespondToAgentPrompt?.(opt)}
+          onDismissPrompt={() => onDismissAgentPrompt?.()}
+          onFocusCustomReply={() => onFocusAgentCustomReply?.()}
+        />
       ) : (
         <AiChatPanel
           messages={aiMessages}

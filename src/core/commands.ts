@@ -46,6 +46,7 @@ export type AppCommandId =
   | "terminal.clearViewport"
   | "terminal.toggleFollowOutput"
   | "ops.toggleRail"
+  | "ops.openAgentTab"
   | "ops.selectNextRun"
   | "ops.selectPrevRun"
   | "ops.jumpSelectedRun"
@@ -230,6 +231,11 @@ export const APP_COMMANDS: AppCommand[] = [
     label: "Toggle command log rail",
     shortcut: "Alt+O",
     description: "Show or hide the Ops rail command log for the active session.",
+  },
+  {
+    id: "ops.openAgentTab",
+    label: "Open AI Coding Agent TUI pane",
+    description: "Open the Agent tab in the side rail to launch or control CLI coding agents (agy, claude, codex, etc.).",
   },
   {
     id: "ops.selectNextRun",

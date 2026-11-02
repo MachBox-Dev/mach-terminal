@@ -149,6 +149,8 @@ interface TerminalSurfaceProps {
   isFocused: boolean;
   /** Input posture for this session: operator or commander (raw PTY). */
   inputMode?: SessionInputMode;
+  /** True when an interactive AI coding agent CLI is active in this pane. */
+  agentActive?: boolean;
   /** Operator-only: command vs AI submit (toggled with `?`). */
   composerSubmitKind?: ComposerSubmitKind;
   onToggleComposerSubmitKind?: () => void;
@@ -193,6 +195,7 @@ export function TerminalSurface({
   liveCwd = null,
   isFocused,
   inputMode = "operator",
+  agentActive = false,
   composerSubmitKind = "command",
   onToggleComposerSubmitKind,
   commandFailure = null,
@@ -1142,7 +1145,10 @@ export function TerminalSurface({
     });
 
     const onDataDispose = terminal.onData((data) => {
-      if (!isFocusedRef.current) {
+      // Always forward automatic terminal capability query responses (DSR \x1b[...R, DA \x1b[?...c, OSC \x1b]...)
+      // even if focus is in the composer, so BubbleTea / Ink / Ratatui TUIs (`agy`, `claude`, `codex`) never stall on init.
+      const isTerminalQueryResponse = data.startsWith("\x1b[") || data.startsWith("\x1b]");
+      if (!isFocusedRef.current && !isTerminalQueryResponse) {
         return;
       }
       if (activeSessionRef.current) {
@@ -1288,8 +1294,15 @@ export function TerminalSurface({
     if (!terminal) {
       return;
     }
-    terminal.options.disableStdin = !(inputModeUsesXtermStdin(inputMode) && isFocused);
-    terminal.options.cursorBlink = inputMode === "commander";
+    const allowXtermStdin = (inputModeUsesXtermStdin(inputMode) || agentActive) && isFocused;
+    terminal.options.disableStdin = !allowXtermStdin;
+    terminal.options.cursorBlink = inputMode === "commander" || agentActive;
+    terminal.options.theme = {
+      background: "#0a0a0a",
+      foreground: "#e5e5e5",
+      cursor: allowXtermStdin ? "#00d4b8" : "#0a0a0a",
+      cursorAccent: "#0a0a0a",
+    };
     if (inputMode === "commander" && isFocused) {
       queueMicrotask(() => {
         fitAddonRef.current?.fit();
@@ -1300,7 +1313,7 @@ export function TerminalSurface({
         terminal.focus();
       });
     }
-  }, [inputMode, isFocused]);
+  }, [agentActive, inputMode, isFocused]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

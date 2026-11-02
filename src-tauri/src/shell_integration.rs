@@ -257,8 +257,15 @@ fn pwsh_exe_for_profile_hint(shell: Option<&str>) -> &'static str {
 }
 
 fn try_resolve_powershell_profile(exe: &str) -> Result<PathBuf, String> {
-    let output = Command::new(exe)
-        .args(["-NoProfile", "-NonInteractive", "-Command", "Write-Output $PROFILE"])
+    let mut cmd = Command::new(exe);
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", "Write-Output $PROFILE"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to run {exe} (is it on PATH?): {e}"))?;
     if !output.status.success() {

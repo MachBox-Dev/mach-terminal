@@ -712,3 +712,12 @@ pub struct PluginGrantSnapshot {
     pub plugin_id: String,
     pub capabilities: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionProcessInspection {
+    pub session_id: String,
+    pub shell_pid: Option<u32>,
+    pub foreground_command: Option<String>,
+    pub child_command_line: Option<String>,
+}

@@ -24,11 +24,20 @@ pub fn shell_context_snapshot(
     })
 }
 
+fn git_command(cwd: &str, args: &[&str]) -> Option<std::process::Output> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(cwd).args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.output().ok()
+}
+
 fn git_branch_for_cwd(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
+    let output = git_command(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -43,10 +52,7 @@ fn git_short_stat_for_cwd(cwd: &str) -> Option<String> {
     if git_branch_for_cwd(cwd).is_none() {
         return None;
     }
-    let output = std::process::Command::new("git")
-        .args(["-C", cwd, "diff", "HEAD", "--shortstat"])
-        .output()
-        .ok()?;
+    let output = git_command(cwd, &["diff", "HEAD", "--shortstat"])?;
     if !output.status.success() {
         return None;
     }
@@ -102,36 +108,44 @@ fn compact_git_shortstat(raw: &str) -> String {
 }
 
 fn is_elevated() -> bool {
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "[bool](([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))",
-            ])
-            .output();
-        match output {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("true")
+    static ELEVATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ELEVATED.get_or_init(|| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let output = std::process::Command::new("powershell")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[bool](([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))",
+                ])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().eq_ignore_ascii_case("true")
+                }
+                _ => false,
             }
-            _ => false,
         }
-    }
-    #[cfg(unix)]
-    {
-        std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim() == "0")
-            .unwrap_or(false)
-    }
-    #[cfg(not(any(windows, unix)))]
-    {
-        false
-    }
+        #[cfg(unix)]
+        {
+            std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim() == "0")
+                .unwrap_or(false)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            false
+        }
+    })
 }
 
 #[cfg(test)]

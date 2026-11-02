@@ -493,8 +493,10 @@ impl SessionManager {
         let mut command_buffer = command_buffer
             .lock()
             .map_err(|error| format!("failed to lock command buffer: {error}"))?;
-        command_buffer.push_str(data);
-        truncate_command_buffer_to_cap(&mut command_buffer, MAX_COMMAND_BUFFER_BYTES);
+        if !data.starts_with('\x1b') {
+            command_buffer.push_str(data);
+            truncate_command_buffer_to_cap(&mut command_buffer, MAX_COMMAND_BUFFER_BYTES);
+        }
 
         if data.contains('\r') || data.contains('\n') {
             let command = crate::input_sanitize::sanitize_command_line_for_history(&command_buffer);
@@ -617,6 +619,31 @@ impl SessionManager {
             return Ok(None);
         };
         Ok(handle.info().ok().and_then(|info| info.cwd))
+    }
+
+    /// Inspect the shell PID and any child process command line for hybrid agent CLI detection.
+    pub fn inspect_session_process(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::agent_inspect::SessionProcessInspection, String> {
+        let shell_pid = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|error| format!("failed to lock session manager: {error}"))?;
+            let Some(handle) = sessions.get(session_id) else {
+                return Err(format!("session `{session_id}` does not exist"));
+            };
+            let pid = handle.child.lock().ok().and_then(|c| c.process_id());
+            pid
+        };
+        let child_command_line = shell_pid.and_then(crate::agent_inspect::probe_child_command_line);
+        Ok(crate::agent_inspect::SessionProcessInspection {
+            session_id: session_id.to_string(),
+            shell_pid,
+            foreground_command: child_command_line.clone(),
+            child_command_line,
+        })
     }
 
     #[instrument(skip(self, app, request))]

@@ -17,6 +17,7 @@ const MAX_PTY_FLUSH_BYTES_PER_FRAME = 48_000;
 export interface UsePtyOutputStreamOptions {
   maxSessionBuffer: number;
   setRuntimeError: React.Dispatch<React.SetStateAction<string | null>>;
+  onSessionOutputFlushed?: (sessionId: string, chunk: string) => void;
 }
 
 /**
@@ -26,6 +27,7 @@ export interface UsePtyOutputStreamOptions {
 export function usePtyOutputStream({
   maxSessionBuffer,
   setRuntimeError,
+  onSessionOutputFlushed,
 }: UsePtyOutputStreamOptions): {
   pendingOutputRef: React.MutableRefObject<Record<string, string[]>>;
   lastSequenceRef: React.MutableRefObject<Record<string, number>>;
@@ -36,6 +38,8 @@ export function usePtyOutputStream({
   const lastSequenceRef = useRef<Record<string, number>>({});
   const setRuntimeErrorRef = useRef(setRuntimeError);
   setRuntimeErrorRef.current = setRuntimeError;
+  const onSessionOutputFlushedRef = useRef(onSessionOutputFlushed);
+  onSessionOutputFlushedRef.current = onSessionOutputFlushed;
 
   useEffect(() => {
     let outputUnlisten: (() => void) | undefined;
@@ -67,6 +71,7 @@ export function usePtyOutputStream({
         const { merged, rest } = drainChunksUpToByteBudget(chunks, MAX_PTY_FLUSH_BYTES_PER_FRAME);
         if (merged.length > 0) {
           sessionBufferStore.append(sessionId, merged, maxSessionBuffer);
+          onSessionOutputFlushedRef.current?.(sessionId, merged);
         }
         if (rest.length > 0) {
           pendingOutputRef.current[sessionId] = rest;
