@@ -29,3 +29,19 @@ npm, Cargo and Actions weekly; updates still require normal PR checks/review.
 Repository administration changes are separate from this source configuration.
 Read back the live ruleset and verify actual app installation and PR review
 before reporting the setup complete.
+
+## Security baseline maintenance
+
+On 2026-11-02 the existing lockfile failed the required RustSec gate on 16
+advisories. Compatible updates moved rustls to 0.23.46, webpki to 0.103.16,
+root bundles to 1.0.11 and quinn-proto to 0.11.19. Resolving zip 4.6.1
+advisories requires tauri-plugin-updater 2.14.1 and zip 9; Cargo also updates
+the compatible Tauri 2 framework chain (tauri 2.12.5). No new advisory ignores
+were added. The existing scoped quick-xml build-time exceptions are unchanged.
+
+Reproduce the update with `cargo update --manifest-path src-tauri/Cargo.toml
+-p quinn-proto -p rustls -p rustls-webpki -p webpki-root-certs -p webpki-roots`
+and `cargo update --manifest-path src-tauri/Cargo.toml -p tauri-plugin-updater
+--precise 2.14.1`. Verify with `cargo audit -f src-tauri/Cargo.lock`, the Rust
+suite and all three platform CI jobs before merging. A clean dependency audit
+does not establish native updater or application acceptance.
