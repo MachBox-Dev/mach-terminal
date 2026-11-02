@@ -13,6 +13,7 @@ const COMMAND_CACHE_KEY: &str = "path_commands";
 #[serde(rename_all = "camelCase")]
 pub struct ComposerCompletionRequest {
     pub draft: String,
+    /// UTF-16 code units, matching the textarea's selectionStart.
     pub cursor: usize,
     /// Optional UI hint (OSC7 map / session snapshot). Prefer `session_id` + backend lookup when set.
     pub cwd: Option<String>,
@@ -57,7 +58,7 @@ pub fn complete(
     request: ComposerCompletionRequest,
     manager: Option<&crate::session_manager::SessionManager>,
 ) -> Result<ComposerCompletionResponse, String> {
-    let cursor = request.cursor.min(request.draft.len());
+    let cursor = byte_offset_for_utf16(&request.draft, request.cursor);
     let token = token_at_cursor(&request.draft, cursor);
     let query = unquote_token(&token.raw);
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
@@ -86,31 +87,33 @@ pub fn complete(
     };
 
     Ok(ComposerCompletionResponse {
-        replacement_start: token.start,
-        replacement_end: token.end,
+        replacement_start: request.draft[..token.start].encode_utf16().count(),
+        replacement_end: request.draft[..token.end].encode_utf16().count(),
         query,
         candidates,
     })
 }
 
+fn byte_offset_for_utf16(text: &str, cursor: usize) -> usize {
+    let mut units = 0;
+    for (offset, ch) in text.char_indices() {
+        if units + ch.len_utf16() > cursor {
+            return offset;
+        }
+        units += ch.len_utf16();
+    }
+    text.len()
+}
+
 fn token_at_cursor(draft: &str, cursor: usize) -> CompletionToken {
-    let bytes = draft.as_bytes();
-    let mut start = cursor;
-    while start > 0 {
-        let ch = bytes[start - 1] as char;
-        if ch.is_whitespace() {
-            break;
-        }
-        start -= 1;
-    }
-    let mut end = cursor;
-    while end < bytes.len() {
-        let ch = bytes[end] as char;
-        if ch.is_whitespace() {
-            break;
-        }
-        end += 1;
-    }
+    let start = draft[..cursor].char_indices().rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(offset, ch)| offset + ch.len_utf8())
+        .unwrap_or(0);
+    let end = draft[cursor..].char_indices()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(offset, _)| cursor + offset)
+        .unwrap_or(draft.len());
     CompletionToken {
         start,
         end,
@@ -376,6 +379,44 @@ mod tests {
         assert_eq!(token.start, 8);
         assert_eq!(token.end, 11);
         assert_eq!(token.raw, "bui");
+    }
+
+    #[test]
+    fn token_scans_unicode_without_slicing_inside_a_character() {
+        for draft in ["à", "é", "文件", "🦀"] {
+            let token = token_at_cursor(draft, draft.len());
+            assert_eq!(token.raw, draft);
+            assert_eq!(token.start, 0);
+            assert_eq!(token.end, draft.len());
+        }
+    }
+
+    #[test]
+    fn completion_round_trips_textarea_utf16_offsets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("résultat.txt"), "").unwrap();
+        let prefix = "echo 🦀 文件 à ";
+        let draft = format!("{prefix}./rés --flag");
+        let cursor = format!("{prefix}./rés").encode_utf16().count();
+        let result = super::complete(super::ComposerCompletionRequest {
+            draft, cursor, cwd: Some(dir.path().to_string_lossy().into_owned()),
+            shell: None, session_id: None, limit: None,
+        }, None).unwrap();
+        assert_eq!(result.replacement_start, prefix.encode_utf16().count());
+        assert_eq!(result.replacement_end, cursor);
+        assert_eq!(result.query, "./rés");
+        assert_eq!(result.candidates[0].value, "./résultat.txt");
+    }
+
+    #[test]
+    fn malformed_utf16_cursor_is_clamped_to_a_character_boundary() {
+        assert_eq!(super::byte_offset_for_utf16("🦀x", 1), 0);
+        assert_eq!(super::byte_offset_for_utf16("🦀x", 2), 4);
+        assert_eq!(super::byte_offset_for_utf16("🦀x", usize::MAX), 5);
+        let token = token_at_cursor("à", super::byte_offset_for_utf16("à", 1));
+        assert_eq!(token.raw, "à");
+        let token = token_at_cursor("echo\u{a0}文件", "echo\u{a0}文件".len());
+        assert_eq!(token.raw, "文件");
     }
 
     #[test]
