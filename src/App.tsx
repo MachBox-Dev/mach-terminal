@@ -1726,7 +1726,9 @@ function App() {
       const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
       const detected = cmdLine ? detectAgentFromCommandLine(cmdLine) : null;
       if (!cmdLine || !detected) {
-        delete dismissedAgentSessionsRef.current[sid];
+        if (snap.hasDescendants === false) {
+          delete dismissedAgentSessionsRef.current[sid];
+        }
         setSessionAgents((prev) => {
           const existing = prev[sid];
           if (!existing || !shouldClearAgentAfterNegativeProbe(existing, Date.now(), snap.hasDescendants)) {
