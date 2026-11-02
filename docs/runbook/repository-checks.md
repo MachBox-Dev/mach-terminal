@@ -44,8 +44,9 @@ The committed `Cargo.lock` is the reproducible baseline; fetch its exact version
 with `cargo fetch --manifest-path src-tauri/Cargo.toml --locked`.
 To refresh the named packages to their latest compatible versions, run
 `cargo update --manifest-path src-tauri/Cargo.toml
--p quinn-proto -p rustls -p rustls-webpki -p webpki-root-certs -p webpki-roots`
-and `cargo update --manifest-path src-tauri/Cargo.toml -p tauri-plugin-updater
+-p quinn-proto -p rustls -p rustls-webpki -p webpki-root-certs -p webpki-roots`.
+Pin the updater to the remediated version with
+`cargo update --manifest-path src-tauri/Cargo.toml -p tauri-plugin-updater
 --precise 2.14.1`. Verify with `cargo audit -f src-tauri/Cargo.lock`, the Rust
 suite and all three platform CI jobs before merging. A clean dependency audit
 does not establish native updater or application acceptance.
