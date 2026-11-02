@@ -1,3 +1,4 @@
+import { appendAgentBannerTail, MAX_AGENT_BANNER_TAIL_CHARS } from "./agentTui";
 import { shouldClearAgentAfterNegativeProbe, shellExitRecipients } from "./agentTui";
 import { describe, expect, it } from "vitest";
 import {
@@ -205,4 +206,32 @@ it("recognizes Windows batch agent wrappers while preserving non-interactive exc
   expect(detectAgentFromCommandLine("C:\\tools\\CODEX.BAT --resume")?.id).toBe("codex");
   expect(detectAgentFromCommandLine("claude.bat --help")).toBeNull();
   expect(detectAgentFromCommandLine("unrelated.bat")).toBeNull();
+});
+
+it("recognizes a remote startup banner split across flushes including split ANSI", () => {
+  let context = "";
+  let state;
+  for (const chunk of ["\x1b[3", "3mWelcome to Clau", "de Code!\x1b[0m"]) {
+    state = reduceAgentStateOnOutput(state, "remote", chunk, 1000, context);
+    context = appendAgentBannerTail(context, chunk);
+  }
+  expect(state?.agentId).toBe("claude");
+});
+it("bounds banner context and does not combine output from different sessions", () => {
+  const tails = { a: appendAgentBannerTail("", "Welcome to Clau"), b: appendAgentBannerTail("", "de Code!") };
+  expect(reduceAgentStateOnOutput(undefined, "b", "de Code!", 1000, tails.b)).toBeUndefined();
+  const bounded = appendAgentBannerTail("x".repeat(10000), "Welcome to Clau");
+  expect(bounded.length).toBe(MAX_AGENT_BANNER_TAIL_CHARS);
+  expect(reduceAgentStateOnOutput(undefined, "a", "de Code!", 1000, bounded)?.agentId).toBe("claude");
+});
+it("does not replay an old banner on a shell return or an empty flush", () => {
+  const context = "Welcome to Claude Code!\n";
+  expect(reduceAgentStateOnOutput(undefined, "s", "\x1b]133;A\x07", 1000, context)).toBeUndefined();
+  expect(reduceAgentStateOnOutput(undefined, "s", "", 1000, context)).toBeUndefined();
+});
+
+it("keeps the current chunk visible to detection even when it exceeds the retained tail cap", () => {
+  const chunk = "de Code!\n" + "x".repeat(10000);
+  expect(reduceAgentStateOnOutput(undefined, "s", chunk, 1000, "Welcome to Clau")?.agentId).toBe("claude");
+  expect(reduceAgentStateOnOutput(undefined, "s", "Welcome to Claude Code!\n" + "x".repeat(10000))?.agentId).toBe("claude");
 });

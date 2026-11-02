@@ -1473,6 +1473,13 @@ export function matchAgentSlashCommands(
 const MAX_DISCOVERED_COMMANDS = 24;
 const MAX_RECENT_ACTIVITIES = 20;
 
+export const MAX_AGENT_BANNER_TAIL_CHARS = 4096;
+
+export function appendAgentBannerTail(previous: string, chunk: string): string {
+  if (chunk.length >= MAX_AGENT_BANNER_TAIL_CHARS) return chunk.slice(-MAX_AGENT_BANNER_TAIL_CHARS);
+  return (previous + chunk).slice(-MAX_AGENT_BANNER_TAIL_CHARS);
+}
+
 /**
  * Advance or create the `AgentSessionState` for a session given a new raw PTY output chunk.
  */
@@ -1481,9 +1488,10 @@ export function reduceAgentStateOnOutput(
   sessionId: string,
   rawChunk: string,
   nowMs = Date.now(),
+  bannerContext = "",
 ): AgentSessionState | undefined {
   const clean = stripAnsiSequences(rawChunk);
-  if (current && !current.pinned && hasAgentExitOutputSignal(rawChunk, clean)) {
+  if ((!current || !current.pinned) && hasAgentExitOutputSignal(rawChunk, clean)) {
     return undefined;
   }
   if (!clean.trim()) {
@@ -1492,7 +1500,10 @@ export function reduceAgentStateOnOutput(
 
   let state = current;
   if (!state) {
-    const detectedProfile = detectAgentFromOutputChunk(clean);
+    const detectionOutput = bannerContext
+      ? stripAnsiSequences(bannerContext.slice(-MAX_AGENT_BANNER_TAIL_CHARS) + rawChunk)
+      : clean;
+    const detectedProfile = detectAgentFromOutputChunk(detectionOutput);
     if (!detectedProfile) {
       return undefined;
     }

@@ -1,4 +1,4 @@
-import { shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
+import { appendAgentBannerTail, hasAgentExitOutputSignal, shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
 import { clearAgentAfterConfirmedQuit, quitAgent } from "./core/agentQuit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
@@ -341,6 +341,7 @@ function App() {
   const sessionAgentsRef = useRef(sessionAgents);
   sessionAgentsRef.current = sessionAgents;
   const dismissedAgentSessionsRef = useRef<Record<string, boolean>>({});
+  const agentBannerTailsRef = useRef<Record<string, string>>({});
   const agentQuitInFlightRef = useRef<Record<string, boolean>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
@@ -395,10 +396,18 @@ function App() {
     onSessionOutputFlushed: (sessionId, chunk) => {
       const existingSnapshot = sessionAgentsRef.current[sessionId];
       if (!existingSnapshot && dismissedAgentSessionsRef.current[sessionId]) {
+        delete agentBannerTailsRef.current[sessionId];
         return;
       }
+      const bannerContext = agentBannerTailsRef.current[sessionId] ?? "";
+      const nowMs = Date.now();
       const hadExisting = Boolean(existingSnapshot);
-      const probed = reduceAgentStateOnOutput(existingSnapshot, sessionId, chunk);
+      const probed = reduceAgentStateOnOutput(existingSnapshot, sessionId, chunk, nowMs, bannerContext);
+      if (existingSnapshot || probed || hasAgentExitOutputSignal(chunk)) {
+        delete agentBannerTailsRef.current[sessionId];
+      } else {
+        agentBannerTailsRef.current[sessionId] = appendAgentBannerTail(bannerContext, chunk);
+      }
       if (probed && !hadExisting) {
         setSideRailTab("agent");
         setOpsRailCollapsed(false);
@@ -408,7 +417,7 @@ function App() {
         if (!existing && dismissedAgentSessionsRef.current[sessionId]) {
           return current;
         }
-        const next = reduceAgentStateOnOutput(existing, sessionId, chunk);
+        const next = reduceAgentStateOnOutput(existing, sessionId, chunk, nowMs, bannerContext);
         if (!next) {
           if (!existing) {
             return current;
@@ -447,6 +456,7 @@ function App() {
       setSessionAgents,
     },
     transientRefs: {
+      agentBannerTailsRef,
       agentQuitInFlightRef,
       dismissedAgentSessionsRef,
       pendingOutputRef,
@@ -1088,12 +1098,6 @@ function App() {
             if (!existing) {
               return prev;
             }
-            if (!existing.pinned && isAgentExitCommand(submittedText)) {
-              delete dismissedAgentSessionsRef.current[sid];
-              const next = { ...prev };
-              delete next[sid];
-              return next;
-            }
             return {
               ...prev,
               [sid]: {
@@ -1729,6 +1733,7 @@ function App() {
       const detected = cmdLine ? detectAgentFromCommandLine(cmdLine) : null;
       if (!cmdLine || !detected) {
         if (snap.hasDescendants === false) {
+          delete agentBannerTailsRef.current[sid];
           delete dismissedAgentSessionsRef.current[sid];
         }
         setSessionAgents((prev) => {
@@ -1785,18 +1790,7 @@ function App() {
       try {
         await handleInput(sessionId, data);
       } finally {
-        if (tracked.submitted && isAgentExitCommand(tracked.submitted) && hadActiveAgent) {
-          delete dismissedAgentSessionsRef.current[sessionId];
-          setSessionAgents((current) => {
-            const existing = current[sessionId];
-            if (!existing || existing.pinned) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[sessionId];
-            return next;
-          });
-        } else if (tracked.submitted && isShellExitCommand(tracked.submitted)) {
+        if (tracked.submitted && isShellExitCommand(tracked.submitted)) {
           if (!hadActiveAgent) {
             await closePaneForSession(sessionId);
           }

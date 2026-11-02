@@ -37,6 +37,7 @@ export function deleteSessionRecordKey<T>(current: Record<string, T>, sessionId:
 }
 
 export interface SessionTransientRefs {
+  agentBannerTailsRef?: MutableRefObject<Record<string, string>>;
   agentQuitInFlightRef?: MutableRefObject<Record<string, boolean>>;
   dismissedAgentSessionsRef?: MutableRefObject<Record<string, boolean>>;
   pendingOutputRef: MutableRefObject<Record<string, string[]>>;
@@ -46,6 +47,7 @@ export interface SessionTransientRefs {
 }
 
 export function clearSessionTransientRefs(sessionId: string, refs: SessionTransientRefs): void {
+  if (refs.agentBannerTailsRef) delete refs.agentBannerTailsRef.current[sessionId];
   if (refs.agentQuitInFlightRef) delete refs.agentQuitInFlightRef.current[sessionId];
   if (refs.dismissedAgentSessionsRef) delete refs.dismissedAgentSessionsRef.current[sessionId];
   delete refs.pendingOutputRef.current[sessionId];
@@ -60,6 +62,9 @@ export function clearSessionTransientRefs(sessionId: string, refs: SessionTransi
 
 export function pruneSessionTransientRefs(aliveIds: readonly string[], refs: SessionTransientRefs): void {
   const alive = new Set(aliveIds);
+  for (const id of Object.keys(refs.agentBannerTailsRef?.current ?? {})) {
+    if (!alive.has(id)) delete refs.agentBannerTailsRef!.current[id];
+  }
   for (const id of Object.keys(refs.agentQuitInFlightRef?.current ?? {})) {
     if (!alive.has(id)) delete refs.agentQuitInFlightRef!.current[id];
   }

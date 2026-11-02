@@ -29,6 +29,7 @@ describe("deleteSessionRecordKey", () => {
 describe("pruneSessionTransientRefs", () => {
   it("removes stale ids from all transient ref maps", () => {
     const refs: SessionTransientRefs = {
+      agentBannerTailsRef: { current: { dead: "Welcome to Clau", live: "partial" } },
       agentQuitInFlightRef: { current: { dead: true, live: true } },
       dismissedAgentSessionsRef: { current: { dead: true, live: true } },
       pendingOutputRef: { current: { dead: ["x"], live: [] } },
@@ -37,6 +38,7 @@ describe("pruneSessionTransientRefs", () => {
       sessionCommandLineRef: { current: { dead: "cmd", live: "ok" } },
     };
     pruneSessionTransientRefs(["live"], refs);
+    expect(refs.agentBannerTailsRef?.current).toEqual({ live: "partial" });
     expect(refs.agentQuitInFlightRef?.current).toEqual({ live: true });
     expect(refs.dismissedAgentSessionsRef?.current).toEqual({ live: true });
     expect(refs.pendingOutputRef.current).toEqual({ live: [] });
@@ -44,6 +46,7 @@ describe("pruneSessionTransientRefs", () => {
     expect(refs.resizeThrottleRef.current).toEqual({ live: 1 });
     expect(refs.sessionCommandLineRef.current).toEqual({ live: "ok" });
     clearSessionTransientRefs("live", refs);
+    expect(refs.agentBannerTailsRef?.current).toEqual({});
     expect(refs.agentQuitInFlightRef?.current).toEqual({});
     expect(refs.dismissedAgentSessionsRef?.current).toEqual({});
   });
