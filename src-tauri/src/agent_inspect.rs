@@ -452,21 +452,23 @@ fn process_probe_from_snapshot(shell_pid: u32, snapshot: &str) -> AgentProcessPr
     let mut visited = HashSet::from([shell_pid]);
     while let Some(parent) = queue.pop_front() {
         for row in children.get(&parent).into_iter().flatten() {
-            if !visited.insert(row.pid) || !row.is_foreground(shell_tpgid) {
+            if !visited.insert(row.pid) || row.is_stopped() {
                 continue;
             }
-            let tokens = command_tokens(&row.command);
-            if tokens.first().is_some_and(|exe| is_known_agent_exe(exe)) {
-                return AgentProcessProbe {
-                    command_line: Some(row.command.clone()),
-                    has_descendants: true,
-                };
-            }
-            if let Some(identity) = interpreter_agent_identity(&tokens) {
-                return AgentProcessProbe {
-                    command_line: Some(identity.to_string()),
-                    has_descendants: true,
-                };
+            if row.is_foreground(shell_tpgid) {
+                let tokens = command_tokens(&row.command);
+                if tokens.first().is_some_and(|exe| is_known_agent_exe(exe)) {
+                    return AgentProcessProbe {
+                        command_line: Some(row.command.clone()),
+                        has_descendants: true,
+                    };
+                }
+                if let Some(identity) = interpreter_agent_identity(&tokens) {
+                    return AgentProcessProbe {
+                        command_line: Some(identity.to_string()),
+                        has_descendants: true,
+                    };
+                }
             }
             queue.push_back(row.pid);
         }
@@ -573,6 +575,14 @@ mod tests {
             Some("/usr/local/bin/claude --resume")
         );
         assert!(probe_fg.has_descendants);
+
+        let nested_shell = "10 1 10 12 Ss /bin/zsh\n11 10 11 12 S /bin/bash\n12 11 12 12 S+ /usr/local/bin/claude --resume";
+        let probe_nested = super::process_probe_from_snapshot(10, nested_shell);
+        assert_eq!(
+            probe_nested.command_line.as_deref(),
+            Some("/usr/local/bin/claude --resume")
+        );
+        assert!(probe_nested.has_descendants);
 
         let stopped = "10 1 10 10 Ss+ /bin/zsh\n12 10 12 10 T /usr/local/bin/claude";
         let probe_stopped = super::process_probe_from_snapshot(10, stopped);
