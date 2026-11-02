@@ -9,6 +9,7 @@ export function canFocusComposerWhenPaneActive(
   findOpen: boolean,
   composerLocked: boolean,
   inputMode: SessionInputMode = "operator",
+  agentActive = false,
 ): boolean {
-  return inputModeUsesComposer(inputMode) && !findOpen && !composerLocked;
+  return inputModeUsesComposer(inputMode) && !agentActive && !findOpen && !composerLocked;
 }

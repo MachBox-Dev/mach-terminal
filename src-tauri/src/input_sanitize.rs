@@ -50,6 +50,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn retains_bracketed_paste_and_alt_input() {
+        assert_eq!(sanitize_command_line_for_history("\x1b[200~claude\x1b[201~\r"), "claude");
+        assert_eq!(sanitize_command_line_for_history("\x1becho test\r"), "echo test");
+    }
+
+    #[test]
     fn strips_csi_noise() {
         let s = "\x1b[?1h\x1b[?2004hbuild\x1b[?2004l\r";
         assert_eq!(sanitize_command_line_for_history(s), "build");

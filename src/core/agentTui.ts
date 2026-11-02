@@ -1523,16 +1523,15 @@ export function reduceAgentStateOnOutput(
       ? [...state.discoveredCommands, ...newlyDiscovered].slice(-MAX_DISCOVERED_COMMANDS)
       : state.discoveredCommands;
 
-  const newActivities = extractAgentActivities(clean, nowMs);
+  const seenActivities = new Set(state.recentActivities.map((entry) => entry.summary));
+  const newActivities = extractAgentActivities(clean, nowMs).filter((entry) => {
+    if (seenActivities.has(entry.summary)) return false;
+    seenActivities.add(entry.summary);
+    return true;
+  });
   const recentActivities =
     newActivities.length > 0
-      ? [
-          ...state.recentActivities,
-          ...newActivities.filter(
-            (entry) =>
-              state!.recentActivities[state!.recentActivities.length - 1]?.summary !== entry.summary,
-          ),
-        ].slice(-MAX_RECENT_ACTIVITIES)
+      ? [...state.recentActivities, ...newActivities].slice(-MAX_RECENT_ACTIVITIES)
       : state.recentActivities;
 
   const detectedQuestion = detectAgentPromptQuestion(clean, nowMs);
@@ -1587,4 +1586,12 @@ export function reduceAgentStateOnOutput(
     discoveredCommands,
     recentActivities,
   };
+}
+
+export function shouldClearAgentAfterNegativeProbe(state: AgentSessionState, nowMs: number): boolean {
+  return state.detectedVia === "process" && !state.pinned && nowMs - state.detectedAtMs >= 1800;
+}
+
+export function shellExitRecipients(ids: string[], agents: Record<string, AgentSessionState>): string[] {
+  return ids.filter((id) => !agents[id]);
 }

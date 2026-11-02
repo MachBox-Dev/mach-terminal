@@ -1,3 +1,5 @@
+import { shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
+import { quitAgent } from "./core/agentQuit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
@@ -444,6 +446,7 @@ function App() {
       setSessionAgents,
     },
     transientRefs: {
+      dismissedAgentSessionsRef,
       pendingOutputRef,
       lastSequenceRef,
       resizeThrottleRef,
@@ -1726,7 +1729,7 @@ function App() {
         delete dismissedAgentSessionsRef.current[sid];
         setSessionAgents((prev) => {
           const existing = prev[sid];
-          if (!existing || existing.pinned || Date.now() - existing.detectedAtMs < 1800) {
+          if (!existing || !shouldClearAgentAfterNegativeProbe(existing, Date.now())) {
             return prev;
           }
           const next = { ...prev };
@@ -1772,9 +1775,7 @@ function App() {
 
   const handleTerminalInput = useCallback(
     async (sessionId: string, data: string) => {
-      const tracked = data.startsWith("\x1b")
-        ? { line: sessionCommandLineRef.current[sessionId] ?? "", submitted: null }
-        : appendTerminalInputLine(sessionCommandLineRef.current[sessionId] ?? "", data);
+      const tracked = appendTerminalInputLine(sessionCommandLineRef.current[sessionId] ?? "", data);
       sessionCommandLineRef.current[sessionId] = tracked.line;
       const hadActiveAgent = Boolean(sessionAgentsRef.current[sessionId]);
       try {
@@ -2456,37 +2457,19 @@ function App() {
       delete next[sid];
       return next;
     });
-    // 1. Send Escape (\x1b) + Ctrl+U (\x15) to close any TUI modal and clear the input line.
-    // 2. Send Ctrl+D Ctrl+D (\x04, \x04) which cleanly exits Antigravity (`agy`), Claude Code, Codex, Gemini, etc.
-    // 3. If the child agent process is still alive at 220ms (e.g. line-oriented REPL), send `/exit\r`.
-    void handleInput(sid, "\u001b\u0015");
-    window.setTimeout(() => {
-      void handleInput(sid, "\u0004");
-    }, 35);
-    window.setTimeout(() => {
-      void handleInput(sid, "\u0004");
-    }, 75);
-    window.setTimeout(() => {
-      void (async () => {
-        try {
-          if (!isTauri()) {
-            return;
-          }
-          const snap = await ptyInspectSessionProcess(sid);
-          const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
-          if (cmdLine && detectAgentFromCommandLine(cmdLine)) {
-            await handleInput(sid, "\u0015/exit");
-            window.setTimeout(() => {
-              void handleInput(sid, "\r");
-            }, 40);
-          } else {
-            delete dismissedAgentSessionsRef.current[sid];
-          }
-        } catch {
-          delete dismissedAgentSessionsRef.current[sid];
-        }
-      })();
-    }, 220);
+    void quitAgent(
+      (data) => handleInput(sid, data),
+      async () => {
+        if (!isTauri()) return false;
+        const snap = await ptyInspectSessionProcess(sid);
+        const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
+        return Boolean(cmdLine && detectAgentFromCommandLine(cmdLine));
+      },
+      (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+    ).catch(() => {
+      // An unavailable probe must never authorize another write into the shell.
+      delete dismissedAgentSessionsRef.current[sid];
+    });
   }, [activeSessionId, handleInput, targetSessionIdForComposer]);
 
   const handleExecuteAgentSlashCommand = useCallback(

@@ -549,7 +549,7 @@ export interface SessionProcessInspection {
 }
 
 export async function ptyInspectSessionProcess(sessionId: string) {
-  return invoke<SessionProcessInspection>("pty_inspect_session_process", { session_id: sessionId });
+  return invoke<SessionProcessInspection>("pty_inspect_session_process", { sessionId });
 }
 
 export async function runtimeMetricsSnapshot() {

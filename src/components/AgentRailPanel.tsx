@@ -205,6 +205,7 @@ export function AgentRailPanel({
               type="button"
               className="inline-btn ghost ops-rail-action-btn"
               onClick={onDismissPrompt}
+              aria-label="Dismiss prompt"
             >
               ×
             </button>
@@ -243,7 +244,7 @@ export function AgentRailPanel({
           aria-label="Filter agent slash commands"
         />
         <div className="agent-rail-category-pills" role="tablist" aria-label="Command categories">
-          {(["all", "workflow", "context", "session", "config", "discovered"] as CategoryFilter[]).map((cat) => {
+          {(["all", "workflow", "context", "session", "model", "config", "discovered"] as CategoryFilter[]).map((cat) => {
             if (cat === "discovered" && agentState.discoveredCommands.length === 0) {
               return null;
             }

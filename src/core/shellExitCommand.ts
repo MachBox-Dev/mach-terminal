@@ -20,7 +20,11 @@ export function isShellExitPayload(data: string): boolean {
 /** Track a PTY keystroke buffer; returns the submitted line when Enter is pressed. */
 export function appendTerminalInputLine(currentLine: string, data: string): { line: string; submitted: string | null } {
   let line = currentLine;
-  for (const char of data) {
+  const printable = data
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[()][^]/g, "");
+  for (const char of printable) {
     if (char === "\r" || char === "\n") {
       const submitted = line.trim();
       return { line: "", submitted: submitted.length > 0 ? submitted : null };

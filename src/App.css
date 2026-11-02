@@ -3566,7 +3566,7 @@ body {
   box-shadow: 0 0 6px var(--agent-accent, var(--mach-accent));
 }
 
-.mach-status-chip-agent.status-awaiting_prompt {
+.mach-status-chip-agent.awaiting-prompt {
   border-color: rgba(251, 191, 36, 0.65) !important;
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
 }
@@ -3591,8 +3591,8 @@ body {
   font-weight: 700;
 }
 
-.ops-rail-main-tab-attention,
-.ops-rail-expand-tab-attention {
+.ops-rail-main-tab-agent.has-question,
+.ops-rail-expand-tab-agent.has-question {
   border-color: rgba(251, 191, 36, 0.6) !important;
   color: #fde68a !important;
 }

@@ -1,3 +1,4 @@
+import { shellExitRecipients } from "../core/agentTui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getAgentCliProfile,
@@ -206,11 +207,11 @@ export function useGroupComposer({
     } else if (composerSubmitKind !== "ai") {
       const payload = `${normalized.replace(/\n/g, "\r\n")}\r`;
       onSubmitToPty(sessionIds, payload);
-      // Only treat `exit`/`logout` as a shell-closing command when NO coding agent is currently active in the target pane
-      if (!targetAgentState && isShellExitCommand(normalized.trim())) {
+      if (isShellExitCommand(normalized.trim())) {
+        const shellSessionIds = shellExitRecipients(sessionIds, sessionAgents);
         if (isBroadcastArmed(broadcastMode)) {
-          onShellExitBroadcast?.(sessionIds);
-        } else {
+          if (shellSessionIds.length > 0) onShellExitBroadcast?.(shellSessionIds);
+        } else if (shellSessionIds.length > 0) {
           onShellExitSubmitted?.();
         }
       }
@@ -233,7 +234,7 @@ export function useGroupComposer({
     onShellExitBroadcast,
     resetCompletionState,
     resolveSubmitSessionIds,
-    targetAgentState,
+    sessionAgents,
   ]);
 
   const requestComposerCompletion = useCallback(async (): Promise<boolean> => {

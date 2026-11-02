@@ -106,30 +106,72 @@ pub fn probe_child_command_line(shell_pid: u32) -> Option<String> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let output = std::process::Command::new("pgrep")
-            .args(["-P", &shell_pid.to_string(), "-a"])
+        let output = std::process::Command::new("ps")
+            .args(["-ax", "-o", "pid=,ppid=,args="])
             .output()
             .ok()?;
         if !output.status.success() {
             return None;
         }
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()).rev() {
-            let cmd = line
-                .split_once(char::is_whitespace)
-                .map(|(_, rest)| rest.trim())
-                .unwrap_or(line);
-            if !cmd.is_empty() && is_known_agent_exe(cmd) {
-                return Some(cmd.to_string());
-            }
-        }
-        None
+        agent_from_process_snapshot(shell_pid, &String::from_utf8_lossy(&output.stdout))
     }
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn agent_from_process_snapshot(shell_pid: u32, snapshot: &str) -> Option<String> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+    let mut children: HashMap<u32, Vec<(u32, String)>> = HashMap::new();
+    for line in snapshot.lines() {
+        let mut fields = line.trim().splitn(2, char::is_whitespace);
+        let Some(pid) = fields.next().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(rest) = fields.next() else { continue };
+        let mut fields = rest.trim_start().splitn(2, char::is_whitespace);
+        let Some(ppid) = fields.next().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(command) = fields.next().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        children
+            .entry(ppid)
+            .or_default()
+            .push((pid, command.to_string()));
+    }
+    let mut queue = VecDeque::from([shell_pid]);
+    let mut visited = HashSet::from([shell_pid]);
+    while let Some(parent) = queue.pop_front() {
+        for (pid, command) in children.get(&parent).into_iter().flatten() {
+            if !visited.insert(*pid) {
+                continue;
+            }
+            if is_known_agent_exe(command) {
+                return Some(command.clone());
+            }
+            queue.push_back(*pid);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_known_agent_exe;
+    use super::{agent_from_process_snapshot, is_known_agent_exe};
+
+    #[test]
+    fn finds_nested_agents_from_portable_ps_snapshot() {
+        let snapshot = " 10 1 /bin/zsh\n 11 10 bash -c wrapper\n 12 11 /usr/local/bin/claude --resume\n 20 1 codex\n malformed";
+        assert_eq!(
+            agent_from_process_snapshot(10, snapshot),
+            Some("/usr/local/bin/claude --resume".into())
+        );
+        assert_eq!(agent_from_process_snapshot(99, snapshot), None);
+        assert_eq!(
+            agent_from_process_snapshot(10, "10 11 zsh\n11 10 bash"),
+            None
+        );
+    }
 
     #[test]
     fn recognizes_known_coding_agent_executables_and_rejects_shells() {

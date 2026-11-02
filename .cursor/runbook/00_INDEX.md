@@ -8,7 +8,7 @@
 
 Distinctive design choices grounded in the code:
 - **Tri-mode input per session** (`operator` / `console` / `ai`): cycle with **Ctrl+` `** (sacred chord, never forwarded to PTY). Operator = composer-first with completion/history; Console = raw xterm stdin for tmux/vim/ssh; AI = composer + insight panel with `?`-prefixed AI-only prompts and shell commands still piped to the PTY/history. Mode persists per tab in `WorkspaceLayout.sessions[]`.
-- **Composer-first default (Operator mode)**: typing happens in a dedicated composer input; xterm runs with `disableStdin=true` unless Console mode is active.
+- **Composer-first default (Operator mode)**: typing happens in a dedicated composer input; xterm user input is gated to focused Console/active-agent panes; automatic terminal query replies remain enabled in all panes.
 - **Capability-scoped plugin host** with reason-coded policy decisions and telemetry (`src-tauri/src/plugin_host.rs`).
 - **Strict frontend/backend boundary**: every backend interaction goes through Tauri `invoke` commands and `listen` events, funneled through one bridge module (`src/core/terminal.ts`).
 

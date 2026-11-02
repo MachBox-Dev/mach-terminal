@@ -1,3 +1,4 @@
+import { shouldClearAgentAfterNegativeProbe, shellExitRecipients } from "./agentTui";
 import { describe, expect, it } from "vitest";
 import {
   createAgentSessionState,
@@ -164,4 +165,29 @@ describe("agentTui detection & parsing", () => {
     // 2. PowerShell prompt return (`PS C:\...>`)
     expect(reduceAgentStateOnOutput(active, "session-1", "PS C:\\Users\\whobs\\dev\\mach-terminal> ", 7100)).toBeUndefined();
   });
+});
+
+it("does not duplicate repainted tool activities or turn idle state into working", () => {
+  const tools = "⏺ Read(a)\n⏺ Edit(b)\n⏺ Edit(b)";
+  const initial = createAgentSessionState("s", getAgentCliProfile("claude"), "command");
+  const first = reduceAgentStateOnOutput(initial, "s", tools, 1000)!;
+  expect(first.recentActivities).toHaveLength(2);
+  const idle = { ...first, status: "idle" as const };
+  expect(reduceAgentStateOnOutput(idle, "s", tools, 2000)).toBe(idle);
+});
+
+it("retains interpreter-backed and manually selected agents on negative process matches", () => {
+  for (const via of ["command", "output", "manual"] as const) {
+    const state = createAgentSessionState("s", getAgentCliProfile("claude"), via, { nowMs: 0 });
+    expect(shouldClearAgentAfterNegativeProbe(state, 5000)).toBe(false);
+  }
+  const probed = createAgentSessionState("s", getAgentCliProfile("claude"), "process", { nowMs: 0 });
+  expect(shouldClearAgentAfterNegativeProbe(probed, 5000)).toBe(true);
+  expect(shouldClearAgentAfterNegativeProbe({ ...probed, pinned: true }, 5000)).toBe(false);
+});
+it("closes only shell recipients regardless of mixed broadcast target order", () => {
+  const agent = createAgentSessionState("agent", getAgentCliProfile("claude"), "command");
+  expect(shellExitRecipients(["shell", "agent"], { agent })).toEqual(["shell"]);
+  expect(shellExitRecipients(["agent", "shell"], { agent })).toEqual(["shell"]);
+  expect(shellExitRecipients(["agent"], { agent })).toEqual([]);
 });

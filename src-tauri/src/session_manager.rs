@@ -493,10 +493,8 @@ impl SessionManager {
         let mut command_buffer = command_buffer
             .lock()
             .map_err(|error| format!("failed to lock command buffer: {error}"))?;
-        if !data.starts_with('\x1b') {
-            command_buffer.push_str(data);
-            truncate_command_buffer_to_cap(&mut command_buffer, MAX_COMMAND_BUFFER_BYTES);
-        }
+        command_buffer.push_str(data);
+        truncate_command_buffer_to_cap(&mut command_buffer, MAX_COMMAND_BUFFER_BYTES);
 
         if data.contains('\r') || data.contains('\n') {
             let command = crate::input_sanitize::sanitize_command_line_for_history(&command_buffer);
