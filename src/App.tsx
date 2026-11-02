@@ -1,5 +1,5 @@
 import { appendAgentBannerTail, hasAgentExitOutputSignal, shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
-import { clearAgentAfterConfirmedQuit, quitAgent } from "./core/agentQuit";
+import { clearAgentAfterConfirmedQuit, inspectQuitOutcome, quitAgent, sendTextThenEnterWithDelay } from "./core/agentQuit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
@@ -1365,14 +1365,27 @@ function App() {
     [closeSession],
   );
 
-  const handleInput = useCallback(async (sessionId: string, data: string) => {
+  const sendInput = useCallback(async (sessionId: string, data: string) => {
     try {
       await ptyWrite(sessionId, data);
+      return true;
     } catch (error) {
       setSessionStatus((current) => ({ ...current, [sessionId]: "error" }));
       setRuntimeError(error instanceof Error ? error.message : "Failed to send terminal input.");
+      return false;
     }
   }, []);
+
+  const handleInput = useCallback(async (sessionId: string, data: string) => {
+    await sendInput(sessionId, data);
+  }, [sendInput]);
+
+  const sendTextThenEnter = useCallback(
+    (sessionId: string, text: string, delayMs: number) => {
+      sendTextThenEnterWithDelay(sendInput, (cb, ms) => window.setTimeout(cb, ms), sessionId, text, delayMs);
+    },
+    [sendInput],
+  );
 
   const submitAiChat = useCallback(
     async (sessionId: string, prompt: string, extraAttachments: AiContextAttachment[] = []) => {
@@ -2242,10 +2255,7 @@ function App() {
       for (const sessionId of sessionIds) {
         if (sessionAgentsRef.current[sessionId] && payload.endsWith("\r") && payload.length > 1) {
           const textBody = payload.slice(0, -1);
-          void handleInput(sessionId, textBody);
-          window.setTimeout(() => {
-            void handleInput(sessionId, "\r");
-          }, 35);
+          sendTextThenEnter(sessionId, textBody, 35);
         } else {
           void handleInput(sessionId, payload);
         }
@@ -2451,10 +2461,7 @@ function App() {
       async () => {
         if (!isTauri()) return "unknown";
         const snap = await ptyInspectSessionProcess(sid);
-        const cmdLine = snap.childCommandLine ?? snap.foregroundCommand;
-        const detected = cmdLine ? detectAgentFromCommandLine(cmdLine) : null;
-        if (detected?.id === agent.agentId) return "running";
-        return snap.hasDescendants === false ? "exited" : "unknown";
+        return inspectQuitOutcome(snap, agent.agentId);
       },
       (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
     ).then((outcome) => {
@@ -2485,10 +2492,7 @@ function App() {
       }
       // Clear any partial TUI input line with Ctrl+U (\x15), write the slash command,
       // and send Enter (\r) after a short delay so BubbleTea/Ink TUIs submit it cleanly.
-      void handleInput(sid, `\x15${cmd.command}`);
-      window.setTimeout(() => {
-        void handleInput(sid, "\r");
-      }, 45);
+      sendTextThenEnter(sid, `\x15${cmd.command}`, 45);
       setSessionAgents((current) => {
         const existing = current[sid];
         if (!existing) {
@@ -2503,7 +2507,7 @@ function App() {
         };
       });
     },
-    [activeSessionId, groupComposer, handleInput, handleQuitAgent, targetSessionIdForComposer],
+    [activeSessionId, groupComposer, handleQuitAgent, sendTextThenEnter, targetSessionIdForComposer],
   );
 
   const handleInsertAgentSlashCommand = useCallback(
@@ -2521,10 +2525,7 @@ function App() {
         return;
       }
       if (option.payload.endsWith("\r") && option.payload.length > 1) {
-        void handleInput(sid, option.payload.slice(0, -1));
-        window.setTimeout(() => {
-          void handleInput(sid, "\r");
-        }, 35);
+        sendTextThenEnter(sid, option.payload.slice(0, -1), 35);
       } else {
         void handleInput(sid, option.payload);
       }
@@ -2543,7 +2544,7 @@ function App() {
         };
       });
     },
-    [activeSessionId, handleInput, targetSessionIdForComposer],
+    [activeSessionId, handleInput, sendTextThenEnter, targetSessionIdForComposer],
   );
 
   const handleDismissAgentPrompt = useCallback(() => {

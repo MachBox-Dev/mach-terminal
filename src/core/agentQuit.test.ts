@@ -1,6 +1,11 @@
 import { createAgentSessionState, getAgentCliProfile } from "./agentTui";
 import { expect, it, vi } from "vitest";
-import { clearAgentAfterConfirmedQuit, quitAgent } from "./agentQuit";
+import {
+  clearAgentAfterConfirmedQuit,
+  inspectQuitOutcome,
+  quitAgent,
+  sendTextThenEnterWithDelay,
+} from "./agentQuit";
 
 it("does not send another EOF or exit after the agent exits on the first EOF", async () => {
   const write = vi.fn(async (_: string) => {});
@@ -32,6 +37,31 @@ it("stops all follow-up writes when the inspection is unavailable", async () => 
   expect(await quitAgent(write, async () => "unknown", async () => {})).toBe("unknown");
   expect(write.mock.calls.map(([data]) => data)).toEqual(["\x1b\x15"]);
 });
+
+it("does not send EOF when the agent is suspended or backgrounded", async () => {
+  const write = vi.fn(async (_: string) => {});
+  const outcome = inspectQuitOutcome({ foregroundCommand: null, hasDescendants: true }, "claude");
+  expect(outcome).toBe("unknown");
+  expect(await quitAgent(write, async () => outcome, async () => {})).toBe("unknown");
+  expect(write.mock.calls.map(([data]) => data)).toEqual(["\x1b\x15"]);
+});
+
+it("gates delayed Enter on a successful initial text write", async () => {
+  const scheduled: Array<() => void> = [];
+  const sendOk = vi.fn(async () => true);
+  sendTextThenEnterWithDelay(sendOk, (cb) => { scheduled.push(cb); }, "s1", "hello", 35);
+  expect(sendOk.mock.calls).toEqual([["s1", "hello"]]);
+  scheduled.shift()?.();
+  await Promise.resolve();
+  expect(sendOk.mock.calls).toEqual([["s1", "hello"], ["s1", "\r"]]);
+
+  const sendFail = vi.fn(async () => false);
+  sendTextThenEnterWithDelay(sendFail, (cb) => { scheduled.push(cb); }, "s1", "too-big", 35);
+  scheduled.shift()?.();
+  await Promise.resolve();
+  expect(sendFail.mock.calls).toEqual([["s1", "too-big"]]);
+});
+
 it("preserves pin and activity state on incomplete or unknown quit outcomes", () => {
   const agent = { ...createAgentSessionState("s", getAgentCliProfile("claude"), "manual", { nowMs: 10 }), pinned: true };
   const sessions = { s: agent };
