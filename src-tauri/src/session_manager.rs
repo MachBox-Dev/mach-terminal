@@ -1230,18 +1230,42 @@ mod tests {
     #[test]
     fn eof_reaping_and_pid_probes_leave_session_closure_available() {
         use std::sync::{Arc, Mutex, mpsc};
-        let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
-        let mut command = CommandBuilder::new(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
-        if cfg!(windows) { command.arg("/Q"); }
-        let child: Box<dyn portable_pty::Child + Send> = pair.slave.spawn_command(command).unwrap();
+        use std::sync::atomic::{AtomicBool, Ordering};
+        #[derive(Clone, Debug)]
+        struct ControlledChild { exited: Arc<AtomicBool>, polled: Arc<AtomicBool> }
+        impl portable_pty::ChildKiller for ControlledChild {
+            fn kill(&mut self) -> std::io::Result<()> {
+                self.exited.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+                Box::new(self.clone())
+            }
+        }
+        impl portable_pty::Child for ControlledChild {
+            fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+                self.polled.store(true, Ordering::SeqCst);
+                Ok(self.exited.load(Ordering::SeqCst).then(|| portable_pty::ExitStatus::with_exit_code(7)))
+            }
+            fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+                assert!(self.exited.load(Ordering::SeqCst), "must not wait on a live child under its lock");
+                Ok(portable_pty::ExitStatus::with_exit_code(7))
+            }
+            fn process_id(&self) -> Option<u32> { Some(42) }
+            #[cfg(windows)]
+            fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> { None }
+        }
+        let polled = Arc::new(AtomicBool::new(false));
+        let child: Box<dyn portable_pty::Child + Send> = Box::new(ControlledChild {
+            exited: Arc::new(AtomicBool::new(false)), polled: Arc::clone(&polled),
+        });
         let mut killer = child.clone_killer();
-        drop(pair.slave);
         let child = Arc::new(Mutex::new(child));
         let manager = Arc::new(SessionManager::default());
         manager.sessions.lock().unwrap().insert("probe".into(), super::SessionHandle {
             id: "probe".into(), shell: "test".into(), cwd: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new("running".into())),
-            master: Arc::new(Mutex::new(Some(pair.master))), writer: Arc::new(Mutex::new(None)),
+            master: Arc::new(Mutex::new(None)), writer: Arc::new(Mutex::new(None)),
             child: Arc::clone(&child), command_buffer: Arc::new(Mutex::new(String::new())), reader_thread: None,
         });
         let held_child = child.lock().unwrap();
@@ -1253,16 +1277,26 @@ mod tests {
         drop(held_child);
         probe.join().unwrap();
         let reaped_child = Arc::clone(&child);
-        let reaper = std::thread::spawn(move || super::derive_exit_code(&reaped_child));
-        std::thread::sleep(Duration::from_millis(50));
-        let child_available = child.try_lock().is_ok();
+        let (reap_sender, reap_receiver) = mpsc::channel();
+        let reaper = std::thread::spawn(move || { reap_sender.send(super::derive_exit_code(&reaped_child)).unwrap(); });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !polled.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let mut child_available = false;
+        while Instant::now() < deadline {
+            if child.try_lock().is_ok() { child_available = true; break; }
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let _ = killer.kill();
-        let exit_code = reaper.join().unwrap();
+        let exit_code = reap_receiver.recv_timeout(Duration::from_secs(1)).expect("reaper must finish after kill");
+        reaper.join().unwrap();
         manager.close_all().unwrap();
         assert!(result.unwrap().is_err(), "busy inspection must return promptly");
         assert!(map_available, "busy child must not retain session map");
+        assert!(polled.load(Ordering::SeqCst), "reaper must poll the live child");
         assert!(child_available, "EOF reaper must release child while it is alive");
-        assert!(exit_code.is_some(), "reaper must retain the actual exit status");
+        assert_eq!(exit_code, Some(7), "reaper must retain the actual exit status");
     }
 
     #[test]
