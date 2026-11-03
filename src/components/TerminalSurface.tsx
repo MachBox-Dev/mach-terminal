@@ -1,6 +1,6 @@
 import { shouldForwardTerminalData, usesRawTerminalInput } from "../core/terminalInputRouting";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useSessionBuffer } from "../hooks/useSessionBuffer";
+import { useSessionBufferSubscription } from "../hooks/useSessionBufferSubscription";
 import { sessionBufferDelta } from "../state/sessionBufferStore";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { FOCUS_ACTIVE_TERMINAL_EVENT } from "../core/workspaceFocus";
@@ -224,7 +224,6 @@ export function TerminalSurface({
   onRequestRestartSession,
   onRequestCloseSession,
 }: TerminalSurfaceProps) {
-  const activeBuffer = useSessionBuffer(activeSession?.id);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -1193,7 +1192,9 @@ export function TerminalSurface({
       onResizeRef.current(pending.sessionId, pending.cols, pending.rows);
     };
 
-    const observer = new ResizeObserver(() => {
+    const resizeHost = hostRef.current;
+    let revealResizeTimer: number | undefined;
+    const fitAndQueueResize = (flushImmediately = false) => {
       fitAddon.fit();
       if (!activeSessionRef.current) {
         return;
@@ -1206,7 +1207,32 @@ export function TerminalSurface({
       if (resizeTimerRef.current !== null) {
         return;
       }
-      resizeTimerRef.current = window.setTimeout(flushPendingResize, 80);
+      if (flushImmediately) {
+        flushPendingResize();
+      } else {
+        resizeTimerRef.current = window.setTimeout(flushPendingResize, 80);
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      if (!agentActiveRef.current) {
+        fitAndQueueResize();
+        return;
+      }
+      // A live agent repaints its whole screen at each PTY size. Fit and send
+      // only the final size once the drag pauses.
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+      resizeHost?.classList.add("terminal-agent-resizing");
+      window.clearTimeout(revealResizeTimer);
+      revealResizeTimer = window.setTimeout(() => {
+        resizeHost?.classList.remove("terminal-agent-resizing");
+      }, 280);
+      resizeTimerRef.current = window.setTimeout(() => {
+        resizeTimerRef.current = null;
+        fitAndQueueResize(true);
+      }, 120);
     });
     observer.observe(containerRef.current);
 
@@ -1236,6 +1262,8 @@ export function TerminalSurface({
       webglAddonRef.current?.dispose();
       webglAddonRef.current = null;
       observer.disconnect();
+      window.clearTimeout(revealResizeTimer);
+      resizeHost?.classList.remove("terminal-agent-resizing");
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1326,13 +1354,13 @@ export function TerminalSurface({
     }
   }, [agentActive, inputMode, isFocused]);
 
-  useEffect(() => {
+  useSessionBufferSubscription(activeSession?.id, (currentSession, activeBuffer) => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
     }
 
-    const currentSession = activeSession?.id;
+    if (activeSessionRef.current?.id !== currentSession) return;
     const previousSession = renderedStateRef.current.sessionId;
     const previousPosition = renderedStateRef.current.totalAppended;
 
@@ -1374,7 +1402,7 @@ export function TerminalSurface({
       renderedStateRef.current = { sessionId: currentSession, totalAppended: activeBuffer.totalAppended };
       pumpPendingTerminalWrites();
     }
-  }, [activeSession, activeBuffer, cancelScheduledWritePump, emitUiSurfacePatch, pumpPendingTerminalWrites]);
+  });
 
   /** Resume paint when the pane regains focus (tab swap) or the window becomes visible again. */
   useEffect(() => {

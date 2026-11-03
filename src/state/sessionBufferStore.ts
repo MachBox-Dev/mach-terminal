@@ -1,6 +1,6 @@
 /**
  * PTY scrollback lives outside React state so RAF output flushes do not re-render App.
- * Terminal panes subscribe per session via `useSessionBuffer`.
+ * Terminal panes consume snapshots imperatively via `useSessionBufferSubscription`.
  */
 
 export function appendBoundedSessionBuffer(previous: string, nextChunk: string, maxBuffer: number): string {

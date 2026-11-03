@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PtyLifecycleEvent } from "./terminal";
 import {
   clearExitedInfo,
+  applySessionStatus,
   deriveExitedInfo,
   isTerminalStatus,
   pruneExitedForSessions,
@@ -130,4 +131,13 @@ describe("pruneExitedForSessions", () => {
     const next = pruneExitedForSessions(base, []);
     expect(next).toEqual({});
   });
+});
+
+it("keeps an exit terminal when running arrives late or the spawn response resolves", () => {
+  for (const status of ["stopped", "closed", "error"] as const) {
+    const exited = applySessionStatus({}, "fast", status);
+    expect(applySessionStatus(exited, "fast", "running")).toBe(exited);
+    expect(applySessionStatus(exited, "fast", "starting")).toBe(exited);
+    expect(applySessionStatus(exited, "new-session", "running")["new-session"]).toBe("running");
+  }
 });

@@ -1,3 +1,4 @@
+import { applySessionStatus } from "../core/sessionLifecycle";
 import { useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { prefetchShellCandidates, loadShellCandidates } from "../core/shellCandidatesCache";
@@ -175,10 +176,7 @@ export async function runSessionBoot(callbacks: SessionBootCallbacks): Promise<v
         const { names, modes, chatKeys } = restoreSessionMetadataFromTabs(persistedTabs, (id) => idMap[id] ?? null);
         callbacks.setSessions(restoredInfos);
         callbacks.setSessionStatus(
-          restoredInfos.reduce<Record<string, SessionStatus>>((acc, info) => {
-            acc[info.id] = "running";
-            return acc;
-          }, {}),
+          current => restoredInfos.reduce((acc, info) => applySessionStatus(acc, info.id, info.status), current),
         );
         callbacks.bootstrapSessionChat(restoredIds, chatKeys);
         if (Object.keys(names).length > 0) {

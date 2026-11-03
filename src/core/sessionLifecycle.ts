@@ -17,7 +17,7 @@ export interface SessionExitedInfo {
   exitCode: number | null;
 }
 
-export function isTerminalStatus(status: SessionStatus): status is TerminalSessionStatus {
+export function isTerminalStatus(status: SessionStatus | undefined): status is TerminalSessionStatus {
   return status === "stopped" || status === "closed" || status === "error";
 }
 
@@ -72,4 +72,12 @@ export function pruneExitedForSessions(
     }
   }
   return changed ? next : map;
+}
+
+/** Session ids are never reused: a delayed spawn response cannot revive an exit. */
+export function applySessionStatus(
+  current: Record<string, SessionStatus>, sessionId: string, status: SessionStatus,
+): Record<string, SessionStatus> {
+  if (current[sessionId] === status || (isTerminalStatus(current[sessionId]) && !isTerminalStatus(status))) return current;
+  return { ...current, [sessionId]: status };
 }

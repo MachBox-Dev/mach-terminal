@@ -3122,6 +3122,7 @@ body {
    ========================================================================== */
 
 .agent-prompt-bar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
@@ -3391,6 +3392,17 @@ body {
 }
 
 /* Interactive Question Card (Prompt Bar + Rail) */
+/* Prompt redraws must not change the PTY viewport and trigger another redraw. */
+.agent-prompt-bar > .agent-question-card {
+  position: absolute;
+  inset-inline: 0.75rem;
+  bottom: calc(100% + 0.4rem);
+  z-index: 5;
+  max-height: min(45vh, 22rem);
+  overflow: auto;
+  background: #121418;
+}
+
 .agent-question-card {
   display: flex;
   flex-direction: column;
@@ -3923,4 +3935,37 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.agent-option-btn {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+.agent-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Soften the canvas clear while the agent repaints at its new size. */
+.terminal-host::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: #0a0a0a;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.terminal-host.terminal-agent-resizing::after {
+  opacity: 0.88;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-host::after {
+    transition: none;
+  }
 }

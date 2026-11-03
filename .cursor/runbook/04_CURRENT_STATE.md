@@ -2,6 +2,31 @@
 
 > Snapshot grounded in `CHANGELOG.md` (v0.1.0-rc.11), `docs/continuation-handoff.md` (last updated 2026-04-21, tranche 6), and the live code. Update this file as work lands.
 
+## Daily-driver candidate (2026-11-02, uncommitted follow-up)
+
+- Agent prompt cards overlay the terminal viewport so prompt redraws do not
+  resize the PTY. Agent pane fitting waits for resize activity to settle.
+- November 3 QA follow-up: Antigravity command permission menus allow long
+  numbered options when the permission header and question are present. The
+  UI preserves the full permission scopes. Windows QA builds use the GUI
+  subsystem, matching release startup behavior.
+
+- `codex/daily-driver-reliability` rebased onto main's PR #79 merge (`c806ab6`).
+- TER-67 registration gate prevents already-exited shells from being inserted
+  after reader cleanup; failed initial emits tear down startup. Frontend late
+  running/spawn/restore statuses cannot revive an exited id.
+- TER-74 shell context uses background workers, bounded subprocess probes,
+  native Windows elevation, shared directory polling and a conditional clock.
+- TER-75 terminal output consumes external-store snapshots without React renders.
+- PR #79 split-prompt follow-up accumulates bounded per-session prompt context,
+  resets stale questions, and preserves raw agent focus while in Operator mode.
+- Verification: types, 522 frontend tests, 52 smoke tests, 117 Rust unit + 32
+  integration tests, invoke smoke/strict (Windows fallback), production frontend
+  and isolated debug Tauri builds pass. Fresh local artifact:
+  `artifacts/daily-driver-followup-2026-11-02/MachTerminal-QA.exe` (gitignored).
+- Native Windows acceptance remains pending; see `docs/runbook/daily-driver.md`.
+  No claim of complete daily-driver readiness or resolution of every crash.
+
 ## What's Working (shipped + has guardrails)
 
 ### Core terminal

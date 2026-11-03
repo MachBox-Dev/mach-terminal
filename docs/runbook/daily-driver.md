@@ -45,11 +45,44 @@ QA builds must use a separate app identifier and deep-link scheme. Runtime
 registration follows configured schemes rather than hardcoding `machterm`.
 Build-only verification does not establish successful startup or state isolation.
 
+## Reliability follow-up after PR #79
+
+`codex/daily-driver-reliability` is rebased onto main's PR #79 merge
+(`c806ab6`). The next candidate tranche covers:
+
+- TER-67: the reader waits until the session is registered and `running` has
+  been emitted. Failed registration/notification cancels the reader and tears
+  down the child and ConPTY handles. Frontend lifecycle and spawn/restore status
+  updates reject `running` after a terminal status for the same session id.
+- TER-74: shell context runs on a blocking worker, with a two-second deadline
+  and 8 KiB output cap per subprocess. Diff reuses the branch result. Windows
+  elevation uses the process token rather than launching PowerShell. Shared
+  polling caches up to 64 directory/settings requests, including in-flight
+  requests; a hidden clock schedules no interval.
+- TER-75: TerminalSurface subscribes imperatively to output snapshots rather
+  than rerendering on each store update; absolute output positions still drive
+  the existing write pump and retention recovery.
+- The PR #79 split-prompt follow-up retains an 8 KiB per-session prompt tail.
+  Numbered options and ANSI sequences may span flushes. Screen resets, answers,
+  dismissal, agent exit and resumed work invalidate stale context. A shortcuts
+  footer alone does not dismiss a visible question. Backend command acknowledgments
+  cannot erase a newer prompt received on the separate output channel.
+- Workspace focus honors active agents even in Operator mode, preserving the
+  draft while directing keystrokes to raw terminal input.
+
+Regressions cover split options/redraws, stale-question clearing, capped output
+without React renders, subscription cleanup, agent focus, probe time/output
+bounds, shared polling, clock visibility and late lifecycle/spawn responses.
+The real fast-exit regression uses `cmd /C exit 1` on Windows (`sh -c exit 1`
+on Unix), forces an already-exited child before registration and tests emit
+failure cleanup. It exercises startup registration and reaping; the existing
+PTY integration tests separately cover output/EOF and nonzero exit codes.
+
 ## Remaining reliability work
 
-- TER-67: audit the fast-exiting PTY registration/lifecycle race.
-- TER-74: move blocking shell-context subprocess probes off the UI thread,
-  bound their runtime and avoid repeated elevation probes.
-- TER-75: reduce TerminalSurface rerenders during output flushes.
-- Reproduce and classify remaining native crashes and mode-switch friction during
-  actual work before changing the input model.
+- Run the native acceptance checklist above against a newly built isolated QA
+  executable. Automated checks do not establish native startup, WebView/GPU
+  behavior, long-running agent interaction or production state isolation.
+- Reproduce and classify remaining crashes and mode-switch friction during actual
+  work before changing the input model. This tranche does not claim all freezes
+  and crashes are resolved.

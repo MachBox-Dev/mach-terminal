@@ -1153,6 +1153,8 @@ export function detectAgentPromptQuestion(cleanOutput: string, nowMs = Date.now(
   //    or `1. (Recommended) Option A` / `2. Option B`
   //    or `[1] Option A` / `[2] Option B`
   const numberedOptionRegex = /^(?:[❯>*•→]\s*)?(?:\[(\d+)\]|(\d+)[.)])\s+(.+)$/;
+  const commandApproval = tailLines.some(line => /^Run this command\?$/i.test(line)) &&
+    tailLines.some(line => /^Requesting permission for:/i.test(line));
   const numberedMatches: Array<{ lineIdx: number; num: string; text: string }> = [];
 
   for (let i = 0; i < tailLines.length; i++) {
@@ -1160,7 +1162,7 @@ export function detectAgentPromptQuestion(cleanOutput: string, nowMs = Date.now(
     if (match) {
       const num = (match[1] ?? match[2])!;
       const text = match[3]!.trim();
-      if (text.length > 0 && text.length <= 96) {
+      if (text.length > 0 && text.length <= (commandApproval ? 2048 : 96)) {
         numberedMatches.push({ lineIdx: i, num, text });
       }
     }
@@ -1189,7 +1191,7 @@ export function detectAgentPromptQuestion(cleanOutput: string, nowMs = Date.now(
         const isNegative = /^(?:no\b|cancel\b|deny\b|reject\b|abort\b)/i.test(cleanLabel);
         return {
           id: `opt-${item.num}`,
-          label: `${item.num}. ${cleanLabel.length > 48 ? `${cleanLabel.slice(0, 45)}…` : cleanLabel}`,
+          label: `${item.num}. ${!commandApproval && cleanLabel.length > 48 ? `${cleanLabel.slice(0, 45)}…` : cleanLabel}`,
           payload: `${item.num}\r`,
           variant: isNegative ? "danger" : isRecommended ? "primary" : "secondary",
           recommended: isRecommended,
@@ -1474,10 +1476,57 @@ const MAX_DISCOVERED_COMMANDS = 24;
 const MAX_RECENT_ACTIVITIES = 20;
 
 export const MAX_AGENT_BANNER_TAIL_CHARS = 4096;
+export const MAX_AGENT_PROMPT_TAIL_CHARS = 8192;
+
+const AGENT_PROMPT_RESET = /\x1b\[(?:[23]J|(?:1;1)?H)/g;
+
+function lastAgentPromptFrame(raw: string): string {
+  const resets = [...raw.matchAll(AGENT_PROMPT_RESET)];
+  return resets.length > 0 ? raw.slice(resets[resets.length - 1]!.index!) : raw;
+}
+
+export function appendAgentPromptTail(previous: string, chunk: string): string {
+  return lastAgentPromptFrame(previous.slice(-MAX_AGENT_PROMPT_TAIL_CHARS) + chunk)
+    .slice(-MAX_AGENT_PROMPT_TAIL_CHARS);
+}
 
 export function appendAgentBannerTail(previous: string, chunk: string): string {
   if (chunk.length >= MAX_AGENT_BANNER_TAIL_CHARS) return chunk.slice(-MAX_AGENT_BANNER_TAIL_CHARS);
   return (previous + chunk).slice(-MAX_AGENT_BANNER_TAIL_CHARS);
+}
+
+function agentOutputPosture(clean: string, hasNewActivity = extractAgentActivities(clean, 0).length > 0): "working" | "idle" | null {
+  const tailLines = clean
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-6);
+  const tailText = tailLines.join("\n");
+
+  const hasActiveSpinnerInBottomLines = /\b(?:Working|Thinking|Generating|Analyzing)(?:\.{2,3}|…)(?=\s|$)/i.test(
+    tailLines.slice(-3).join("\n"),
+  );
+  const isIdlePromptSignal =
+    !hasActiveSpinnerInBottomLines &&
+    (/\?\s+for\s+shortcuts/i.test(tailText) || /(?:^|\n)\s*(?:[❯>]|codex>|aider>)\s*$/m.test(tailText));
+
+  const isWorkingSignal =
+    !isIdlePromptSignal &&
+    (hasActiveSpinnerInBottomLines ||
+      /(?:\bThinking\s+for\s+\d+|^•\s+Explored\b)/im.test(tailText) ||
+      hasNewActivity);
+
+  return isWorkingSignal ? "working" : isIdlePromptSignal ? "idle" : null;
+}
+
+/** Keep the current frame after resets; never carry an answered question forward. */
+export function advanceAgentPromptTail(
+  previous: string, chunk: string, before: AgentSessionState | undefined, after: AgentSessionState | undefined,
+): string {
+  if (!after) return "";
+  const reset = (before?.activeQuestion && !after.activeQuestion) ||
+    (!after.activeQuestion && agentOutputPosture(stripAnsiSequences(chunk)) === "working");
+  return appendAgentPromptTail(reset ? "" : previous, chunk);
 }
 
 /**
@@ -1489,12 +1538,16 @@ export function reduceAgentStateOnOutput(
   rawChunk: string,
   nowMs = Date.now(),
   bannerContext = "",
+  promptContext = "",
 ): AgentSessionState | undefined {
   const clean = stripAnsiSequences(rawChunk);
   if ((!current || !current.pinned) && hasAgentExitOutputSignal(rawChunk, clean)) {
     return undefined;
   }
-  if (!clean.trim()) {
+  const combinedPrompt = promptContext.slice(-MAX_AGENT_PROMPT_TAIL_CHARS) + rawChunk;
+  const redrawn = [...combinedPrompt.matchAll(AGENT_PROMPT_RESET)]
+    .some(reset => reset.index! + reset[0].length > combinedPrompt.length - rawChunk.length);
+  if (!clean.trim() && !redrawn) {
     return current;
   }
 
@@ -1519,7 +1572,8 @@ export function reduceAgentStateOnOutput(
       : state.discoveredCommands;
 
   const seenActivities = new Set(state.recentActivities.map((entry) => entry.summary));
-  const newActivities = extractAgentActivities(clean, nowMs).filter((entry) => {
+  const activities = extractAgentActivities(clean, nowMs);
+  const newActivities = activities.filter((entry) => {
     if (seenActivities.has(entry.summary)) return false;
     seenActivities.add(entry.summary);
     return true;
@@ -1529,28 +1583,30 @@ export function reduceAgentStateOnOutput(
       ? [...state.recentActivities, ...newActivities].slice(-MAX_RECENT_ACTIVITIES)
       : state.recentActivities;
 
-  const detectedQuestion = detectAgentPromptQuestion(clean, nowMs);
-  const tailLines = clean
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(-6);
-  const tailText = tailLines.join("\n");
+  const posture = agentOutputPosture(clean, newActivities.length > 0 ||
+    (Boolean(state.activeQuestion) && activities.length > 0));
+  const isWorkingSignal = posture === "working";
+  const isIdlePromptSignal = posture === "idle";
 
-  const hasActiveSpinnerInBottomLines = /\b(?:Working\.{2,3}|Thinking\.{2,3}|Generating\.{2,3}|Analyzing\.{2,3})\b/i.test(
-    tailLines.slice(-3).join("\n"),
+  const frame = lastAgentPromptFrame(rawChunk);
+  const directQuestion = detectAgentPromptQuestion(stripAnsiSequences(frame), nowMs);
+  // A shortcuts footer may arrive separately from a still-visible menu. Only
+  // an actual empty input prompt (or work) proves that the question is gone.
+  const resumed = isWorkingSignal || (isIdlePromptSignal && Boolean(state.activeQuestion) &&
+    /(?:^|\n)\s*(?:[❯>]|codex>|aider>)\s*$/m.test(clean));
+  const contextualQuestion = resumed ? null : detectAgentPromptQuestion(
+    stripAnsiSequences(appendAgentPromptTail(promptContext, rawChunk)), nowMs,
   );
-  const isIdlePromptSignal =
-    !hasActiveSpinnerInBottomLines &&
-    (/\?\s+for\s+shortcuts/i.test(tailText) || /(?:^|\n)\s*(?:[❯>]|codex>|aider>)\s*$/m.test(tailText));
-
-  const isWorkingSignal =
-    !isIdlePromptSignal &&
-    (hasActiveSpinnerInBottomLines ||
-      /\b(?:Thinking\s+for\s+\d+|^•\s+Explored\b)/im.test(tailText) ||
-      newActivities.length > 0);
-
-  const nextQuestion = detectedQuestion ?? (isIdlePromptSignal ? null : state.activeQuestion);
+  const detectedQuestion = directQuestion?.promptText === "Agent is asking you to choose an option:"
+    ? contextualQuestion ?? directQuestion
+    : directQuestion ?? contextualQuestion;
+  const invalidated = !detectedQuestion && (resumed || redrawn);
+  let nextQuestion = detectedQuestion ?? (invalidated ? null : state.activeQuestion);
+  if (nextQuestion && state.activeQuestion &&
+      nextQuestion.kind === state.activeQuestion.kind && nextQuestion.promptText === state.activeQuestion.promptText &&
+      JSON.stringify(nextQuestion.options) === JSON.stringify(state.activeQuestion.options)) {
+    nextQuestion = state.activeQuestion;
+  }
   const nextStatus: AgentRuntimeStatus = nextQuestion
     ? "awaiting_prompt"
     : isWorkingSignal

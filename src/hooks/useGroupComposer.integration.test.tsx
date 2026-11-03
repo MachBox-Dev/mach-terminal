@@ -20,7 +20,7 @@ let composer: ReturnType<typeof useGroupComposer>;
 let root: Root;
 let host: HTMLDivElement;
 
-function Harness({ mode }: { mode: SessionInputMode }) {
+function Harness({ mode, agentActive = false }: { mode: SessionInputMode; agentActive?: boolean }) {
   const rawInput = useRef<HTMLTextAreaElement>(null);
   composer = useGroupComposer({
     groupId: "group", panes: [{ id: "pane", sessionId: "s" }], activePaneId: "pane", targetPaneId: "pane",
@@ -37,16 +37,16 @@ function Harness({ mode }: { mode: SessionInputMode }) {
   }, []);
   useWorkspaceFocus({
     activeGroupId: "group", activePaneId: "pane", activeSessionId: "s",
-    sessionInputModes: { s: mode }, focusGroupComposer: composer.focusComposerInput,
+    sessionInputModes: { s: mode }, agentActive, focusGroupComposer: composer.focusComposerInput,
   });
   return <>
-    {mode === "commander" && <textarea ref={rawInput} aria-label="Raw terminal input" />}
+    {(mode === "commander" || agentActive) && <textarea ref={rawInput} aria-label="Raw terminal input" />}
     <GroupComposer {...composer} visible={mode === "operator"} broadcastMode="off" onKeyDown={composer.onComposerKeyDown} />
   </>;
 }
 
-async function render(mode: SessionInputMode = "operator") {
-  await act(async () => root.render(<StrictMode><Harness mode={mode} /></StrictMode>));
+async function render(mode: SessionInputMode = "operator", agentActive = false) {
+  await act(async () => root.render(<StrictMode><Harness mode={mode} agentActive={agentActive} /></StrictMode>));
 }
 
 function input(): HTMLTextAreaElement {
@@ -93,6 +93,17 @@ describe("mounted Operator composer", () => {
     expect(submit).not.toHaveBeenCalled();
     await key("Enter");
     expect(submit).toHaveBeenCalledExactlyOnceWith(["s"], "npm test\r");
+  });
+
+  it("keeps an Operator agent on raw input and restores its draft when the agent exits", async () => {
+    await render();
+    await draft("keep this draft");
+    await render("operator", true);
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Raw terminal input"]'));
+    await render("operator", false);
+    expect(document.activeElement).toBe(input());
+    expect(input().value).toBe("keep this draft");
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("accepts a prediction with ArrowRight only at the end", async () => {

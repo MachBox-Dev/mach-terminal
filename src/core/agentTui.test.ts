@@ -1,4 +1,4 @@
-import { appendAgentBannerTail, MAX_AGENT_BANNER_TAIL_CHARS } from "./agentTui";
+import { appendAgentBannerTail, MAX_AGENT_BANNER_TAIL_CHARS, appendAgentPromptTail, MAX_AGENT_PROMPT_TAIL_CHARS, advanceAgentPromptTail } from "./agentTui";
 import { shouldClearAgentAfterNegativeProbe, shellExitRecipients } from "./agentTui";
 import { describe, expect, it } from "vitest";
 import {
@@ -234,4 +234,79 @@ it("keeps the current chunk visible to detection even when it exceeds the retain
   const chunk = "de Code!\n" + "x".repeat(10000);
   expect(reduceAgentStateOnOutput(undefined, "s", chunk, 1000, "Welcome to Clau")?.agentId).toBe("claude");
   expect(reduceAgentStateOnOutput(undefined, "s", "Welcome to Claude Code!\n" + "x".repeat(10000))?.agentId).toBe("claude");
+});
+
+
+describe("prompt output spanning PTY flushes", () => {
+  const initial = () => createAgentSessionState("split", getAgentCliProfile("codex"), "command", { nowMs: 1 });
+  const question = "Choose an approach?\r\n";
+  const first = "❯ 1. Keep changes\r\n";
+  const second = "  2. Discard changes\r\n";
+
+  it("collects a numbered question across three flushes, including split ANSI styling", () => {
+    let state = initial();
+    let tail = "";
+    for (const chunk of [question + "\x1b[3", "2m" + first, "\x1b[0m" + second]) {
+      const before = state;
+      state = reduceAgentStateOnOutput(state, "split", chunk, 2, "", tail)!;
+      tail = advanceAgentPromptTail(tail, chunk, before, state);
+    }
+    expect(state.activeQuestion?.promptText).toBe("Choose an approach?");
+    expect(state.activeQuestion?.options.slice(0, 2).map(o => o.payload)).toEqual(["1\r", "2\r"]);
+    expect(state.status).toBe("awaiting_prompt");
+    expect(reduceAgentStateOnOutput(state, "split", question + first + second, 3, "", tail)).toBe(state);
+  });
+
+  it("does not reuse a question after a screen redraw or work resumes", () => {
+    const raw = question + first + second;
+    const state = reduceAgentStateOnOutput(initial(), "split", raw, 2)!;
+    expect(reduceAgentStateOnOutput(state, "split", raw + "\x1b[2J\x1b[HNew view", 3, "", raw)?.activeQuestion).toBeNull();
+    expect(reduceAgentStateOnOutput(state, "split", "• Explored repository", 3, "", raw)?.activeQuestion).toBeNull();
+    expect(reduceAgentStateOnOutput(state, "split", "Thinking...", 3, "", raw)?.activeQuestion).toBeNull();
+    expect(reduceAgentStateOnOutput(state, "split", "? for shortcuts", 3, "", raw)).toBe(state);
+    expect(reduceAgentStateOnOutput(state, "split", "❯\n? for shortcuts", 3, "", raw)?.activeQuestion).toBeNull();
+    expect(appendAgentPromptTail(raw, "\x1b[2JNew view")).not.toContain("Choose");
+  });
+
+  it("retains a new question header when a redraw replaces the previous question", () => {
+    const raw = question + first + second;
+    const before = reduceAgentStateOnOutput(initial(), "split", raw, 2)!;
+    const header = "\x1b[2J\x1b[HChoose a replacement?\n";
+    const cleared = reduceAgentStateOnOutput(before, "split", header, 3, "", raw)!;
+    expect(cleared.activeQuestion).toBeNull();
+    const tail = advanceAgentPromptTail(raw, header, before, cleared);
+    const next = reduceAgentStateOnOutput(cleared, "split", first + second, 4, "", tail);
+    expect(next?.activeQuestion?.promptText).toBe("Choose a replacement?");
+    const splitReset = reduceAgentStateOnOutput(before, "split", "2JNew view", 3, "", raw + "\x1b[");
+    expect(splitReset?.activeQuestion).toBeNull();
+  });
+
+  it("does not combine options from different sessions or an answered prompt", () => {
+    const tail = appendAgentPromptTail("", question + first);
+    expect(reduceAgentStateOnOutput(initial(), "other", second, 3)?.activeQuestion).toBeNull();
+    expect(reduceAgentStateOnOutput(initial(), "split", second, 3, "", tail)?.activeQuestion).not.toBeNull();
+    expect(reduceAgentStateOnOutput(initial(), "split", second, 4, "", "")?.activeQuestion).toBeNull();
+    expect(appendAgentPromptTail("x".repeat(20_000), "y".repeat(20_000))).toHaveLength(MAX_AGENT_PROMPT_TAIL_CHARS);
+  });
+});
+
+it("retains the distinct permission scopes in Antigravity's command menu", () => {
+  const command = "git show 796965c -- src/gui/src/main.rs";
+  const menu = [
+    "Requesting permission for:",
+    command,
+    "Run this command?",
+    "> 1. Yes, run command",
+    "2. Yes, and always allow in this conversation for commands that start with '" + command + "'",
+    "3. Yes, and always allow for commands that start with '" + command + "' (Persist to settings.json)",
+    "4. No, cancel",
+    "↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+    "esc to cancel",
+  ].join("\n");
+  const question = detectAgentPromptQuestion(menu);
+  expect(question?.promptText).toBe("Run this command?");
+  expect(question?.options).toHaveLength(5);
+  expect(question?.options[1]?.label).toContain("in this conversation");
+  expect(question?.options[2]?.label).toContain("Persist to settings.json");
+  expect(question?.options[3]?.variant).toBe("danger");
 });
