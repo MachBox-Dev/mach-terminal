@@ -561,8 +561,8 @@ pub fn run() {
 
     let app = builder
         .setup(|app| {
-            if let Err(error) = app.deep_link().register("machterm") {
-                warn!("failed to register machterm deep-link scheme: {error}");
+            if let Err(error) = app.deep_link().register_all() {
+                warn!("failed to register configured deep-link schemes: {error}");
             }
 
             let app_handle = app.handle().clone();

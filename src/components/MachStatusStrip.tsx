@@ -72,9 +72,11 @@ export function MachStatusStrip({
   }, []);
 
   useEffect(() => {
+    if (!settings.showClock) return;
+    setClock(new Date());
     const id = window.setInterval(() => setClock(new Date()), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [settings.showClock]);
 
   const includeGitDiff = settings.showGitDiffStats;
 

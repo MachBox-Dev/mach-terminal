@@ -1,6 +1,7 @@
 import { shouldForwardTerminalData, usesRawTerminalInput } from "../core/terminalInputRouting";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useSessionBuffer } from "../hooks/useSessionBuffer";
+import { useSessionBufferSubscription } from "../hooks/useSessionBufferSubscription";
+import { sessionBufferDelta } from "../state/sessionBufferStore";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { FOCUS_ACTIVE_TERMINAL_EVENT } from "../core/workspaceFocus";
 import { PTY_OUTPUT_MAX_FLUSH_LATENCY_MS } from "../core/ptyOutputFlushSchedule";
@@ -34,6 +35,7 @@ import type { ComposerCompletionResponse, HistoryEntry, PtySessionInfo, SessionS
 import {
   applyCompletionCandidate,
   completionRequestKey,
+  completionStateAfterApply,
   createComposerCompletionState,
   hasCompletionCandidates,
   nextCompletionIndex,
@@ -169,6 +171,7 @@ interface TerminalSurfaceProps {
   osc133Hint?: string | null;
   /** When false, output-only pane (group composer handles input). */
   showComposer?: boolean;
+  onFocusGroupComposer?: () => void;
   onComposerDraftChange?: (draft: string) => void;
   onAiExplainComposer?: () => void;
   onAiFixComposer?: () => void;
@@ -209,6 +212,7 @@ export function TerminalSurface({
   osc133Hint = null,
   aiAssistEnabled = false,
   showComposer = true,
+  onFocusGroupComposer,
   onComposerDraftChange,
   onAiExplainComposer,
   onAiFixComposer,
@@ -220,12 +224,11 @@ export function TerminalSurface({
   onRequestRestartSession,
   onRequestCloseSession,
 }: TerminalSurfaceProps) {
-  const activeBuffer = useSessionBuffer(activeSession?.id);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
-  const renderedStateRef = useRef<{ sessionId?: string; length: number }>({ length: 0 });
+  const renderedStateRef = useRef<{ sessionId?: string; totalAppended: number }>({ totalAppended: 0 });
   const activeSessionRef = useRef<PtySessionInfo | undefined>(activeSession);
   const onInputRef = useRef(onInput);
   const onResizeRef = useRef(onResize);
@@ -267,6 +270,8 @@ export function TerminalSurface({
   const composerSubmitKindRef = useRef(composerSubmitKind);
   const inputModeRef = useRef(inputMode);
   const agentActiveRef = useRef(agentActive);
+  const onFocusGroupComposerRef = useRef(onFocusGroupComposer);
+  onFocusGroupComposerRef.current = onFocusGroupComposer;
   const findResultStateRef = useRef<{ resultIndex: number; resultCount: number }>({
     resultIndex: -1,
     resultCount: 0,
@@ -287,6 +292,7 @@ export function TerminalSurface({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [composerDraft, setComposerDraft] = useState("");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingComposerCursorRef = useRef<number | null>(null);
   const completionRequestSeqRef = useRef(0);
   const completionStateRef = useRef(createComposerCompletionState());
   const historyStateRef = useRef(createComposerHistoryState());
@@ -300,6 +306,14 @@ export function TerminalSurface({
   const [completionMetricsTick, setCompletionMetricsTick] = useState(0);
   const terminalPanelRef = useRef<HTMLElement | null>(null);
   const composerLocked = !activeSession || Boolean(exitedInfo);
+
+  useLayoutEffect(() => {
+    const cursor = pendingComposerCursorRef.current;
+    if (cursor !== null && composerTextareaRef.current) {
+      composerTextareaRef.current.setSelectionRange(cursor, cursor);
+      pendingComposerCursorRef.current = null;
+    }
+  });
 
   const cancelScheduledWritePump = useCallback(() => {
     if (writeFrameRef.current !== null) {
@@ -351,7 +365,7 @@ export function TerminalSurface({
           return;
         }
         cancelScheduledWritePump();
-        pumpPendingTerminalWrites();
+        run();
       }, PTY_OUTPUT_MAX_FLUSH_LATENCY_MS);
     }
   }, [cancelScheduledWritePump]);
@@ -439,8 +453,14 @@ export function TerminalSurface({
     if (composerLocked) {
       return;
     }
-    queueMicrotask(() => composerTextareaRef.current?.focus());
-  }, [composerLocked]);
+    queueMicrotask(() => {
+      if (showComposer) {
+        composerTextareaRef.current?.focus();
+      } else {
+        onFocusGroupComposerRef.current?.();
+      }
+    });
+  }, [composerLocked, showComposer]);
 
   /** Mirror xterm guard: route pointer-down in the input column to the correct typing surface. */
   const routePointerDownToInputSurface = useCallback(() => {
@@ -499,7 +519,6 @@ export function TerminalSurface({
     }
     const textarea = composerTextareaRef.current;
     const cursor = textarea?.selectionStart ?? composerDraft.length;
-    const requestKey = completionRequestKey(composerDraft, cursor);
     const nextSeq = completionRequestSeqRef.current + 1;
     completionRequestSeqRef.current = nextSeq;
     const requestStartedAt = performance.now();
@@ -520,22 +539,12 @@ export function TerminalSurface({
         return false;
       }
       const applied = applyCompletionCandidate(composerDraft, response, 0);
+      pendingComposerCursorRef.current = applied.cursor;
       setComposerDraft(applied.draft);
       completionMetricsRef.current.accepted += 1;
       completionMetricsRef.current.totalLatencyMs += Math.max(0, performance.now() - requestStartedAt);
       setCompletionMetricsTick((tick) => tick + 1);
-      setCompletionState({
-        response,
-        selectedIndex: 0,
-        requestKey,
-        error: null,
-      });
-      queueMicrotask(() => {
-        if (composerTextareaRef.current) {
-          composerTextareaRef.current.selectionStart = applied.cursor;
-          composerTextareaRef.current.selectionEnd = applied.cursor;
-        }
-      });
+      setCompletionState(completionStateAfterApply(response, 0, applied));
       return true;
     } catch (error) {
       completionMetricsRef.current.totalLatencyMs += Math.max(0, performance.now() - requestStartedAt);
@@ -561,20 +570,11 @@ export function TerminalSurface({
     }
     const nextIndex = nextCompletionIndex(current.response, current.selectedIndex);
     const applied = applyCompletionCandidate(composerDraft, current.response, nextIndex);
+    pendingComposerCursorRef.current = applied.cursor;
     completionMetricsRef.current.accepted += 1;
     setCompletionMetricsTick((tick) => tick + 1);
-    setCompletionState((prev) => ({
-      ...prev,
-      selectedIndex: nextIndex,
-      error: null,
-    }));
+    setCompletionState(completionStateAfterApply(current.response, nextIndex, applied));
     setComposerDraft(applied.draft);
-    queueMicrotask(() => {
-      if (composerTextareaRef.current) {
-        composerTextareaRef.current.selectionStart = applied.cursor;
-        composerTextareaRef.current.selectionEnd = applied.cursor;
-      }
-    });
     return true;
   }, [composerDraft]);
 
@@ -837,6 +837,14 @@ export function TerminalSurface({
           refreshTerminalViewport(t);
           setFollowOutput(true);
           emitUiSurfacePatch({ followOutput: true });
+        }
+        return;
+      case "scrollPage":
+        if (t) {
+          t.scrollLines((decision.action.direction === "up" ? -1 : 1) * Math.max(1, t.rows - 1));
+          const nextFollowOutput = isViewportAtBottom(t);
+          setFollowOutput(nextFollowOutput);
+          emitUiSurfacePatch({ followOutput: nextFollowOutput });
         }
         return;
       case "findNext":
@@ -1184,7 +1192,9 @@ export function TerminalSurface({
       onResizeRef.current(pending.sessionId, pending.cols, pending.rows);
     };
 
-    const observer = new ResizeObserver(() => {
+    const resizeHost = hostRef.current;
+    let revealResizeTimer: number | undefined;
+    const fitAndQueueResize = (flushImmediately = false) => {
       fitAddon.fit();
       if (!activeSessionRef.current) {
         return;
@@ -1197,12 +1207,41 @@ export function TerminalSurface({
       if (resizeTimerRef.current !== null) {
         return;
       }
-      resizeTimerRef.current = window.setTimeout(flushPendingResize, 80);
+      if (flushImmediately) {
+        flushPendingResize();
+      } else {
+        resizeTimerRef.current = window.setTimeout(flushPendingResize, 80);
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      if (!agentActiveRef.current) {
+        fitAndQueueResize();
+        return;
+      }
+      // A live agent repaints its whole screen at each PTY size. Fit and send
+      // only the final size once the drag pauses.
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+      resizeHost?.classList.add("terminal-agent-resizing");
+      window.clearTimeout(revealResizeTimer);
+      revealResizeTimer = window.setTimeout(() => {
+        resizeHost?.classList.remove("terminal-agent-resizing");
+      }, 280);
+      resizeTimerRef.current = window.setTimeout(() => {
+        resizeTimerRef.current = null;
+        fitAndQueueResize(true);
+      }, 120);
     });
     observer.observe(containerRef.current);
 
     const onFocusActiveTerminal = () => {
       if (!isFocusedRef.current) {
+        return;
+      }
+      if (findOpenRef.current) {
+        findInputRef.current?.focus();
         return;
       }
       terminalRef.current?.focus();
@@ -1227,6 +1266,8 @@ export function TerminalSurface({
       webglAddonRef.current?.dispose();
       webglAddonRef.current = null;
       observer.disconnect();
+      window.clearTimeout(revealResizeTimer);
+      resizeHost?.classList.remove("terminal-agent-resizing");
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1317,17 +1358,19 @@ export function TerminalSurface({
     }
   }, [agentActive, inputMode, isFocused]);
 
-  useEffect(() => {
+  useSessionBufferSubscription(activeSession?.id, (currentSession, activeBuffer) => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
     }
 
-    const currentSession = activeSession?.id;
+    if (activeSessionRef.current?.id !== currentSession) return;
     const previousSession = renderedStateRef.current.sessionId;
-    const previousLength = renderedStateRef.current.length;
+    const previousPosition = renderedStateRef.current.totalAppended;
 
     if (!currentSession) {
+      cancelScheduledWritePump();
+      pendingWriteRef.current = "";
       terminal.reset();
       terminal.writeln("No session selected.");
       terminal.writeln("Create a session or pick an existing tab.");
@@ -1335,14 +1378,16 @@ export function TerminalSurface({
       refreshTerminalViewport(terminal);
       setFollowOutput(true);
       emitUiSurfacePatch({ followOutput: true });
-      renderedStateRef.current = { sessionId: undefined, length: 0 };
+      renderedStateRef.current = { sessionId: undefined, totalAppended: 0 };
       return;
     }
 
-    if (previousSession !== currentSession || activeBuffer.length < previousLength) {
+    const delta = sessionBufferDelta(activeBuffer, previousPosition);
+    if (previousSession !== currentSession || delta === null) {
+      cancelScheduledWritePump();
       const pin = stickToBottomRef.current;
       terminal.reset();
-      terminal.write(activeBuffer);
+      terminal.write(activeBuffer.text);
       if (pin) {
         terminal.scrollToBottom();
       }
@@ -1351,18 +1396,17 @@ export function TerminalSurface({
       wasViewportAtBottomRef.current = nextFollowOutput;
       setFollowOutput(nextFollowOutput);
       emitUiSurfacePatch({ followOutput: nextFollowOutput });
-      renderedStateRef.current = { sessionId: currentSession, length: activeBuffer.length };
+      renderedStateRef.current = { sessionId: currentSession, totalAppended: activeBuffer.totalAppended };
       pendingWriteRef.current = "";
       return;
     }
 
-    const delta = activeBuffer.slice(previousLength);
     if (delta.length > 0) {
       pendingWriteRef.current += delta;
-      renderedStateRef.current = { sessionId: currentSession, length: activeBuffer.length };
+      renderedStateRef.current = { sessionId: currentSession, totalAppended: activeBuffer.totalAppended };
       pumpPendingTerminalWrites();
     }
-  }, [activeSession, activeBuffer, emitUiSurfacePatch, pumpPendingTerminalWrites]);
+  });
 
   /** Resume paint when the pane regains focus (tab swap) or the window becomes visible again. */
   useEffect(() => {

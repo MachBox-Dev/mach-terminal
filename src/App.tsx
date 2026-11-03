@@ -1,4 +1,4 @@
-import { appendAgentBannerTail, hasAgentExitOutputSignal, shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
+import { advanceAgentPromptTail, appendAgentBannerTail, hasAgentExitOutputSignal, shouldClearAgentAfterNegativeProbe } from "./core/agentTui";
 import { clearAgentAfterConfirmedQuit, inspectQuitOutcome, quitAgent, sendTextThenEnterWithDelay } from "./core/agentQuit";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
@@ -20,6 +20,8 @@ import { SETTINGS_SECTION_AI_PROVIDERS } from "./components/AiChatPanel";
 import { APP_COMMANDS, DEV_PALETTE_COMMANDS, type AppCommandId } from "./core/commands";
 import {
   clearExitedInfo,
+  applySessionStatus,
+  isTerminalStatus,
   deriveExitedInfo,
   type SessionExitedInfo,
 } from "./core/sessionLifecycle";
@@ -32,7 +34,7 @@ import {
 } from "./core/sessionCwd";
 import { collectExitedSessionIds } from "./core/sessionTabStatus";
 import { commandToTerminalUiIntent } from "./core/terminalCommandRouting";
-import type { TerminalUiRequest } from "./core/terminalUiRequest";
+import type { TerminalUiRequest, TerminalUiRequestInput } from "./core/terminalUiRequest";
 import {
   DEFAULT_UI_SURFACE_STATE,
   mergeUiSurfaceState,
@@ -271,6 +273,7 @@ function App() {
   const [opsSelectedRunId, setOpsSelectedRunId] = useState<string | null>(null);
   const [sideRailTab, setSideRailTab] = useState<SideRailTab>("log");
   const [sessionStatus, setSessionStatus] = useState<Record<string, SessionStatus>>({});
+  const lifecycleStatusRef = useRef<Record<string, SessionStatus>>({});
   const [sessionMessages, setSessionMessages] = useState<Record<string, string | undefined>>({});
   const [sessionExited, setSessionExited] = useState<Record<string, SessionExitedInfo>>({});
   /**
@@ -342,6 +345,7 @@ function App() {
   sessionAgentsRef.current = sessionAgents;
   const dismissedAgentSessionsRef = useRef<Record<string, boolean>>({});
   const agentBannerTailsRef = useRef<Record<string, string>>({});
+  const agentPromptTailsRef = useRef<Record<string, string>>({});
   const agentQuitInFlightRef = useRef<Record<string, boolean>>({});
   const terminalUiSeqRef = useRef(0);
   const [terminalUiRequest, setTerminalUiRequest] = useState<TerminalUiRequest | null>(null);
@@ -397,17 +401,22 @@ function App() {
       const existingSnapshot = sessionAgentsRef.current[sessionId];
       if (!existingSnapshot && dismissedAgentSessionsRef.current[sessionId]) {
         delete agentBannerTailsRef.current[sessionId];
+        delete agentPromptTailsRef.current[sessionId];
         return;
       }
       const bannerContext = agentBannerTailsRef.current[sessionId] ?? "";
+      const promptContext = agentPromptTailsRef.current[sessionId] ?? "";
       const nowMs = Date.now();
       const hadExisting = Boolean(existingSnapshot);
-      const probed = reduceAgentStateOnOutput(existingSnapshot, sessionId, chunk, nowMs, bannerContext);
+      const probed = reduceAgentStateOnOutput(existingSnapshot, sessionId, chunk, nowMs, bannerContext, promptContext);
       if (existingSnapshot || probed || hasAgentExitOutputSignal(chunk)) {
         delete agentBannerTailsRef.current[sessionId];
       } else {
         agentBannerTailsRef.current[sessionId] = appendAgentBannerTail(bannerContext, chunk);
       }
+      const nextPromptTail = advanceAgentPromptTail(promptContext, chunk, existingSnapshot, probed);
+      if (nextPromptTail) agentPromptTailsRef.current[sessionId] = nextPromptTail;
+      else delete agentPromptTailsRef.current[sessionId];
       if (probed && !hadExisting) {
         setSideRailTab("agent");
         setOpsRailCollapsed(false);
@@ -417,7 +426,7 @@ function App() {
         if (!existing && dismissedAgentSessionsRef.current[sessionId]) {
           return current;
         }
-        const next = reduceAgentStateOnOutput(existing, sessionId, chunk, nowMs, bannerContext);
+        const next = reduceAgentStateOnOutput(existing, sessionId, chunk, nowMs, bannerContext, promptContext);
         if (!next) {
           if (!existing) {
             return current;
@@ -456,6 +465,8 @@ function App() {
       setSessionAgents,
     },
     transientRefs: {
+      lifecycleStatusRef,
+      agentPromptTailsRef,
       agentBannerTailsRef,
       agentQuitInFlightRef,
       dismissedAgentSessionsRef,
@@ -718,6 +729,7 @@ function App() {
       sessionId,
       runLedger: runLedgerRef.current,
       sessionBuffers: sessionBufferStore.getAll(),
+      sessionBufferOffsets: { [sessionId]: sessionBufferStore.getSnapshot(sessionId).startOffset },
     }),
     enableAiTools: aiBehaviorSettings.enableAiTools,
     onAiAssistantReply: ({ output, sessionId }) => {
@@ -982,6 +994,9 @@ function App() {
     const bindEvents = async () => {
       lifecycleUnlisten = await onPtyLifecycle((event: PtyLifecycleEvent) => {
         const sid = event.session_id;
+        const accepted = applySessionStatus(lifecycleStatusRef.current, sid, event.status);
+        if (isTerminalStatus(lifecycleStatusRef.current[sid]) && !isTerminalStatus(event.status)) return;
+        lifecycleStatusRef.current = accepted;
         if (event.status === "running") {
           // Reset sequence baseline for a fresh run, but do NOT clear pending output:
           // with the raw-bytes channel, PTY chunks often arrive before this lifecycle
@@ -992,8 +1007,7 @@ function App() {
         }
 
         setSessionStatus((current) => {
-          const next = { ...current, [sid]: event.status };
-          return next;
+          return applySessionStatus(current, sid, event.status);
         });
         setSessionMessages((current) => ({ ...current, [sid]: event.message }));
 
@@ -1102,14 +1116,13 @@ function App() {
               ...prev,
               [sid]: {
                 ...existing,
-                status: "working",
-                activeQuestion: null,
+                status: existing.activeQuestion ? "awaiting_prompt" : "working",
                 lastActivityAtMs: event.timestamp_ms,
               },
             };
           });
         }
-        const bufLen = sessionBufferStore.get(sid).length;
+        const bufLen = sessionBufferStore.getSnapshot(sid).totalAppended;
         setRunLedger((ledger) =>
           appendCommandSubmitted(ledger, {
             sessionId: sid,
@@ -1192,7 +1205,7 @@ function App() {
         workspaceRef.current = next;
         return next;
       });
-      setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
+      setSessionStatus((current) => applySessionStatus(current, created.id, created.status));
       ensureChatKey(created.id);
       refocusMainWindow();
     } catch (error) {
@@ -1329,7 +1342,7 @@ function App() {
           workspaceRef.current = reconciled;
           return reconciled;
         });
-        setSessionStatus((current) => ({ ...current, [created.id]: "running" }));
+        setSessionStatus((current) => applySessionStatus(current, created.id, created.status));
         ensureChatKey(created.id);
         if (displacedId) {
           try {
@@ -1366,6 +1379,13 @@ function App() {
   );
 
   const sendInput = useCallback(async (sessionId: string, data: string) => {
+    if (data.endsWith("\r") || data.endsWith("\n") || data === "\x1b" || data === "\x03") {
+      delete agentPromptTailsRef.current[sessionId];
+      setSessionAgents((current) => {
+        const agent = current[sessionId];
+        return agent?.activeQuestion ? { ...current, [sessionId]: { ...agent, activeQuestion: null } } : current;
+      });
+    }
     try {
       await ptyWrite(sessionId, data);
       return true;
@@ -1449,7 +1469,8 @@ function App() {
       }
       const runs = runLedger[sessionId] ?? [];
       const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
-      const excerpt = failureOutputExcerpt(sessionBufferStore.get(sessionId), lastRun);
+      const buffer = sessionBufferStore.getSnapshot(sessionId);
+      const excerpt = failureOutputExcerpt(buffer.text, lastRun, 2400, buffer.startOffset);
       const question = buildFailureAiQuestion(failure, excerpt);
       void submitAiChat(sessionId, question);
     },
@@ -1747,6 +1768,7 @@ function App() {
       if (!cmdLine || !detected) {
         if (snap.hasDescendants === false) {
           delete agentBannerTailsRef.current[sid];
+          delete agentPromptTailsRef.current[sid];
           delete dismissedAgentSessionsRef.current[sid];
         }
         setSessionAgents((prev) => {
@@ -1837,7 +1859,7 @@ function App() {
     }
   }, [closePaneById]);
 
-  const dispatchTerminalUiRequest = useCallback((payload: Omit<TerminalUiRequest, "seq">) => {
+  const dispatchTerminalUiRequest = useCallback((payload: TerminalUiRequestInput) => {
     terminalUiSeqRef.current += 1;
     setTerminalUiRequest({ ...payload, seq: terminalUiSeqRef.current } as TerminalUiRequest);
   }, []);
@@ -1941,10 +1963,7 @@ function App() {
         if (activeSessionId) {
           setSessionUiSurface((current) => {
             const baseline = current[activeSessionId] ?? DEFAULT_UI_SURFACE_STATE;
-            const nextState =
-              terminalIntent === "jumpSearch"
-                ? baseline
-                : reduceUiSurfaceStateForRequest(baseline, { kind: terminalIntent });
+            const nextState = reduceUiSurfaceStateForRequest(baseline, { kind: terminalIntent });
             return { ...current, [activeSessionId]: nextState };
           });
         }
@@ -2268,6 +2287,7 @@ function App() {
       void closePanesForBroadcastExit(sessionIds);
     },
     onRequestComposerCompletion: requestComposerCompletion,
+    onScrollOutput: (direction) => dispatchTerminalUiRequest({ kind: "scrollPage", direction }),
     onBroadcastConsumed: () => {
       setWorkspace((current) => setBroadcastMode(current, "off"));
     },
@@ -2305,50 +2325,8 @@ function App() {
     activeSessionId,
     sessionInputModes,
     focusGroupComposer: () => focusGroupComposerRef.current?.(),
+    agentActive: Boolean(activeSessionId && sessionAgents[activeSessionId]),
   });
-
-  const handleGroupComposerKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (groupComposer.isComposerAiToggleKey(event)) {
-        event.preventDefault();
-        groupComposer.onToggleComposerSubmitKind?.();
-        return;
-      }
-      if (
-        aiAssistEnabled &&
-        groupComposer.isAskFailureShortcut(
-          event,
-          groupComposer.composerDraft.trim().length === 0,
-          Boolean(groupComposer.commandFailure),
-        ) &&
-        groupComposer.onAskAboutFailure
-      ) {
-        event.preventDefault();
-        groupComposer.onAskAboutFailure();
-        return;
-      }
-      if (event.key === "ArrowUp" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        event.preventDefault();
-        groupComposer.stepComposerHistory("prev");
-        return;
-      }
-      if (event.key === "ArrowDown" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        event.preventDefault();
-        groupComposer.stepComposerHistory("next");
-        return;
-      }
-      if (event.key === "Tab" && groupComposer.composerSubmitKind !== "ai") {
-        event.preventDefault();
-        void groupComposer.requestComposerCompletion();
-        return;
-      }
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        groupComposer.submitComposer();
-      }
-    },
-    [aiAssistEnabled, groupComposer],
-  );
 
   const handleLaunchAgent = useCallback(
     (agentId: AgentCliId) => {
@@ -2493,6 +2471,7 @@ function App() {
       // Clear any partial TUI input line with Ctrl+U (\x15), write the slash command,
       // and send Enter (\r) after a short delay so BubbleTea/Ink TUIs submit it cleanly.
       sendTextThenEnter(sid, `\x15${cmd.command}`, 45);
+      delete agentPromptTailsRef.current[sid];
       setSessionAgents((current) => {
         const existing = current[sid];
         if (!existing) {
@@ -2529,6 +2508,7 @@ function App() {
       } else {
         void handleInput(sid, option.payload);
       }
+      delete agentPromptTailsRef.current[sid];
       setSessionAgents((current) => {
         const existing = current[sid];
         if (!existing) {
@@ -2552,6 +2532,7 @@ function App() {
     if (!sid) {
       return;
     }
+    delete agentPromptTailsRef.current[sid];
     setSessionAgents((current) => {
       const existing = current[sid];
       if (!existing?.activeQuestion) {
@@ -2666,6 +2647,7 @@ function App() {
             sessionAgents={sessionAgents}
             aiAssistEnabled={aiAssistEnabled}
             groupComposerActive={showGroupComposer}
+            onFocusGroupComposer={() => focusGroupComposerRef.current?.()}
             onAskAiSelection={queueAiSelection}
             onInput={(sessionId, data) => {
               void handleTerminalInput(sessionId, data);
@@ -2733,6 +2715,7 @@ function App() {
             agentSlashMatches={groupComposer.agentSlashMatches}
             onSelectAgentSlashCommand={handleInsertAgentSlashCommand}
             onOpenAgentRail={openAgentRail}
+            uiSurfaceState={targetSessionIdForComposer ? sessionUiSurface[targetSessionIdForComposer] : undefined}
             onToggleComposerSubmitKind={groupComposer.onToggleComposerSubmitKind}
             onAskAboutFailure={groupComposer.onAskAboutFailure}
             onAiExplainComposer={() => {
@@ -2750,7 +2733,7 @@ function App() {
             onToggleBroadcast={() => setWorkspace((current) => toggleBroadcastOnce(current))}
             onArmBroadcastSticky={() => setWorkspace((current) => armBroadcastSticky(current))}
             onSelectPanePill={(paneId) => setWorkspace((current) => setTargetPane(current, paneId))}
-            onKeyDown={handleGroupComposerKeyDown}
+            onKeyDown={groupComposer.onComposerKeyDown}
           />
           </section>
           {!opsRailCollapsed ? (

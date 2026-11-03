@@ -29,6 +29,7 @@ interface SplitWorkspaceProps {
   sessionAgents?: Record<string, AgentSessionState>;
   aiAssistEnabled?: boolean;
   groupComposerActive?: boolean;
+  onFocusGroupComposer?: () => void;
   onAskAiSelection?: (sessionId: string, attachment: import("../core/aiChatState").AiContextAttachment) => void;
   onInput: (sessionId: string, data: string) => void;
   onResize: (sessionId: string, cols: number, rows: number) => void;

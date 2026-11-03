@@ -1,3 +1,4 @@
+import { createSingleFlightCache } from "./singleFlightCache";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { WorkspaceLayout } from "../state/workspace";
@@ -563,11 +564,12 @@ export interface ShellContextSnapshot {
   gitShortStat: string | null;
 }
 
-export async function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
-  return invoke<ShellContextSnapshot>("shell_context_snapshot", {
-    cwd,
-    include_git_diff: includeGitDiff,
-  });
+const cachedShellContext = createSingleFlightCache<ShellContextSnapshot>(12_000, 64);
+
+export function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
+  return cachedShellContext(JSON.stringify([cwd, includeGitDiff]), () =>
+    invoke<ShellContextSnapshot>("shell_context_snapshot", { cwd, includeGitDiff }),
+  );
 }
 
 export interface ShellIntegrationMaterializeResult {

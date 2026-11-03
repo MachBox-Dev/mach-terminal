@@ -20,6 +20,19 @@ export function completionRequestKey(draft: string, cursor: number): string {
   return `${cursor}:${draft}`;
 }
 
+export function completionStateAfterApply(
+  response: ComposerCompletionResponse,
+  selectedIndex: number,
+  applied: { draft: string; cursor: number },
+): ComposerCompletionState {
+  return {
+    response: { ...response, replacementEnd: applied.cursor },
+    selectedIndex,
+    requestKey: completionRequestKey(applied.draft, applied.cursor),
+    error: null,
+  };
+}
+
 export function applyCompletionCandidate(
   draft: string,
   response: ComposerCompletionResponse,

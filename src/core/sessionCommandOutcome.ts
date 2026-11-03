@@ -45,11 +45,11 @@ export function applyCommandMarkerOutcome(
   };
 }
 
-export function failureOutputExcerpt(scrollBuffer: string, run: RunRecord | undefined, maxChars = 2400): string {
+export function failureOutputExcerpt(scrollBuffer: string, run: RunRecord | undefined, maxChars = 2400, bufferStartOffset = 0): string {
   if (!run) {
     return scrollBuffer.slice(-maxChars);
   }
-  const slice = sliceBufferForRun(scrollBuffer, run);
+  const slice = sliceBufferForRun(scrollBuffer, run, bufferStartOffset);
   if (slice.length <= maxChars) {
     return slice;
   }

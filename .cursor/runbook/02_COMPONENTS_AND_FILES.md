@@ -10,7 +10,7 @@ mach-terminal/
 │   ├── App.css           # All app styling (hand-rolled)
 │   ├── components/       # Presentational + interactive UI (.tsx) + their smoke tests
 │   ├── core/             # PURE logic + the IPC bridge (terminal.ts). Heavily unit-tested
-│   ├── hooks/            # React hooks (useProviderAiState, useGroupComposer, usePtyOutputStream, useSessionBoot, useWorkspaceFocus, useSessionBuffer)
+│   ├── hooks/            # React hooks (useProviderAiState, useGroupComposer, usePtyOutputStream, useSessionBoot, useWorkspaceFocus, useSessionBuffer, useSessionBufferSubscription)
 │   └── state/            # workspace.ts, splitTree.ts, sessionRegistry.ts, sessionBufferStore.ts
 ├── src-tauri/            # Rust backend (Tauri)
 │   ├── src/              # Backend modules (see below)
@@ -39,13 +39,14 @@ mach-terminal/
 | `commands.ts` | `APP_COMMANDS` / `DEV_PALETTE_COMMANDS` + `AppCommandId` union (command palette source of truth). |
 | `keymap.ts` | `DEFAULT_KEYMAP`, shortcut matching/formatting, pane focus/target shortcut labels. |
 | `shellExitCommand.ts` | Detect `exit`/`logout` from composer or terminal line buffer for multi-pane collapse. |
+| `singleFlightCache.ts` | Bounded TTL/in-flight cache used by the shell-context IPC wrapper so panes share directory probes. |
 | `shellCandidatesCache.ts` | Cached `detect_shells` for fast new-tab picker. |
 | `shellPresets.ts` | Saved shell presets CRUD via `shell_presets_get`/`shell_presets_set`; migrates legacy `localStorage` on first fetch. |
 | `broadcastMode.ts` | `off` \| `once` \| `sticky` broadcast helpers + legacy bool migration. |
 | `tabGroups.ts` | Tab bar group labels (`pwsh · +2`). |
 | `palette.ts` / `palette*.test` | Command palette filtering logic. |
 | `ptyOutputCoalesce.ts` | Output **sequencing** (duplicate/gap/resync) + byte-budget chunk draining. Critical hot-path helper. |
-| `sessionLifecycle.ts`, `sessionExitSummary.ts`, `sessionTabStatus.ts` | Exit-info derivation, overlay summary, tab status dots, exited-session collection. |
+| `sessionLifecycle.ts`, `sessionExitSummary.ts`, `sessionTabStatus.ts` | Exit-info derivation, monotonic status updates, overlay summary, tab status dots, exited-session collection. |
 | `sessionCwd.ts` | Live cwd map from OSC 7 + restart-cwd resolution. |
 | `sessionRestore.ts` | Cold-restart respawn helpers: `spawnProfileForRestorableTab` (shell/cwd/**args**), metadata remap, chat-key ensure. |
 | `workspaceFocus.ts` | `FOCUS_ACTIVE_TERMINAL_EVENT` + `requestFocusActiveTerminal()` — routes keyboard focus to the focused pane's xterm after tab/pane switch (Commander). |

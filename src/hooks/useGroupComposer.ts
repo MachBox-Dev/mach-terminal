@@ -1,5 +1,5 @@
 import { shellExitRecipients } from "../core/agentTui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   getAgentCliProfile,
   matchAgentSlashCommands,
@@ -10,6 +10,7 @@ import type { ComposerCompletionResponse, HistoryEntry, PtySessionInfo } from ".
 import {
   applyCompletionCandidate,
   completionRequestKey,
+  completionStateAfterApply,
   createComposerCompletionState,
   hasCompletionCandidates,
   nextCompletionIndex,
@@ -80,6 +81,7 @@ export interface UseGroupComposerOptions {
     sessionId?: string;
   }) => Promise<ComposerCompletionResponse>;
   onBroadcastConsumed?: () => void;
+  onScrollOutput?: (direction: "up" | "down") => void;
 }
 
 export function useGroupComposer({
@@ -105,10 +107,12 @@ export function useGroupComposer({
   onShellExitBroadcast,
   onRequestComposerCompletion,
   onBroadcastConsumed,
+  onScrollOutput,
 }: UseGroupComposerOptions) {
   const draftsRef = useRef<Record<string, string>>({});
   const [composerDraft, setComposerDraft] = useState("");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingCursorRef = useRef<number | null>(null);
   const completionRequestSeqRef = useRef(0);
   const completionStateRef = useRef(createComposerCompletionState());
   const historyStateRef = useRef(createComposerHistoryState());
@@ -136,6 +140,13 @@ export function useGroupComposer({
       composerSubmitKind !== "ai" ? matchAgentSlashCommands(composerDraft, targetAgentState) : [],
     [composerDraft, composerSubmitKind, targetAgentState],
   );
+  useLayoutEffect(() => {
+    const cursor = pendingCursorRef.current;
+    if (cursor !== null && composerTextareaRef.current) {
+      composerTextareaRef.current.setSelectionRange(cursor, cursor);
+      pendingCursorRef.current = null;
+    }
+  });
 
   useEffect(() => {
     draftsRef.current[groupId] = composerDraft;
@@ -256,7 +267,6 @@ export function useGroupComposer({
     }
     const textarea = composerTextareaRef.current;
     const cursor = textarea?.selectionStart ?? composerDraft.length;
-    const requestKey = completionRequestKey(composerDraft, cursor);
     const seq = ++completionRequestSeqRef.current;
     const started = performance.now();
     try {
@@ -273,22 +283,14 @@ export function useGroupComposer({
       completionMetricsRef.current.requests += 1;
       completionMetricsRef.current.totalLatencyMs += performance.now() - started;
       setCompletionMetricsTick((tick) => tick + 1);
-      const applied = applyCompletionCandidate(composerDraft, response, 0);
-      if (!applied) {
+      if (!hasCompletionCandidates(response)) {
         resetCompletionState(null);
         return false;
       }
+      const applied = applyCompletionCandidate(composerDraft, response, 0);
+      pendingCursorRef.current = applied.cursor;
       setComposerDraft(applied.draft);
-      setCompletionState({
-        response,
-        selectedIndex: 0,
-        requestKey,
-        error: null,
-      });
-      if (composerTextareaRef.current) {
-        composerTextareaRef.current.selectionStart = applied.cursor;
-        composerTextareaRef.current.selectionEnd = applied.cursor;
-      }
+      setCompletionState(completionStateAfterApply(response, 0, applied));
       return true;
     } catch (error) {
       if (seq !== completionRequestSeqRef.current) {
@@ -317,12 +319,9 @@ export function useGroupComposer({
     if (!applied) {
       return false;
     }
+    pendingCursorRef.current = applied.cursor;
     setComposerDraft(applied.draft);
-    setCompletionState({ ...current, selectedIndex: nextIndex });
-    if (composerTextareaRef.current) {
-      composerTextareaRef.current.selectionStart = applied.cursor;
-      composerTextareaRef.current.selectionEnd = applied.cursor;
-    }
+    setCompletionState(completionStateAfterApply(current.response, nextIndex, applied));
     return true;
   }, [composerDraft]);
 
@@ -362,6 +361,12 @@ export function useGroupComposer({
 
   const onComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      const scrollIntent = composerOutputScrollIntentFromKeyboardEvent(event);
+      if (scrollIntent) {
+        event.preventDefault();
+        onScrollOutput?.(scrollIntent);
+        return;
+      }
       if (isComposerAiToggleKey(event)) {
         event.preventDefault();
         if (targetSessionId) {
@@ -445,6 +450,7 @@ export function useGroupComposer({
       completionState.response,
       cycleComposerCompletion,
       onAskAboutFailure,
+      onScrollOutput,
       onToggleComposerSubmitKind,
       prediction,
       requestComposerCompletion,

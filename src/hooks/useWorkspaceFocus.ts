@@ -1,5 +1,6 @@
+import { usesRawTerminalInput } from "../core/terminalInputRouting";
 import { useEffect, useRef } from "react";
-import { defaultSessionInputMode, inputModeUsesComposer, type SessionInputMode } from "../core/inputMode";
+import { defaultSessionInputMode, type SessionInputMode } from "../core/inputMode";
 import { requestFocusActiveTerminal } from "../core/workspaceFocus";
 
 export interface UseWorkspaceFocusOptions {
@@ -8,11 +9,12 @@ export interface UseWorkspaceFocusOptions {
   activeSessionId: string | null;
   sessionInputModes: Record<string, SessionInputMode>;
   focusGroupComposer: () => void;
+  agentActive?: boolean;
 }
 
 /**
  * After tab or pane focus changes, move keyboard focus to the group composer
- * (Operator) or the focused pane's xterm (Commander).
+ * (Operator) or the focused pane's xterm (Commander or an active CLI agent).
  */
 export function useWorkspaceFocus({
   activeGroupId,
@@ -20,28 +22,24 @@ export function useWorkspaceFocus({
   activeSessionId,
   sessionInputModes,
   focusGroupComposer,
+  agentActive = false,
 }: UseWorkspaceFocusOptions): void {
-  const focusTokenRef = useRef("");
   const focusGroupComposerRef = useRef(focusGroupComposer);
   focusGroupComposerRef.current = focusGroupComposer;
+  const mode = activeSessionId ? sessionInputModes[activeSessionId] ?? defaultSessionInputMode() : defaultSessionInputMode();
 
   useEffect(() => {
-    const token = `${activeGroupId}:${activePaneId}:${activeSessionId ?? ""}`;
-    if (focusTokenRef.current === token) {
-      return;
-    }
-    focusTokenRef.current = token;
-
+    let cancelled = false;
     queueMicrotask(() => {
-      if (!activeSessionId) {
+      if (cancelled || !activeSessionId) {
         return;
       }
-      const mode = sessionInputModes[activeSessionId] ?? defaultSessionInputMode();
-      if (inputModeUsesComposer(mode)) {
+      if (!usesRawTerminalInput(mode, agentActive)) {
         focusGroupComposerRef.current();
       } else {
         requestFocusActiveTerminal();
       }
     });
-  }, [activeGroupId, activePaneId, activeSessionId, sessionInputModes]);
+    return () => { cancelled = true; };
+  }, [activeGroupId, activePaneId, activeSessionId, mode, agentActive]);
 }

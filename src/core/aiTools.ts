@@ -10,6 +10,7 @@ export interface AiToolContext {
   sessionId: string;
   runLedger: RunLedgerState;
   sessionBuffers: Record<string, string>;
+  sessionBufferOffsets?: Record<string, number>;
 }
 
 export interface AiToolCall {
@@ -68,7 +69,7 @@ export function findRunForSession(
     return null;
   }
   const buffer = ctx.sessionBuffers[ctx.sessionId] ?? "";
-  const output = sliceBufferForRun(buffer, run);
+  const output = sliceBufferForRun(buffer, run, ctx.sessionBufferOffsets?.[ctx.sessionId] ?? 0);
   return { run, output };
 }
 

@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { AgentSessionState, AgentSlashCommand } from "../core/agentTui";
 import type { UiSurfaceState } from "../core/uiSurfaceState";
 import { MachStatusStrip } from "./MachStatusStrip";
@@ -97,6 +97,21 @@ export function GroupComposer({
       setShowFocusTargetHint(true);
     }
   }, [panePills.length]);
+
+  useLayoutEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!visible || !textarea) return;
+    const syncHeight = () => {
+      textarea.style.height = "auto";
+      const maxHeight = Math.max(72, window.innerHeight * 0.3);
+      const contentHeight = textarea.scrollHeight;
+      textarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+      textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    };
+    syncHeight();
+    window.addEventListener("resize", syncHeight);
+    return () => window.removeEventListener("resize", syncHeight);
+  }, [composerDraft, composerTextareaRef, visible]);
 
   if (!visible) {
     return null;

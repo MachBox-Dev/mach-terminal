@@ -61,8 +61,9 @@ shell stdout → PTY reader thread (session_manager.rs)
   → sequence validation (ptyOutputCoalesce.ts: duplicate/gap/resync)
   → buffered in pendingOutputRef, flushed per requestAnimationFrame
      with a per-frame byte budget (MAX_PTY_FLUSH_BYTES_PER_FRAME=48k)
-  → sessionBufferStore (ref-backed, outside React) → useSessionBuffer(sessionId)
-     in TerminalSurface → xterm.write() delta per pane (App does not re-render on output)
+  → sessionBufferStore (outside React) → useSessionBufferSubscription(sessionId)
+     in TerminalSurface → sessionBufferDelta using absolute totalAppended positions
+  → xterm.write() per pane without a React render on output
      (xterm renders via the WebGL addon (`@xterm/addon-webgl`); on GPU
       context-loss/init failure it disposes the addon and falls back to the
       DOM renderer transparently)
@@ -117,3 +118,19 @@ gate: routing.ai_feature_enabled && isExecutableProvider(default_provider) && AI
 ## Boundary / Trust Notes
 - Webview CSP is `null` in `tauri.conf.json` — frontend is trusted local content; the security boundary is the Rust command surface, which validates all inputs (provider ids, endpoint schemes, plugin capabilities, link/paste safety also enforced frontend-side in `src/core/linkSafety`/`terminalPasteGuard`).
 - Window is `decorations: false` → custom title bar (`CustomTitleBar.tsx`).
+
+## Daily-driver follow-up (2026-11-02 candidate)
+
+- PTY startup registers the handle and emits `running` before releasing the
+  reader through a start gate. Failure drops the gate before child/IO teardown
+  and joining. Lifecycle/spawn/restore status application is monotonic per id.
+- TerminalSurface consumes session-buffer snapshots through an imperative
+  per-session subscription; output flushes do not schedule a React render.
+- Shell context is an async command dispatching filesystem/process work through
+  `spawn_blocking`. Each subprocess has a two-second budget and 8 KiB stdout cap;
+  Windows elevation queries its token directly. The frontend shares in-flight
+  and fresh directory/settings probes through a bounded 12-second cache.
+- Prompt parsing retains bounded per-session raw tails outside React state so
+  numbered questions and ANSI sequences can span PTY flushes. Answers clear
+  context before input dispatch; late backend acknowledgments preserve newer
+  output-channel questions. Transient refs are pruned with the session registry.

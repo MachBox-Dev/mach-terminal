@@ -1,7 +1,7 @@
 import type { AppCommandId } from "./commands";
 import type { TerminalUiRequest } from "./terminalUiRequest";
 
-export function commandToTerminalUiIntent(commandId: AppCommandId): TerminalUiRequest["kind"] | null {
+export function commandToTerminalUiIntent(commandId: AppCommandId): Exclude<TerminalUiRequest["kind"], "scrollPage" | "jumpSearch"> | null {
   switch (commandId) {
     case "terminal.openFind":
       return "openFind";

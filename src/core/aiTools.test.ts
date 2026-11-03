@@ -56,6 +56,15 @@ describe("aiTools", () => {
     expect(result).toContain("not found");
   });
 
+  it("uses absolute run positions when older output has been evicted", () => {
+    const run = { ...ctx.runLedger.s1[0], bufferStart: 120_000, bufferEnd: 120_005 };
+    const shifted = {
+      ...ctx, runLedger: { s1: [run] }, sessionBuffers: { s1: "olderHELLOnewer" },
+      sessionBufferOffsets: { s1: 119_995 },
+    };
+    expect(findRunForSession(shifted, run.id)?.output).toBe("HELLO");
+  });
+
   it("formats catalog lines", () => {
     const run = ctx.runLedger.s1?.[0]!;
     expect(formatRunCatalogLine(run)).toContain(run.id);

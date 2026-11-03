@@ -203,7 +203,13 @@ impl SessionManager {
         let counters_for_thread = Arc::clone(&self.counters);
         let output_channel_for_thread = Arc::clone(&self.output_channel);
 
+        // No output/EOF may run until registration and the initial lifecycle emit
+        // succeed. An already-exited shell must not remove a not-yet-inserted id.
+        let (start_reader, registered) = std::sync::mpsc::sync_channel(1);
         let reader_thread = std::thread::spawn(move || {
+            if registered.recv().is_err() {
+                return;
+            }
             let mut chunk_sequence = sequence_for_thread;
             let mut last_emitted_sequence = chunk_sequence;
             let mut buffer = [0_u8; 8192];
@@ -425,27 +431,22 @@ impl SessionManager {
             reader_thread: Some(reader_thread),
         };
 
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|error| format!("failed to lock session manager: {error}"))?;
-        sessions.insert(session_id.clone(), handle);
-        drop(sessions);
-
-        app.emit(
-            PTY_LIFECYCLE_EVENT,
-            PtyLifecycleEvent {
-                session_id: session_id.clone(),
-                status: STATUS_RUNNING.to_string(),
-                // No cosmetic "spawned <shell>" banner: it only ate vertical space at
-                // the top of the terminal. The `running` status flip is what matters;
-                // exit/error events still carry their own user-facing messages.
-                message: None,
-                timestamp_ms: unix_timestamp_ms(),
-                exit_code: None,
-            },
-        )
-        .map_err(|error| format!("failed to emit lifecycle event: {error}"))?;
+        register_session(&self.sessions, handle, start_reader, || {
+            app.emit(
+                PTY_LIFECYCLE_EVENT,
+                PtyLifecycleEvent {
+                    session_id: session_id.clone(),
+                    status: STATUS_RUNNING.to_string(),
+                    // No cosmetic "spawned <shell>" banner: it only ate vertical space at
+                    // the top of the terminal. The `running` status flip is what matters;
+                    // exit/error events still carry their own user-facing messages.
+                    message: None,
+                    timestamp_ms: unix_timestamp_ms(),
+                    exit_code: None,
+                },
+            )
+            .map_err(|error| format!("failed to emit lifecycle event: {error}"))
+        })?;
 
         Ok(PtySessionInfo {
             id: session_id,
@@ -787,6 +788,44 @@ fn normalize_history_replay_command(command: &str) -> String {
     } else {
         format!("{command}\n")
     }
+}
+
+/// Commit startup before releasing the reader; failures cancel the gate before
+/// joining it and tear down the child/ConPTY handles outside the registry lock.
+fn register_session(
+    sessions: &Mutex<HashMap<String, SessionHandle>>,
+    handle: SessionHandle,
+    start_reader: std::sync::mpsc::SyncSender<()>,
+    emit_running: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let id = handle.id.clone();
+    match sessions.lock() {
+        Ok(mut slots) => {
+            slots.insert(id.clone(), handle);
+        }
+        Err(error) => {
+            drop(start_reader);
+            let _ = close_session_handle(handle);
+            return Err(format!("failed to lock session manager: {error}"));
+        }
+    }
+    let result = emit_running().and_then(|()| {
+        start_reader
+            .send(())
+            .map_err(|error| format!("failed to start PTY reader: {error}"))
+    });
+    drop(start_reader);
+    if result.is_err() {
+        // Recover a poisoned map here so failed startup still owns its cleanup.
+        let handle = sessions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&id);
+        if let Some(handle) = handle {
+            let _ = close_session_handle(handle);
+        }
+    }
+    result
 }
 
 fn close_session_handle(mut session: SessionHandle) -> Result<(), String> {
@@ -1299,6 +1338,94 @@ mod tests {
         assert_eq!(exit_code, Some(7), "reaper must retain the actual exit status");
     }
 
+    #[test]
+    fn already_exited_shell_is_registered_before_reader_and_failed_emit_cleans_up() {
+        use super::{derive_exit_code, register_session, SessionHandle};
+        use std::sync::{mpsc, Arc, Mutex};
+        for fail_emit in [false, true] {
+            for _ in 0..4 {
+                let pair = native_pty_system()
+                    .openpty(PtySize {
+                        rows: 24,
+                        cols: 80,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    })
+                    .unwrap();
+                let mut command =
+                    CommandBuilder::new(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
+                if cfg!(windows) {
+                    command.args(["/C", "exit 1"]);
+                } else {
+                    command.args(["-c", "exit 1"]);
+                }
+                let child = pair.slave.spawn_command(command).unwrap();
+                drop(pair.slave);
+                let child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>> =
+                    Arc::new(Mutex::new(child));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while child.lock().unwrap().try_wait().unwrap().is_none() {
+                    assert!(Instant::now() < deadline, "fast shell did not exit");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let manager = SessionManager::default();
+                let registry = Arc::clone(&manager.sessions);
+                let status = Arc::new(Mutex::new("running".to_string()));
+                let reader_status = Arc::clone(&status);
+                let reader_child = Arc::clone(&child);
+                let events = Arc::new(Mutex::new(Vec::new()));
+                let reader_events = Arc::clone(&events);
+                let (start, registered) = mpsc::sync_channel(1);
+                let (done, finished) = mpsc::channel();
+                let thread = std::thread::spawn(move || {
+                    if registered.recv().is_err() {
+                        return;
+                    }
+                    assert!(registry.lock().unwrap().contains_key("fast"));
+                    let code = derive_exit_code(&reader_child);
+                    *reader_status.lock().unwrap() = "stopped".into();
+                    reader_events.lock().unwrap().push("stopped");
+                    registry.lock().unwrap().remove("fast");
+                    done.send(code).unwrap();
+                });
+                let writer = pair.master.take_writer().unwrap();
+                let handle = SessionHandle {
+                    id: "fast".into(),
+                    shell: "test".into(),
+                    cwd: Arc::new(Mutex::new(None)),
+                    status,
+                    master: Arc::new(Mutex::new(Some(pair.master))),
+                    writer: Arc::new(Mutex::new(Some(writer))),
+                    child,
+                    command_buffer: Arc::new(Mutex::new(String::new())),
+                    reader_thread: Some(thread),
+                };
+                let result = register_session(&manager.sessions, handle, start, || {
+                    assert!(manager.sessions.lock().unwrap().contains_key("fast"));
+                    // Force the formerly racy window while the child is already dead.
+                    std::thread::sleep(Duration::from_millis(20));
+                    assert!(events.lock().unwrap().is_empty());
+                    if fail_emit {
+                        return Err("emit failed".into());
+                    }
+                    events.lock().unwrap().push("running");
+                    Ok(())
+                });
+                if fail_emit {
+                    assert!(result.is_err());
+                    assert!(events.lock().unwrap().is_empty());
+                } else {
+                    result.unwrap();
+                    let code = finished.recv_timeout(Duration::from_secs(2));
+                    // Ensure failure never strands a real child or join handle.
+                    manager.close_all().unwrap();
+                    assert_eq!(code.unwrap(), Some(1));
+                    assert_eq!(*events.lock().unwrap(), vec!["running", "stopped"]);
+                }
+                assert!(manager.sessions.lock().unwrap().is_empty());
+            }
+        }
+    }
     #[test]
     fn pty_reader_thread_finishes_after_child_kill() {
         let pty_system = native_pty_system();
