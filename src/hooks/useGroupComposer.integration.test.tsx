@@ -141,6 +141,19 @@ describe("mounted Operator composer", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it("recalculates the multiline cap when the viewport shrinks", async () => {
+    vi.stubGlobal("innerHeight", 1000);
+    await render();
+    Object.defineProperty(input(), "scrollHeight", { configurable: true, value: 250 });
+    await draft("first\nsecond");
+    expect(input().style.height).toBe("250px");
+    vi.stubGlobal("innerHeight", 400);
+    await act(async () => window.dispatchEvent(new Event("resize")));
+    expect(input().style.height).toBe("120px");
+    expect(input().style.overflowY).toBe("auto");
+    expect(input().value).toBe("first\nsecond");
+  });
+
   it("grows for multiline drafts instead of leaving a one-line viewport", async () => {
     await render();
     Object.defineProperty(input(), "scrollHeight", { configurable: true, value: 72 });

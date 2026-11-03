@@ -101,10 +101,16 @@ export function GroupComposer({
   useLayoutEffect(() => {
     const textarea = composerTextareaRef.current;
     if (!visible || !textarea) return;
-    textarea.style.height = "auto";
-    const maxHeight = Math.max(72, window.innerHeight * 0.3);
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    const syncHeight = () => {
+      textarea.style.height = "auto";
+      const maxHeight = Math.max(72, window.innerHeight * 0.3);
+      const contentHeight = textarea.scrollHeight;
+      textarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+      textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    };
+    syncHeight();
+    window.addEventListener("resize", syncHeight);
+    return () => window.removeEventListener("resize", syncHeight);
   }, [composerDraft, composerTextareaRef, visible]);
 
   if (!visible) {

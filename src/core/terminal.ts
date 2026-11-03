@@ -568,7 +568,7 @@ const cachedShellContext = createSingleFlightCache<ShellContextSnapshot>(12_000,
 
 export function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
   return cachedShellContext(JSON.stringify([cwd, includeGitDiff]), () =>
-    invoke<ShellContextSnapshot>("shell_context_snapshot", { cwd, include_git_diff: includeGitDiff }),
+    invoke<ShellContextSnapshot>("shell_context_snapshot", { cwd, includeGitDiff }),
   );
 }
 

@@ -1240,6 +1240,10 @@ export function TerminalSurface({
       if (!isFocusedRef.current) {
         return;
       }
+      if (findOpenRef.current) {
+        findInputRef.current?.focus();
+        return;
+      }
       terminalRef.current?.focus();
     };
     window.addEventListener(FOCUS_ACTIVE_TERMINAL_EVENT, onFocusActiveTerminal);
