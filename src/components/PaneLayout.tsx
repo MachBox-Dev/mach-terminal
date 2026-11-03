@@ -14,6 +14,7 @@ import { defaultSessionInputMode } from "../core/inputMode";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import { isBroadcastArmed } from "../core/broadcastMode";
 import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
+import type { AgentSessionState } from "../core/agentTui";
 import type { GroupLayoutSnapshot } from "../state/workspace";
 import { isPaneLeaf, isSplitBranch, type SplitNode } from "../state/splitTree";
 
@@ -32,6 +33,7 @@ interface PaneLayoutProps {
   sessionInputModes?: Record<string, SessionInputMode>;
   composerSubmitKinds?: Record<string, ComposerSubmitKind>;
   sessionCommandFailures?: Record<string, SessionCommandFailure | undefined>;
+  sessionAgents?: Record<string, AgentSessionState>;
   aiAssistEnabled?: boolean;
   /** When true, per-pane composers are hidden (group composer handles input). */
   groupComposerActive?: boolean;
@@ -61,6 +63,7 @@ export function PaneLayout({
   sessionInputModes = {},
   composerSubmitKinds = {},
   sessionCommandFailures = {},
+  sessionAgents = {},
   aiAssistEnabled = false,
   groupComposerActive = false,
   onAskAiSelection,
@@ -129,6 +132,7 @@ export function PaneLayout({
           liveCwd={liveCwd}
           isFocused={isFocused}
           inputMode={inputMode}
+          agentActive={Boolean(session && sessionAgents[session.id])}
           composerSubmitKind={session ? composerSubmitKinds[session.id] ?? "command" : "command"}
           commandFailure={session ? sessionCommandFailures[session.id] ?? null : null}
           terminalFontSize={terminalFontSize}

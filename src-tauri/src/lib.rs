@@ -1,3 +1,4 @@
+pub mod agent_inspect;
 pub mod models;
 mod child_env;
 #[cfg(windows)]
@@ -366,6 +367,26 @@ fn pty_list_sessions(manager: State<'_, SessionManager>) -> Result<Vec<PtySessio
 }
 
 #[tauri::command]
+#[instrument(skip(manager))]
+async fn pty_inspect_session_process(
+    manager: State<'_, SessionManager>,
+    session_id: String,
+) -> Result<crate::agent_inspect::SessionProcessInspection, String> {
+    let shell_pid = manager.session_shell_pid(&session_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let probe = shell_pid.and_then(crate::agent_inspect::probe_session_process);
+        let child_command_line = probe.as_ref().and_then(|probe| probe.command_line.clone());
+        crate::agent_inspect::SessionProcessInspection {
+            session_id,
+            shell_pid,
+            has_descendants: probe.map(|probe| probe.has_descendants),
+            foreground_command: child_command_line.clone(),
+            child_command_line,
+        }
+    }).await.map_err(|error| format!("process inspection failed: {error}"))
+}
+
+#[tauri::command]
 #[instrument(skip(app, manager, request))]
 fn history_query(
     app: AppHandle,
@@ -586,6 +607,7 @@ pub fn run() {
             pty_resize,
             pty_close,
             pty_list_sessions,
+            pty_inspect_session_process,
             history_query,
             history_recovery_take,
             history_replay,

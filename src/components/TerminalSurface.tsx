@@ -1,3 +1,4 @@
+import { shouldForwardTerminalData, usesRawTerminalInput } from "../core/terminalInputRouting";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSessionBuffer } from "../hooks/useSessionBuffer";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -48,7 +49,6 @@ import { composerOutputScrollIntentFromKeyboardEvent } from "../core/composerOut
 import {
   composerPlaceholderForMode,
   inputModeUsesComposer,
-  inputModeUsesXtermStdin,
   type SessionInputMode,
 } from "../core/inputMode";
 import {
@@ -149,6 +149,8 @@ interface TerminalSurfaceProps {
   isFocused: boolean;
   /** Input posture for this session: operator or commander (raw PTY). */
   inputMode?: SessionInputMode;
+  /** True when an interactive AI coding agent CLI is active in this pane. */
+  agentActive?: boolean;
   /** Operator-only: command vs AI submit (toggled with `?`). */
   composerSubmitKind?: ComposerSubmitKind;
   onToggleComposerSubmitKind?: () => void;
@@ -193,6 +195,7 @@ export function TerminalSurface({
   liveCwd = null,
   isFocused,
   inputMode = "operator",
+  agentActive = false,
   composerSubmitKind = "command",
   onToggleComposerSubmitKind,
   commandFailure = null,
@@ -263,6 +266,7 @@ export function TerminalSurface({
   const onAskAiSelectionRef = useRef(onAskAiSelection);
   const composerSubmitKindRef = useRef(composerSubmitKind);
   const inputModeRef = useRef(inputMode);
+  const agentActiveRef = useRef(agentActive);
   const findResultStateRef = useRef<{ resultIndex: number; resultCount: number }>({
     resultIndex: -1,
     resultCount: 0,
@@ -377,6 +381,7 @@ export function TerminalSurface({
   onAskAiSelectionRef.current = onAskAiSelection;
   composerSubmitKindRef.current = composerSubmitKind;
   inputModeRef.current = inputMode;
+  agentActiveRef.current = agentActive;
 
   isFocusedRef.current = isFocused;
   findCaseSensitiveRef.current = findCaseSensitive;
@@ -429,7 +434,7 @@ export function TerminalSurface({
     searchAddonRef.current?.findPrevious(term, currentFindOptions());
   }, [currentFindOptions]);
 
-  /** Composer is the only typing surface; keep keyboard focus here when the pane is active. */
+  /** Explicit composer focus remains available while an agent uses raw terminal input. */
   const focusComposerInput = useCallback(() => {
     if (composerLocked) {
       return;
@@ -442,7 +447,7 @@ export function TerminalSurface({
     if (findOpenRef.current) {
       return;
     }
-    if (inputModeRef.current === "commander") {
+    if (usesRawTerminalInput(inputModeRef.current, agentActiveRef.current)) {
       terminalRef.current?.focus();
       return;
     }
@@ -931,7 +936,7 @@ export function TerminalSurface({
 
     const terminal = new XTerm({
       cursorBlink: false,
-      disableStdin: true,
+      disableStdin: false,
       fontFamily: MACH_TERMINAL_MONO_FONT,
       fontSize: terminalFontSize,
       scrollback: SCROLLBACK_LINES,
@@ -1138,13 +1143,15 @@ export function TerminalSurface({
         requestClipboardPasteRef.current();
         return false;
       }
-      return true;
+      return isFocusedRef.current && usesRawTerminalInput(inputModeRef.current, agentActiveRef.current);
     });
 
     const onDataDispose = terminal.onData((data) => {
-      if (!isFocusedRef.current) {
-        return;
-      }
+      if (!shouldForwardTerminalData(
+        data,
+        usesRawTerminalInput(inputModeRef.current, agentActiveRef.current),
+        isFocusedRef.current,
+      )) return;
       if (activeSessionRef.current) {
         onInputRef.current(activeSessionRef.current.id, data);
       }
@@ -1261,36 +1268,44 @@ export function TerminalSurface({
   }, [terminalFontSize]);
 
   useEffect(() => {
-    if (!isFocused || !canFocusComposerWhenPaneActive(findOpen, composerLocked, inputMode)) {
+    if (!isFocused || !canFocusComposerWhenPaneActive(findOpen, composerLocked, inputMode, agentActive)) {
       return;
     }
     const id = window.requestAnimationFrame(() => {
       focusComposerInput();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [composerLocked, findOpen, focusComposerInput, inputMode, isFocused]);
+  }, [agentActive, composerLocked, findOpen, focusComposerInput, inputMode, isFocused]);
 
   useEffect(() => {
-    if (!isFocused || composerLocked) {
+    if (!isFocused || composerLocked || findOpen) {
       return;
     }
-    if (inputMode === "commander") {
+    if (usesRawTerminalInput(inputMode, agentActive)) {
       const id = window.requestAnimationFrame(() => {
         terminalRef.current?.focus();
       });
       return () => window.cancelAnimationFrame(id);
     }
     return undefined;
-  }, [composerLocked, inputMode, isFocused]);
+  }, [agentActive, composerLocked, findOpen, inputMode, isFocused]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) {
       return;
     }
-    terminal.options.disableStdin = !(inputModeUsesXtermStdin(inputMode) && isFocused);
-    terminal.options.cursorBlink = inputMode === "commander";
-    if (inputMode === "commander" && isFocused) {
+    const allowXtermStdin = usesRawTerminalInput(inputMode, agentActive) && isFocused;
+    // xterm must emit query replies in every pane; onData gates user input.
+    terminal.options.disableStdin = false;
+    terminal.options.cursorBlink = inputMode === "commander" || agentActive;
+    terminal.options.theme = {
+      background: "#0a0a0a",
+      foreground: "#e5e5e5",
+      cursor: allowXtermStdin ? "#00d4b8" : "#0a0a0a",
+      cursorAccent: "#0a0a0a",
+    };
+    if (usesRawTerminalInput(inputMode, agentActive) && isFocused && !findOpenRef.current) {
       queueMicrotask(() => {
         fitAddonRef.current?.fit();
         if (isViewportAtBottom(terminal)) {
@@ -1300,7 +1315,7 @@ export function TerminalSurface({
         terminal.focus();
       });
     }
-  }, [inputMode, isFocused]);
+  }, [agentActive, inputMode, isFocused]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1599,7 +1614,7 @@ export function TerminalSurface({
               className={`terminal-composer terminal-composer-kind-${composerSubmitKind}`}
               onContextMenu={(event) => event.stopPropagation()}
               onPointerDown={() => {
-                routePointerDownToInputSurface();
+                focusComposerInput();
               }}
             >
               {commandFailure && onAskAboutFailure && aiAssistEnabled ? (

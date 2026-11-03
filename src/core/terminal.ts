@@ -541,6 +541,18 @@ export async function composerComplete(request: ComposerCompletionRequest) {
   return invoke<ComposerCompletionResponse>("composer_complete", { request });
 }
 
+export interface SessionProcessInspection {
+  sessionId: string;
+  shellPid?: number | null;
+  foregroundCommand?: string | null;
+  childCommandLine?: string | null;
+  hasDescendants?: boolean | null;
+}
+
+export async function ptyInspectSessionProcess(sessionId: string) {
+  return invoke<SessionProcessInspection>("pty_inspect_session_process", { sessionId });
+}
+
 export async function runtimeMetricsSnapshot() {
   return invoke<RuntimeMetricsSnapshot>("runtime_metrics_snapshot");
 }

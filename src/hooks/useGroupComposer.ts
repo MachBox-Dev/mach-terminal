@@ -1,4 +1,11 @@
+import { shellExitRecipients } from "../core/agentTui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getAgentCliProfile,
+  matchAgentSlashCommands,
+  type AgentSessionState,
+  type AgentSlashCommand,
+} from "../core/agentTui";
 import type { ComposerCompletionResponse, HistoryEntry, PtySessionInfo } from "../core/terminal";
 import {
   applyCompletionCandidate,
@@ -52,6 +59,7 @@ export interface UseGroupComposerOptions {
   tabLabels: Record<string, string>;
   sessionInputModes: Record<string, SessionInputMode>;
   composerSubmitKinds: Record<string, ComposerSubmitKind>;
+  sessionAgents?: Record<string, AgentSessionState>;
   commandFailure?: SessionCommandFailure | null;
   historyEntries: HistoryEntry[];
   aiAssistEnabled: boolean;
@@ -84,6 +92,7 @@ export function useGroupComposer({
   tabLabels,
   sessionInputModes,
   composerSubmitKinds,
+  sessionAgents = {},
   commandFailure = null,
   historyEntries,
   aiAssistEnabled,
@@ -111,6 +120,7 @@ export function useGroupComposer({
   const targetPane = panes.find((pane) => pane.id === targetPaneId) ?? panes.find((pane) => pane.id === activePaneId);
   const targetSessionId = targetPane?.sessionId ?? null;
   const targetSession = targetSessionId ? sessionsById[targetSessionId] : undefined;
+  const targetAgentState = targetSessionId ? (sessionAgents[targetSessionId] ?? null) : null;
   const inputMode = targetSessionId
     ? (sessionInputModes[targetSessionId] ?? defaultSessionInputMode())
     : defaultSessionInputMode();
@@ -119,6 +129,12 @@ export function useGroupComposer({
   const boundedHistoryEntries = useMemo(
     () => historyEntries.slice(0, COMPOSER_HISTORY_WINDOW),
     [historyEntries],
+  );
+
+  const agentSlashMatches: AgentSlashCommand[] = useMemo(
+    () =>
+      composerSubmitKind !== "ai" ? matchAgentSlashCommands(composerDraft, targetAgentState) : [],
+    [composerDraft, composerSubmitKind, targetAgentState],
   );
 
   useEffect(() => {
@@ -192,9 +208,10 @@ export function useGroupComposer({
       const payload = `${normalized.replace(/\n/g, "\r\n")}\r`;
       onSubmitToPty(sessionIds, payload);
       if (isShellExitCommand(normalized.trim())) {
+        const shellSessionIds = shellExitRecipients(sessionIds, sessionAgents);
         if (isBroadcastArmed(broadcastMode)) {
-          onShellExitBroadcast?.(sessionIds);
-        } else {
+          if (shellSessionIds.length > 0) onShellExitBroadcast?.(shellSessionIds);
+        } else if (shellSessionIds.length > 0) {
           onShellExitSubmitted?.();
         }
       }
@@ -217,11 +234,25 @@ export function useGroupComposer({
     onShellExitBroadcast,
     resetCompletionState,
     resolveSubmitSessionIds,
+    sessionAgents,
   ]);
 
   const requestComposerCompletion = useCallback(async (): Promise<boolean> => {
     if (!onRequestComposerCompletion || composerLocked || !targetSessionId) {
       return false;
+    }
+    // If the user is typing an agent `/slash` command, complete from the active agent's slash command list first!
+    if (agentSlashMatches.length > 0) {
+      const best = agentSlashMatches[0]!;
+      const nextDraft = best.submitImmediately ? best.command : `${best.command} `;
+      setComposerDraft(nextDraft);
+      completionMetricsRef.current.accepted += 1;
+      setCompletionMetricsTick((tick) => tick + 1);
+      if (composerTextareaRef.current) {
+        composerTextareaRef.current.selectionStart = nextDraft.length;
+        composerTextareaRef.current.selectionEnd = nextDraft.length;
+      }
+      return true;
     }
     const textarea = composerTextareaRef.current;
     const cursor = textarea?.selectionStart ?? composerDraft.length;
@@ -266,7 +297,15 @@ export function useGroupComposer({
       resetCompletionState(error instanceof Error ? error.message : "Completion failed.");
       return false;
     }
-  }, [composerDraft, composerLocked, onRequestComposerCompletion, resetCompletionState, targetSession, targetSessionId]);
+  }, [
+    agentSlashMatches,
+    composerDraft,
+    composerLocked,
+    onRequestComposerCompletion,
+    resetCompletionState,
+    targetSession,
+    targetSessionId,
+  ]);
 
   const cycleComposerCompletion = useCallback((): boolean => {
     const current = completionStateRef.current;
@@ -416,6 +455,17 @@ export function useGroupComposer({
     ],
   );
 
+  const composerPlaceholder = useMemo(() => {
+    if (!composerLocked && inputMode === "operator" && composerSubmitKind !== "ai" && targetAgentState) {
+      const profile = getAgentCliProfile(targetAgentState.agentId);
+      if (targetAgentState.activeQuestion) {
+        return `Reply to ${profile.name} prompt — or click an action button above…`;
+      }
+      return `Message ${profile.name} — type / for ${profile.shortLabel} commands, ? for Mach AI…`;
+    }
+    return composerPlaceholderForMode(inputMode, composerLocked, composerSubmitKind === "ai");
+  }, [composerLocked, composerSubmitKind, inputMode, targetAgentState]);
+
   return {
     composerDraft,
     setComposerDraft,
@@ -424,6 +474,8 @@ export function useGroupComposer({
     inputMode,
     composerSubmitKind,
     targetSessionId,
+    targetAgentState,
+    agentSlashMatches,
     commandFailure,
     prediction,
     completionState,
@@ -442,11 +494,7 @@ export function useGroupComposer({
     onAskAboutFailure:
       targetSessionId && onAskAboutFailure ? () => onAskAboutFailure(targetSessionId) : undefined,
     aiAssistEnabled,
-    composerPlaceholder: composerPlaceholderForMode(
-      inputMode,
-      composerLocked,
-      composerSubmitKind === "ai",
-    ),
+    composerPlaceholder,
     inputModeUsesComposer: inputModeUsesComposer(inputMode),
     isComposerAiToggleKey,
     isAskFailureShortcut,

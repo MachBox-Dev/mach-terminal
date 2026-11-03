@@ -30,6 +30,23 @@ pub fn sanitize_command_line_for_history(raw: &str) -> String {
                     }
                     continue;
                 }
+                Some('O') => {
+                    let mut look = chars.clone();
+                    look.next();
+                    if matches!(look.next(), Some('A'..='D' | 'F' | 'H' | 'P'..='S')) {
+                        chars.next(); chars.next();
+                    }
+                    continue;
+                }
+                Some('P') => {
+                    chars.next();
+                    while let Some(inner) = chars.next() {
+                        if inner == '\u{1b}' && chars.peek() == Some(&'\\') {
+                            chars.next(); break;
+                        }
+                    }
+                    continue;
+                }
                 Some('(') | Some(')') => {
                     chars.next();
                     let _ = chars.next();
@@ -48,6 +65,18 @@ pub fn sanitize_command_line_for_history(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retains_bracketed_paste_and_alt_input() {
+        assert_eq!(sanitize_command_line_for_history("\x1b[200~claude\x1b[201~\r"), "claude");
+        assert_eq!(sanitize_command_line_for_history("\x1becho test\r"), "echo test");
+    }
+
+    #[test]
+    fn drops_ss3_and_dcs_payloads_but_keeps_commands() {
+        assert_eq!(sanitize_command_line_for_history("\x1bOA\r"), "");
+        assert_eq!(sanitize_command_line_for_history("\x1bP>|xterm.js(6.0.0)\x1b\\ls\r"), "ls");
+    }
 
     #[test]
     fn strips_csi_noise() {

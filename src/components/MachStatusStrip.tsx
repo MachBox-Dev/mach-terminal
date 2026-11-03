@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getAgentCliProfile, type AgentSessionState } from "../core/agentTui";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import { composerSubmitKindLabel } from "../core/composerAiIntent";
 import type { SessionInputMode } from "../core/inputMode";
@@ -41,6 +42,9 @@ interface MachStatusStripProps {
   focusPaneIndex?: number | null;
   /** Multi-pane composer target index (1-based) for the active tab group. */
   targetPaneIndex?: number | null;
+  /** Active AI coding agent TUI state for this session. */
+  agentState?: AgentSessionState | null;
+  onOpenAgentRail?: () => void;
 }
 
 export function MachStatusStrip({
@@ -53,6 +57,8 @@ export function MachStatusStrip({
   uiSurfaceState = null,
   focusPaneIndex = null,
   targetPaneIndex = null,
+  agentState = null,
+  onOpenAgentRail,
 }: MachStatusStripProps) {
   const [settings, setSettings] = useState<StatusStripSettings>(() => loadStatusStripSettings());
   const [shellCtx, setShellCtx] = useState<ShellContextSnapshot | null>(null);
@@ -138,6 +144,11 @@ export function MachStatusStrip({
     return shellChipLabel(shellExe.trim());
   }, [shellExe]);
 
+  const agentProfile = useMemo(
+    () => (agentState ? getAgentCliProfile(agentState.agentId) : null),
+    [agentState],
+  );
+
   const stripTitle =
     "Session context from Mach (path from OSC 7 cwd, git/admin from host). The shell may still print its own prompt above.";
 
@@ -163,6 +174,19 @@ export function MachStatusStrip({
             onClick={() => onToggleComposerSubmitKind?.()}
           >
             {composerSubmitKindLabel(composerSubmitKind)}
+          </button>
+        ) : null}
+        {agentProfile ? (
+          <button
+            type="button"
+            className={`mach-status-chip mach-status-chip-agent ${agentState?.activeQuestion ? "awaiting-prompt" : ""}`}
+            style={{ "--agent-accent": agentProfile.accentColor } as React.CSSProperties}
+            title={`${agentProfile.name} active — click to open Agent TUI pane`}
+            onClick={() => onOpenAgentRail?.()}
+          >
+            <span className={`agent-prompt-status-dot status-${agentState?.status ?? "idle"}`} aria-hidden="true" />
+            <span>{agentProfile.shortLabel}</span>
+            {agentState?.activeQuestion ? <span className="mach-status-agent-prompt-flag">· Prompt</span> : null}
           </button>
         ) : null}
         {focusPaneIndex != null && targetPaneIndex != null ? (

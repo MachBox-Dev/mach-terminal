@@ -3114,3 +3114,813 @@ body {
     min-height: 55vh;
   }
 }
+
+
+/* ==========================================================================
+   MachTerm Native AI Coding Agent CLI TUI (AgentPromptBar, AgentRailPanel,
+   Composer Slash Autocomplete, Status Strip & OpsRail Badges)
+   ========================================================================== */
+
+.agent-prompt-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.42rem 0.75rem;
+  background: linear-gradient(180deg, rgba(14, 18, 20, 0.96) 0%, rgba(9, 11, 13, 0.98) 100%);
+  border-top: 1px solid color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 35%, rgba(255, 255, 255, 0.08));
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.agent-prompt-bar.agent-status-awaiting_prompt {
+  border-top-color: rgba(251, 191, 36, 0.65);
+  box-shadow: 0 -6px 24px rgba(251, 191, 36, 0.08);
+}
+
+.agent-prompt-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.agent-prompt-bar-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.agent-prompt-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--agent-accent, var(--mach-accent));
+  box-shadow: 0 0 8px var(--agent-accent, var(--mach-accent));
+  flex-shrink: 0;
+}
+
+.agent-prompt-status-dot.status-working {
+  background: #38bdf8;
+  box-shadow: 0 0 10px #38bdf8;
+}
+
+.agent-prompt-status-dot.status-awaiting_prompt {
+  background: #fbbf24;
+  box-shadow: 0 0 10px #fbbf24;
+}
+
+.agent-prompt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.42rem;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 52%, transparent);
+  background: color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 16%, rgba(12, 14, 16, 0.92));
+  color: #f8fafc;
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.agent-prompt-name {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+
+.agent-prompt-state-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.44rem;
+  border-radius: 999px;
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(0, 212, 184, 0.32);
+  background: rgba(0, 212, 184, 0.1);
+  color: #99f6e4;
+}
+
+.agent-prompt-state-pill.status-working {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+}
+
+.agent-prompt-state-pill.status-awaiting_prompt {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.14);
+  color: #fde68a;
+}
+
+.agent-prompt-quick-commands {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-quick-cmd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  padding: 0.16rem 0.46rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: #cbd5e1;
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.agent-quick-cmd-pill code {
+  font-family: inherit;
+  color: #99f6e4;
+  font-weight: 600;
+}
+
+.agent-quick-cmd-pill:hover {
+  background: rgba(0, 212, 184, 0.14);
+  border-color: var(--mach-accent-border);
+  color: #f8fafc;
+}
+
+.agent-quick-cmd-arg {
+  font-size: 0.63rem;
+  color: #94a3b8;
+  opacity: 0.85;
+}
+
+.agent-prompt-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.agent-bar-btn {
+  padding: 0.18rem 0.48rem !important;
+  font-size: 0.7rem !important;
+  border-radius: 6px !important;
+}
+
+.agent-bar-btn.active {
+  border-color: var(--mach-accent) !important;
+  background: rgba(0, 212, 184, 0.18) !important;
+  color: #ecfeff !important;
+}
+
+.agent-bar-esc {
+  border-color: rgba(248, 113, 113, 0.32) !important;
+  color: #fca5a5 !important;
+}
+
+.agent-bar-esc:hover,
+.agent-bar-esc.flashing {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(248, 113, 113, 0.65) !important;
+  color: #fecaca !important;
+}
+
+.agent-bar-quit {
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #fecaca !important;
+  font-weight: 600 !important;
+}
+
+.agent-bar-quit:hover {
+  background: rgba(239, 68, 68, 0.24) !important;
+  border-color: rgba(248, 113, 113, 0.72) !important;
+  color: #fff1f2 !important;
+}
+
+.agent-bar-dismiss {
+  padding: 0.16rem 0.42rem !important;
+  font-size: 0.82rem !important;
+  line-height: 1 !important;
+  color: #94a3b8 !important;
+}
+
+.agent-bar-dismiss:hover {
+  color: #f8fafc !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Inline Expandable All-Commands Drawer inside AgentPromptBar */
+.agent-prompt-drawer {
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 184, 0.28);
+  background: rgba(8, 12, 14, 0.96);
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.agent-prompt-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.38rem;
+}
+
+.agent-prompt-drawer-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.38rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.agent-prompt-drawer-item:hover {
+  border-color: rgba(0, 212, 184, 0.36);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.agent-prompt-drawer-item-top {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.agent-prompt-drawer-cmd {
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: #99f6e4;
+}
+
+.agent-prompt-drawer-cat {
+  margin-left: auto;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  padding: 0.04rem 0.26rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+}
+
+.agent-prompt-drawer-desc {
+  margin: 0;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.agent-prompt-drawer-btns {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-top: 0.1rem;
+}
+
+.agent-drawer-action-btn {
+  padding: 0.12rem 0.42rem !important;
+  font-size: 0.67rem !important;
+}
+
+/* Interactive Question Card (Prompt Bar + Rail) */
+.agent-question-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 48%, rgba(251, 191, 36, 0.4));
+  background: linear-gradient(135deg, rgba(0, 212, 184, 0.09) 0%, rgba(18, 20, 24, 0.95) 100%);
+}
+
+.agent-question-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.agent-question-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.38rem;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  color: #fde68a;
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.agent-question-text {
+  margin: 0;
+  flex: 1;
+  min-width: 180px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #f8fafc;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.agent-question-dismiss {
+  font-size: 0.68rem !important;
+  padding: 0.1rem 0.36rem !important;
+}
+
+.agent-question-options {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  flex-wrap: wrap;
+}
+
+.agent-option-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.24rem 0.56rem !important;
+  border-radius: 6px !important;
+  font-size: 0.73rem !important;
+  font-weight: 500;
+}
+
+.agent-option-btn.variant-primary,
+.agent-option-btn.recommended {
+  background: rgba(0, 212, 184, 0.18) !important;
+  border-color: var(--mach-accent) !important;
+  color: #ecfeff !important;
+  font-weight: 600;
+}
+
+.agent-option-btn.variant-primary:hover,
+.agent-option-btn.recommended:hover {
+  background: rgba(0, 212, 184, 0.28) !important;
+  border-color: #5eead4 !important;
+}
+
+.agent-option-btn.variant-danger {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fecaca !important;
+}
+
+.agent-option-btn.variant-danger:hover {
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: rgba(248, 113, 113, 0.65) !important;
+}
+
+.agent-option-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  padding: 0.03rem 0.26rem;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.65rem;
+  color: #99f6e4;
+}
+
+/* Composer Inline Slash Command Suggestions */
+.composer-agent-slash-suggestions {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.32rem 0.6rem;
+  margin-bottom: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 184, 0.28);
+  background: rgba(12, 16, 18, 0.94);
+  flex-wrap: wrap;
+}
+
+.composer-agent-slash-hint {
+  font-size: 0.67rem;
+  color: #94a3b8;
+  margin-right: 0.2rem;
+}
+
+.composer-agent-slash-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.18rem 0.46rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-size: 0.71rem;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.composer-agent-slash-item code {
+  font-family: var(--mach-terminal-mono);
+  font-weight: 600;
+  color: #99f6e4;
+}
+
+.composer-agent-slash-item.selected,
+.composer-agent-slash-item:hover {
+  background: rgba(0, 212, 184, 0.16);
+  border-color: var(--mach-accent);
+  color: #f8fafc;
+}
+
+/* Status Strip Agent Chip */
+.mach-status-chip-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  cursor: pointer;
+  border-color: color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 50%, transparent) !important;
+  background: color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 14%, rgba(12, 14, 16, 0.9)) !important;
+  color: #f8fafc !important;
+  font-weight: 600;
+}
+
+.mach-status-chip-agent:hover {
+  background: color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 24%, rgba(18, 22, 26, 0.95)) !important;
+}
+
+.mach-status-chip-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--agent-accent, var(--mach-accent));
+  box-shadow: 0 0 6px var(--agent-accent, var(--mach-accent));
+}
+
+.mach-status-chip-agent.awaiting-prompt {
+  border-color: rgba(251, 191, 36, 0.65) !important;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
+}
+
+/* OpsRail Agent Tab */
+.ops-rail-main-tab-agent,
+.ops-rail-expand-tab-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.ops-rail-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: rgba(0, 212, 184, 0.18);
+  color: #99f6e4;
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.ops-rail-main-tab-agent.has-question,
+.ops-rail-expand-tab-agent.has-question {
+  border-color: rgba(251, 191, 36, 0.6) !important;
+  color: #fde68a !important;
+}
+
+/* Agent Rail Panel */
+.agent-rail-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  overflow-y: auto;
+}
+
+.agent-rail-empty-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.agent-rail-empty-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.agent-rail-empty-desc {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.agent-rail-launcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.agent-rail-launcher-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--mach-edge);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.agent-rail-launcher-card:hover {
+  border-color: color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 55%, var(--mach-edge));
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.agent-rail-launcher-top {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.agent-rail-launcher-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  flex: 1;
+}
+
+.agent-rail-launcher-exe {
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.67rem;
+  color: #94a3b8;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.08rem 0.34rem;
+  border-radius: 4px;
+}
+
+.agent-rail-launcher-meta {
+  margin: 0;
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.agent-rail-launcher-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.agent-rail-active-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  padding: 0.52rem 0.62rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent, var(--mach-accent)) 42%, var(--mach-edge));
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.agent-rail-active-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.agent-rail-active-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #f8fafc;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-rail-active-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.agent-rail-source-chip {
+  font-size: 0.66rem;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.38rem;
+  border-radius: 5px;
+}
+
+.agent-rail-profile-select {
+  flex: 1;
+  min-width: 110px;
+  padding: 0.2rem 0.38rem;
+  border-radius: 6px;
+  border: 1px solid var(--mach-edge-strong);
+  background: var(--mach-input-bg);
+  color: #e2e8f0;
+  font-size: 0.71rem;
+}
+
+.agent-rail-question-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.48);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.agent-rail-question-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.agent-rail-question-text {
+  margin: 0;
+  font-size: 0.74rem;
+  color: #f8fafc;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.agent-rail-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.agent-rail-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+}
+
+.agent-rail-search {
+  width: 100%;
+  padding: 0.34rem 0.52rem;
+  border-radius: 7px;
+  border: 1px solid var(--mach-edge-strong);
+  background: var(--mach-input-bg);
+  color: #e2e8f0;
+  font-size: 0.73rem;
+}
+
+.agent-rail-category-pills {
+  display: flex;
+  align-items: center;
+  gap: 0.24rem;
+  flex-wrap: wrap;
+}
+
+.agent-rail-cat-pill {
+  padding: 0.14rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid var(--mach-edge);
+  background: rgba(255, 255, 255, 0.02);
+  color: #94a3b8;
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.agent-rail-cat-pill.active,
+.agent-rail-cat-pill:hover {
+  border-color: var(--mach-accent-border);
+  background: rgba(0, 212, 184, 0.14);
+  color: #f8fafc;
+}
+
+.agent-rail-commands-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+}
+
+.agent-rail-cmd-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.26rem;
+  padding: 0.44rem 0.54rem;
+  border-radius: 7px;
+  border: 1px solid var(--mach-edge);
+  background: rgba(255, 255, 255, 0.018);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.agent-rail-cmd-card:hover {
+  border-color: rgba(0, 212, 184, 0.32);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.agent-rail-cmd-top {
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.agent-rail-cmd-code {
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #99f6e4;
+}
+
+.agent-rail-cmd-arg {
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.63rem;
+  padding: 0.04rem 0.28rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
+}
+
+.agent-rail-cmd-cat {
+  margin-left: auto;
+  font-size: 0.61rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.04rem 0.28rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+}
+
+.agent-rail-cmd-desc {
+  margin: 0;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.agent-rail-activity-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+  border-top: 1px solid var(--mach-edge);
+  padding-top: 0.5rem;
+}
+
+.agent-rail-activity-title {
+  margin: 0;
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+.agent-rail-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.26rem;
+}
+
+.agent-rail-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.26rem 0.42rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.7rem;
+}
+
+.agent-rail-activity-kind {
+  font-family: var(--mach-terminal-mono);
+  font-size: 0.61rem;
+  text-transform: uppercase;
+  padding: 0.04rem 0.26rem;
+  border-radius: 4px;
+  background: rgba(0, 212, 184, 0.14);
+  color: #99f6e4;
+  flex-shrink: 0;
+}
+
+.agent-rail-activity-summary {
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { AgentSessionState } from "../core/agentTui";
 import type { AiChatState, AiContextAttachment } from "../core/aiChatState";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import type { SessionInputMode } from "../core/inputMode";
@@ -36,6 +37,9 @@ export function deleteSessionRecordKey<T>(current: Record<string, T>, sessionId:
 }
 
 export interface SessionTransientRefs {
+  agentBannerTailsRef?: MutableRefObject<Record<string, string>>;
+  agentQuitInFlightRef?: MutableRefObject<Record<string, boolean>>;
+  dismissedAgentSessionsRef?: MutableRefObject<Record<string, boolean>>;
   pendingOutputRef: MutableRefObject<Record<string, string[]>>;
   lastSequenceRef: MutableRefObject<Record<string, number>>;
   resizeThrottleRef: MutableRefObject<Record<string, number>>;
@@ -43,6 +47,9 @@ export interface SessionTransientRefs {
 }
 
 export function clearSessionTransientRefs(sessionId: string, refs: SessionTransientRefs): void {
+  if (refs.agentBannerTailsRef) delete refs.agentBannerTailsRef.current[sessionId];
+  if (refs.agentQuitInFlightRef) delete refs.agentQuitInFlightRef.current[sessionId];
+  if (refs.dismissedAgentSessionsRef) delete refs.dismissedAgentSessionsRef.current[sessionId];
   delete refs.pendingOutputRef.current[sessionId];
   delete refs.lastSequenceRef.current[sessionId];
   delete refs.sessionCommandLineRef.current[sessionId];
@@ -55,6 +62,15 @@ export function clearSessionTransientRefs(sessionId: string, refs: SessionTransi
 
 export function pruneSessionTransientRefs(aliveIds: readonly string[], refs: SessionTransientRefs): void {
   const alive = new Set(aliveIds);
+  for (const id of Object.keys(refs.agentBannerTailsRef?.current ?? {})) {
+    if (!alive.has(id)) delete refs.agentBannerTailsRef!.current[id];
+  }
+  for (const id of Object.keys(refs.agentQuitInFlightRef?.current ?? {})) {
+    if (!alive.has(id)) delete refs.agentQuitInFlightRef!.current[id];
+  }
+  for (const id of Object.keys(refs.dismissedAgentSessionsRef?.current ?? {})) {
+    if (!alive.has(id)) delete refs.dismissedAgentSessionsRef!.current[id];
+  }
   for (const id of Object.keys(refs.pendingOutputRef.current)) {
     if (!alive.has(id)) {
       delete refs.pendingOutputRef.current[id];
@@ -100,6 +116,7 @@ export interface SessionRegistrySetters {
   setSessionSpawnArgs: Dispatch<SetStateAction<Record<string, string[]>>>;
   setSessionUiSurface: Dispatch<SetStateAction<Record<string, UiSurfaceState>>>;
   setSessionOsc133Hints: Dispatch<SetStateAction<Record<string, string>>>;
+  setSessionAgents?: Dispatch<SetStateAction<Record<string, AgentSessionState>>>;
 }
 
 export interface SessionRegistryContext {
@@ -124,6 +141,7 @@ export function pruneAllSessionScopedState(aliveIds: readonly string[], ctx: Ses
   setters.setSessionMessages((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setSessionNames((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setSessionSpawnArgs((current) => pruneRecordByAliveIds(current, aliveIds));
+  setters.setSessionAgents?.((current) => pruneRecordByAliveIds(current, aliveIds));
   setters.setRunLedger((current) => {
     const alive = new Set(aliveIds);
     let changed = false;
@@ -159,5 +177,6 @@ export function removeSessionFromRegistry(sessionId: string, ctx: SessionRegistr
   setters.setSessionSpawnArgs((current) => deleteSessionRecordKey(current, sessionId));
   setters.setSessionUiSurface((current) => deleteSessionRecordKey(current, sessionId));
   setters.setSessionOsc133Hints((current) => deleteSessionRecordKey(current, sessionId));
+  setters.setSessionAgents?.((current) => deleteSessionRecordKey(current, sessionId));
   clearSessionTransientRefs(sessionId, ctx.transientRefs);
 }

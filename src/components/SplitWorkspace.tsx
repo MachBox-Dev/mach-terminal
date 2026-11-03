@@ -7,6 +7,7 @@ import type { UiSurfaceState, UiSurfaceStatePatch } from "../core/uiSurfaceState
 import type { SessionInputMode } from "../core/inputMode";
 import type { ComposerSubmitKind } from "../core/composerAiIntent";
 import type { SessionCommandFailure } from "../core/sessionCommandOutcome";
+import type { AgentSessionState } from "../core/agentTui";
 import type { GroupLayoutSnapshot } from "../state/workspace";
 import { findPane } from "../state/splitTree";
 
@@ -25,6 +26,7 @@ interface SplitWorkspaceProps {
   sessionInputModes?: Record<string, SessionInputMode>;
   composerSubmitKinds?: Record<string, ComposerSubmitKind>;
   sessionCommandFailures?: Record<string, SessionCommandFailure | undefined>;
+  sessionAgents?: Record<string, AgentSessionState>;
   aiAssistEnabled?: boolean;
   groupComposerActive?: boolean;
   onAskAiSelection?: (sessionId: string, attachment: import("../core/aiChatState").AiContextAttachment) => void;

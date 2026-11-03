@@ -43,7 +43,8 @@ keyring = "3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Environment"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Environment", "Win32_System_Diagnostics_ToolHelp"] }
+sysinfo = { version = "0.37.2", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -28,3 +28,18 @@ describe("shellExitCommand", () => {
     expect(result.line).toBe("");
   });
 });
+
+it("tracks bracketed paste, Alt input, and query replies without losing text", () => {
+  let result = appendTerminalInputLine("", "\x1b[200~claude\x1b[201~");
+  expect(result.line).toBe("claude");
+  expect(appendTerminalInputLine(result.line, "\r").submitted).toBe("claude");
+  expect(appendTerminalInputLine("", "\x1be").line).toBe("e");
+  expect(appendTerminalInputLine("exit", "\x1b[1;2R").line).toBe("exit");
+  expect(appendTerminalInputLine("", "\x1b[200~exit\x1b[201~\r").submitted).toBe("exit");
+});
+
+it("drops application cursor keys and DCS query payloads before tracking exit", () => {
+  const line = appendTerminalInputLine("", "\x1bOA").line;
+  expect(appendTerminalInputLine(line, "/exit\r").submitted).toBe("/exit");
+  expect(appendTerminalInputLine("", "\x1bP>|xterm.js(6.0.0)\x1b\\exit\r").submitted).toBe("exit");
+});
