@@ -4,6 +4,25 @@ All notable changes to Mach Terminal are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.12] - 2026-11-03
+
+### Added
+
+- Native controls for supported coding CLIs, including agent detection, slash commands, and response buttons for recognized prompts.
+- Saved shell profiles in the new-tab picker.
+
+### Fixed
+
+- Numbered agent prompts can span output batches. Antigravity permission choices retain their full approval scopes.
+- Agent panes send the final size after dragging pauses. Prompt cards no longer resize the terminal viewport, and a short fade softens the repaint.
+- Terminal output continues after scrollback fills. Fast-exiting shells no longer leave stale running sessions.
+- Composer completion preserves Unicode cursor positions, and mode switches preserve drafts and route focus to the correct input.
+- Status probes run in the background with deadlines. Windows QA builds use the GUI subsystem, and background shell probes avoid opening console windows.
+
+### Security
+
+- Bound PTY writes and command buffering, validate AI requests, and update vulnerable dependencies.
+
 ## [0.1.0-rc.11] - 2026-07-03
 
 ### Added
