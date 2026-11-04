@@ -4,6 +4,8 @@ mod child_env;
 #[cfg(windows)]
 mod win_env;
 pub mod composer_completion;
+#[cfg(unix)]
+mod unix_completion;
 pub mod history_store;
 pub mod input_sanitize;
 pub mod osc7;
@@ -414,8 +416,9 @@ fn history_replay(
 }
 
 #[tauri::command]
-#[instrument(skip(manager, request))]
+#[instrument(skip(app, manager, request))]
 async fn composer_complete(
+    app: AppHandle,
     manager: State<'_, SessionManager>,
     request: ComposerCompletionRequest,
 ) -> Result<ComposerCompletionResponse, String> {
@@ -423,7 +426,10 @@ async fn composer_complete(
         .map(|id| manager.session_completion_snapshot(id))
         .transpose()?
         .flatten();
-    tauri::async_runtime::spawn_blocking(move || composer_completion::complete(request, session))
+    let config_dir = app.path().app_config_dir().ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        composer_completion::complete(request, session, config_dir.as_deref())
+    })
         .await
         .map_err(|error| format!("completion worker failed: {error}"))?
 }

@@ -57,6 +57,7 @@ static COMMAND_CACHE: OnceLock<Mutex<CommandCache>> = OnceLock::new();
 pub fn complete(
     request: ComposerCompletionRequest,
     session: Option<crate::models::PtySessionInfo>,
+    _config_dir: Option<&Path>,
 ) -> Result<ComposerCompletionResponse, String> {
     let cursor = byte_offset_for_utf16(&request.draft, request.cursor);
     let token = token_at_cursor(&request.draft, cursor);
@@ -69,6 +70,12 @@ pub fn complete(
     if let Some(shell) = session.as_ref().map(|session| session.shell.as_str()) {
         if let Some(result) = complete_powershell(shell, &cwd, &request.draft, cursor, limit)? {
             return Ok(result);
+        }
+        #[cfg(unix)]
+        if limit > 0 {
+            if let Some(result) = crate::unix_completion::complete(shell, &cwd, &request.draft, cursor, _config_dir)? {
+                return Ok(result);
+            }
         }
     }
 
@@ -497,7 +504,7 @@ mod tests {
         let result = super::complete(super::ComposerCompletionRequest {
             draft, cursor, cwd: Some(dir.path().to_string_lossy().into_owned()),
             shell: None, session_id: None, limit: None,
-        }, None).unwrap();
+        }, None, None).unwrap();
         assert_eq!(result.replacement_start, prefix.encode_utf16().count());
         assert_eq!(result.replacement_end, cursor);
         assert_eq!(result.query, "./rés");
@@ -517,6 +524,7 @@ mod tests {
                 session_id: None,
                 limit: None,
             },
+            None,
             None,
         ).unwrap();
         assert_eq!(result.replacement_start, 3);
@@ -538,7 +546,7 @@ mod tests {
             }, Some(crate::models::PtySessionInfo {
                 id: "test".to_string(), shell: "powershell.exe".to_string(),
                 cwd: Some(dir.path().to_string_lossy().into_owned()), status: "running".to_string(),
-            })).unwrap()
+            }), None).unwrap()
         };
         let path = run("cd ./ola", 8);
         assert_eq!(path.replacement_start, 3);
