@@ -10,11 +10,15 @@ const READY: &[u8] = b"\x1eMACH_READY\x1f";
 const RESULT: &[u8] = b"\x1eMACH_RESULT:";
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(target_os = "macos")]
+const COMPLETION_LOCALE: &str = "en_US.UTF-8";
+#[cfg(not(target_os = "macos"))]
+const COMPLETION_LOCALE: &str = "C.UTF-8";
 
 // The first widget loads data into the editor, Tab performs native completion,
 // and the second widget reports the edited line. No accept-line key is sent.
-const ZSH_SETUP: &str = r#"if [[ -n $MACH_COMPLETION_PROFILE ]]; then autoload -Uz compinit; compinit -Di && source "$MACH_COMPLETION_PROFILE" || exit; else zle -A .complete-word complete-word; fi; _mach_load() { BUFFER=$MACH_COMPLETION_DRAFT; CURSOR=$MACH_COMPLETION_CURSOR; printf '\036MACH_LOADED\037'; }; _mach_result() { printf '\036MACH_RESULT:%s:%s\037' "$CURSOR" "$BUFFER"; }; zle -N _mach_load; zle -N _mach_result; bindkey -e; bindkey '^[[97~' _mach_load; bindkey '^I' complete-word; bindkey '^[[98~' _mach_result; printf '\036MACH_READY\037'"#;
-const BASH_SETUP: &str = r#"if (( BASH_VERSINFO[0] < 4 )); then exit; fi; if [[ -n $MACH_COMPLETION_PROFILE ]]; then source "$MACH_COMPLETION_PROFILE" || exit; fi; _mach_load() { READLINE_LINE=$MACH_COMPLETION_DRAFT; READLINE_POINT=$MACH_COMPLETION_CURSOR; printf '\036MACH_LOADED\037'; }; _mach_result() { printf '\036MACH_RESULT:%s:%s\037' "$READLINE_POINT" "$READLINE_LINE"; }; set -o emacs; bind -x '"\e[97~":_mach_load'; bind '"\C-i":complete'; bind '"\e[99~":"\C-i\e[98~"'; bind -x '"\e[98~":_mach_result'; printf '\036MACH_READY\037'"#;
+const ZSH_SETUP: &str = r#"_mach_utf8=é; (( ${#_mach_utf8} == 1 )) || exit; if [[ -n $MACH_COMPLETION_PROFILE ]]; then autoload -Uz compinit; compinit -Di && source "$MACH_COMPLETION_PROFILE" || exit; else zle -A .complete-word complete-word; fi; _mach_load() { BUFFER=$MACH_COMPLETION_DRAFT; CURSOR=$MACH_COMPLETION_CURSOR; printf '\036MACH_LOADED\037'; }; _mach_result() { printf '\036MACH_RESULT:%s:%s\037' "$CURSOR" "$BUFFER"; }; zle -N _mach_load; zle -N _mach_result; bindkey -e; bindkey '^[[97~' _mach_load; bindkey '^I' complete-word; bindkey '^[[98~' _mach_result; printf '\036MACH_READY\037'"#;
+const BASH_SETUP: &str = r#"_mach_utf8=é; (( ${#_mach_utf8} == 1 )) || exit; if (( BASH_VERSINFO[0] < 4 )); then exit; fi; if [[ -n $MACH_COMPLETION_PROFILE ]]; then source "$MACH_COMPLETION_PROFILE" || exit; fi; _mach_load() { READLINE_LINE=$MACH_COMPLETION_DRAFT; READLINE_POINT=$MACH_COMPLETION_CURSOR; printf '\036MACH_LOADED\037'; }; _mach_result() { printf '\036MACH_RESULT:%s:%s\037' "$READLINE_POINT" "$READLINE_LINE"; }; set -o emacs; bind -x '"\e[97~":_mach_load'; bind '"\C-i":complete'; bind '"\e[99~":"\C-i\e[98~"'; bind -x '"\e[98~":_mach_result'; printf '\036MACH_READY\037'"#;
 
 pub(super) fn complete(
     shell: &str,
@@ -47,6 +51,8 @@ pub(super) fn complete(
     let mut command = CommandBuilder::new(shell);
     command.args(args);
     command.cwd(cwd);
+    // Editor cursor positions are character-based, even if Mach inherited LC_ALL=C.
+    command.env("LC_ALL", COMPLETION_LOCALE);
     command.env("TERM", "xterm");
     command.env("HISTFILE", "/dev/null");
     command.env("INPUTRC", "/dev/null");
@@ -97,7 +103,7 @@ pub(super) fn complete(
             .map(|(offset, _)| offset)
             .chain([line.len()])
             .nth(position)
-            .ok_or("Invalid Zsh completion cursor.")?
+            .ok_or("Invalid shell completion cursor.")?
     };
     if !line.is_char_boundary(position) || line.chars().any(char::is_control) {
         return Err("Shell returned an invalid completion edit.".to_string());
