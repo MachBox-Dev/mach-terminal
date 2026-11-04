@@ -41,6 +41,15 @@ describe("composer completion helpers", () => {
     expect(normalizeCompletionIndex(RESPONSE, 5)).toBe(1);
   });
 
+  it("wraps backward and handles unselected and single-candidate lists", () => {
+    expect(nextCompletionIndex(RESPONSE, 0, true)).toBe(1);
+    expect(nextCompletionIndex(RESPONSE, 1, true)).toBe(0);
+    expect(nextCompletionIndex(RESPONSE, -1, true)).toBe(0);
+    const one = { ...RESPONSE, candidates: RESPONSE.candidates.slice(0, 1) };
+    expect(nextCompletionIndex(one, 0, true)).toBe(0);
+    expect(nextCompletionIndex(one, 0)).toBe(0);
+  });
+
   it("applies selected completion candidate into replacement range", () => {
     const applied = applyCompletionCandidate("npm run test", RESPONSE, 1);
     expect(applied).toEqual({

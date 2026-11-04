@@ -415,11 +415,17 @@ fn history_replay(
 
 #[tauri::command]
 #[instrument(skip(manager, request))]
-fn composer_complete(
+async fn composer_complete(
     manager: State<'_, SessionManager>,
     request: ComposerCompletionRequest,
 ) -> Result<ComposerCompletionResponse, String> {
-    composer_completion::complete(request, Some(&manager))
+    let session = request.session_id.as_deref()
+        .map(|id| manager.session_completion_snapshot(id))
+        .transpose()?
+        .flatten();
+    tauri::async_runtime::spawn_blocking(move || composer_completion::complete(request, session))
+        .await
+        .map_err(|error| format!("completion worker failed: {error}"))?
 }
 
 #[tauri::command]

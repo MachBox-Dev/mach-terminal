@@ -31,7 +31,7 @@ pub struct ComposerCompletionResponse {
     pub candidates: Vec<ComposerCompletionCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComposerCompletionCandidate {
     pub value: String,
@@ -56,21 +56,35 @@ static COMMAND_CACHE: OnceLock<Mutex<CommandCache>> = OnceLock::new();
 
 pub fn complete(
     request: ComposerCompletionRequest,
-    manager: Option<&crate::session_manager::SessionManager>,
+    session: Option<crate::models::PtySessionInfo>,
 ) -> Result<ComposerCompletionResponse, String> {
     let cursor = byte_offset_for_utf16(&request.draft, request.cursor);
     let token = token_at_cursor(&request.draft, cursor);
     let query = unquote_token(&token.raw);
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-    let session_cwd = match (request.session_id.as_deref(), manager) {
-        (Some(id), Some(mgr)) => mgr.session_cwd_snapshot(id)?,
-        _ => None,
-    };
-    let cwd = resolve_cwd_for_completion(session_cwd.as_deref(), request.cwd.as_deref())?;
+    let cwd = resolve_cwd_for_completion(
+        session.as_ref().and_then(|session| session.cwd.as_deref()),
+        request.cwd.as_deref(),
+    )?;
+    if let Some(shell) = session.as_ref().map(|session| session.shell.as_str()) {
+        if let Some(result) = complete_powershell(shell, &cwd, &request.draft, cursor, limit)? {
+            return Ok(result);
+        }
+    }
 
-    let candidates = if should_complete_path(&query) {
+    // Bare arguments such as `cd doc<Tab>` are commonly relative paths.
+    // Keep command-name discovery for the first token.
+    let argument = !request.draft[..token.start].trim().is_empty();
+    let explicit_path = should_complete_path(&query);
+    let paths = if explicit_path {
         complete_paths(&cwd, &query, limit)?
-            .into_iter()
+    } else if argument {
+        complete_paths(&cwd, &query, limit).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let candidates = if explicit_path || !paths.is_empty() {
+        paths.into_iter()
             .map(|value| ComposerCompletionCandidate {
                 value,
                 kind: "path".to_string(),
@@ -92,6 +106,88 @@ pub fn complete(
         query,
         candidates,
     })
+}
+
+/// Ask the configured PowerShell executable for native completion without
+/// evaluating the draft or sending any keys to the live PTY.
+fn complete_powershell(
+    shell: &str,
+    cwd: &Path,
+    draft: &str,
+    cursor: usize,
+    limit: usize,
+) -> Result<Option<ComposerCompletionResponse>, String> {
+    let basename = shell.rsplit(['/', '\\']).next().unwrap_or_default();
+    if !["pwsh", "pwsh.exe", "powershell", "powershell.exe"]
+        .iter().any(|name| basename.eq_ignore_ascii_case(name))
+    {
+        return Ok(None);
+    }
+    if draft.len() > 8192 || draft.contains('\0') {
+        return Err("Draft is too large or contains a NUL character.".to_string());
+    }
+
+    // Keep repeated Tab presses from stacking up PowerShell processes.
+    static PROBE: Mutex<()> = Mutex::new(());
+    let _probe = PROBE.try_lock().map_err(|_| "PowerShell completion is busy.".to_string())?;
+    let mut command = std::process::Command::new(shell);
+    command
+        .current_dir(cwd)
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$draft = [string] $env:MACH_COMPLETION_DRAFT
+$result = TabExpansion2 -inputScript $draft -cursorColumn ([int] $env:MACH_COMPLETION_CURSOR)
+$items = @($result.CompletionMatches | Select-Object -First ([int] $env:MACH_COMPLETION_LIMIT) | ForEach-Object {
+    @{ value = $_.CompletionText; kind = $_.ResultType.ToString() }
+})
+@{
+    replacementStart = $result.ReplacementIndex
+    replacementLength = $result.ReplacementLength
+    candidates = $items
+} | ConvertTo-Json -Compress -Depth 4
+"#])
+        .env("MACH_COMPLETION_DRAFT", draft)
+        .env("MACH_COMPLETION_CURSOR", draft[..cursor].encode_utf16().count().to_string())
+        .env("MACH_COMPLETION_LIMIT", limit.max(1).to_string());
+
+    let Some(output) = crate::shell_context::bounded_command_output(command, Duration::from_secs(5), 128 * 1024)
+        .filter(|output| output.status.success())
+    else {
+        return Ok(None);
+    };
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PowerShellCompletion {
+        replacement_start: i32,
+        replacement_length: i32,
+        candidates: Vec<ComposerCompletionCandidate>,
+    }
+    let Ok(result) = serde_json::from_slice::<PowerShellCompletion>(&output.stdout) else {
+        return Ok(None);
+    };
+    if result.candidates.is_empty() || limit == 0 {
+        return Ok(Some(ComposerCompletionResponse {
+            replacement_start: draft[..cursor].encode_utf16().count(),
+            replacement_end: draft[..cursor].encode_utf16().count(),
+            query: String::new(),
+            candidates: Vec::new(),
+        }));
+    }
+    let start = usize::try_from(result.replacement_start).map_err(|_| "Invalid completion start")?;
+    let length = usize::try_from(result.replacement_length).map_err(|_| "Invalid completion length")?;
+    let end = start.checked_add(length).ok_or("Invalid completion range")?;
+    let start_byte = byte_offset_for_utf16(draft, start);
+    let end_byte = byte_offset_for_utf16(draft, end);
+    if draft[..start_byte].encode_utf16().count() != start || draft[..end_byte].encode_utf16().count() != end {
+        return Err("PowerShell returned an invalid completion range.".to_string());
+    }
+    Ok(Some(ComposerCompletionResponse {
+        replacement_start: start,
+        replacement_end: end,
+        query: draft[start_byte..end_byte].to_string(),
+        candidates: result.candidates,
+    }))
 }
 
 fn byte_offset_for_utf16(text: &str, cursor: usize) -> usize {
@@ -406,6 +502,60 @@ mod tests {
         assert_eq!(result.replacement_end, cursor);
         assert_eq!(result.query, "./rés");
         assert_eq!(result.candidates[0].value, "./résultat.txt");
+    }
+
+    #[test]
+    fn completes_bare_relative_path_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("documents")).unwrap();
+        let result = super::complete(
+            super::ComposerCompletionRequest {
+                draft: "cd doc".to_string(),
+                cursor: 6,
+                cwd: Some(dir.path().to_string_lossy().into_owned()),
+                shell: None,
+                session_id: None,
+                limit: None,
+            },
+            None,
+        ).unwrap();
+        assert_eq!(result.replacement_start, 3);
+        assert_eq!(result.replacement_end, 6);
+        assert_eq!(result.candidates[0].value, format!("documents{}", std::path::MAIN_SEPARATOR));
+        assert_eq!(result.candidates[0].kind, "path");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_owns_quoted_paths_parameters_and_empty_results() {
+        use super::{complete, ComposerCompletionRequest};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("ola documents")).unwrap();
+        let run = |draft: &str, cursor: usize| {
+            complete(ComposerCompletionRequest {
+                draft: draft.to_string(), cursor, cwd: None, shell: None,
+                session_id: Some("test".to_string()), limit: None,
+            }, Some(crate::models::PtySessionInfo {
+                id: "test".to_string(), shell: "powershell.exe".to_string(),
+                cwd: Some(dir.path().to_string_lossy().into_owned()), status: "running".to_string(),
+            })).unwrap()
+        };
+        let path = run("cd ./ola", 8);
+        assert_eq!(path.replacement_start, 3);
+        assert_eq!(path.replacement_end, 8);
+        let candidate = &path.candidates[0];
+        assert_eq!(candidate.kind, "ProviderContainer", "expected native PowerShell output");
+        assert!(
+            (candidate.value.starts_with('\'') && candidate.value.ends_with('\''))
+                || (candidate.value.starts_with('"') && candidate.value.ends_with('"')),
+            "expected a quoted path, got {:?}",
+            candidate.value,
+        );
+        assert!(path.candidates[0].value.contains("ola documents"));
+        let parameter = run("Get-ChildItem -Filt -Force", 19);
+        assert_eq!(parameter.replacement_end, 19);
+        assert_eq!(parameter.candidates[0].value, "-Filter");
+        assert!(run("cd ./no-such-directory", 22).candidates.is_empty());
     }
 
     #[test]

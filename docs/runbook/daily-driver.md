@@ -86,3 +86,16 @@ PTY integration tests separately cover output/EOF and nonzero exit codes.
 - Reproduce and classify remaining crashes and mode-switch friction during actual
   work before changing the input model. This tranche does not claim all freezes
   and crashes are resolved.
+
+## Composer completion follow-up
+
+Tab asks the configured PowerShell executable for completions with the latest
+known session cwd. The draft is passed as data to TabExpansion2. A successful
+empty result leaves the draft alone. Other shells and unavailable providers use
+MachTerminal's path and command lookup. Tab and Shift+Tab cycle completion
+candidates. Right Arrow accepts a prediction from the target session's history.
+
+The bounded PowerShell worker does not load profiles or read live session
+functions, modules, or PSReadLine settings. Native Windows coverage checks
+quoting, mid-line parameters, and empty results. Live shell integration is
+needed for profile-defined completions and custom key bindings.
