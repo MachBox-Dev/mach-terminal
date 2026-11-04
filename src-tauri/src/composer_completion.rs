@@ -151,7 +151,7 @@ $items = @($result.CompletionMatches | Select-Object -First ([int] $env:MACH_COM
         .env("MACH_COMPLETION_CURSOR", draft[..cursor].encode_utf16().count().to_string())
         .env("MACH_COMPLETION_LIMIT", limit.max(1).to_string());
 
-    let Some(output) = crate::shell_context::bounded_command_output(command, Duration::from_secs(2), 128 * 1024)
+    let Some(output) = crate::shell_context::bounded_command_output(command, Duration::from_secs(5), 128 * 1024)
         .filter(|output| output.status.success())
     else {
         return Ok(None);
@@ -543,7 +543,14 @@ mod tests {
         let path = run("cd ./ola", 8);
         assert_eq!(path.replacement_start, 3);
         assert_eq!(path.replacement_end, 8);
-        assert!(path.candidates[0].value.starts_with("'"));
+        let candidate = &path.candidates[0];
+        assert_eq!(candidate.kind, "ProviderContainer", "expected native PowerShell output");
+        assert!(
+            (candidate.value.starts_with('\'') && candidate.value.ends_with('\''))
+                || (candidate.value.starts_with('"') && candidate.value.ends_with('"')),
+            "expected a quoted path, got {:?}",
+            candidate.value,
+        );
         assert!(path.candidates[0].value.contains("ola documents"));
         let parameter = run("Get-ChildItem -Filt -Force", 19);
         assert_eq!(parameter.replacement_end, 19);
