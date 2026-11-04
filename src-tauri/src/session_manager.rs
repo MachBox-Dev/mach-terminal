@@ -607,8 +607,8 @@ impl SessionManager {
         sessions.values().map(|session| session.info()).collect()
     }
 
-    /// Latest cwd snapshot for a session (OSC7-updated mutex when hooked, else spawn seed).
-    pub fn session_cwd_snapshot(&self, session_id: &str) -> Result<Option<String>, String> {
+    /// Snapshot the configured shell and latest working directory for completion.
+    pub fn session_completion_snapshot(&self, session_id: &str) -> Result<Option<PtySessionInfo>, String> {
         let sessions = self
             .sessions
             .lock()
@@ -616,7 +616,7 @@ impl SessionManager {
         let Some(handle) = sessions.get(session_id) else {
             return Ok(None);
         };
-        Ok(handle.info().ok().and_then(|info| info.cwd))
+        handle.info().map(Some)
     }
 
     pub fn session_shell_pid(&self, session_id: &str) -> Result<Option<u32>, String> {

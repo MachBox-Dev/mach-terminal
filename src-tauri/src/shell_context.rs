@@ -36,8 +36,16 @@ pub async fn shell_context_snapshot(
 // Drain stdout concurrently so a full pipe cannot defeat the deadline. Limit the
 // bytes retained, discard stderr, and never wait for an inherited pipe at shutdown.
 fn bounded_output(
+    cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    bounded_command_output(cmd, timeout, MAX_PROBE_OUTPUT)
+}
+
+pub(crate) fn bounded_command_output(
     mut cmd: std::process::Command,
     timeout: std::time::Duration,
+    output_limit: u64,
 ) -> Option<std::process::Output> {
     use std::io::Read;
     use std::process::Stdio;
@@ -55,11 +63,11 @@ fn bounded_output(
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let result = stdout.take(MAX_PROBE_OUTPUT + 1).read_to_end(&mut bytes);
+        let result = stdout.take(output_limit + 1).read_to_end(&mut bytes);
         let _ = sender.send(
             result
                 .ok()
-                .filter(|_| bytes.len() <= MAX_PROBE_OUTPUT as usize)
+                .filter(|_| bytes.len() <= output_limit as usize)
                 .map(|_| bytes),
         );
     });

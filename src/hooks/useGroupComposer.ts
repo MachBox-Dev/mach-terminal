@@ -114,6 +114,8 @@ export function useGroupComposer({
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCursorRef = useRef<number | null>(null);
   const completionRequestSeqRef = useRef(0);
+  const completionInFlightRef = useRef(false);
+  const [completionPending, setCompletionPending] = useState(false);
   const completionStateRef = useRef(createComposerCompletionState());
   const historyStateRef = useRef(createComposerHistoryState());
   const [completionState, setCompletionState] = useState(createComposerCompletionState);
@@ -165,8 +167,8 @@ export function useGroupComposer({
   }, [completionState]);
 
   useEffect(() => {
-    setPrediction(predictionForDraft(composerDraft, boundedHistoryEntries));
-  }, [boundedHistoryEntries, composerDraft]);
+    setPrediction(predictionForDraft(composerDraft, boundedHistoryEntries.filter(entry => entry.session_id === targetSessionId)));
+  }, [boundedHistoryEntries, composerDraft, targetSessionId]);
 
   const resetCompletionState = useCallback((error: string | null = null) => {
     setCompletionState({
@@ -248,8 +250,18 @@ export function useGroupComposer({
     sessionAgents,
   ]);
 
+  useLayoutEffect(() => {
+    const empty = createComposerCompletionState();
+    completionStateRef.current = empty;
+    setCompletionState(empty);
+  }, [targetSessionId, composerLocked, composerSubmitKind]);
+
+  useLayoutEffect(() => {
+    completionRequestSeqRef.current += 1;
+  }, [composerDraft, composerLocked, composerSubmitKind, targetSessionId]);
+
   const requestComposerCompletion = useCallback(async (): Promise<boolean> => {
-    if (!onRequestComposerCompletion || composerLocked || !targetSessionId) {
+    if (completionInFlightRef.current || !onRequestComposerCompletion || composerLocked || !targetSessionId) {
       return false;
     }
     // If the user is typing an agent `/slash` command, complete from the active agent's slash command list first!
@@ -267,8 +279,11 @@ export function useGroupComposer({
     }
     const textarea = composerTextareaRef.current;
     const cursor = textarea?.selectionStart ?? composerDraft.length;
+    const selectionEnd = textarea?.selectionEnd ?? cursor;
     const seq = ++completionRequestSeqRef.current;
     const started = performance.now();
+    completionInFlightRef.current = true;
+    setCompletionPending(true);
     try {
       const response = await onRequestComposerCompletion({
         draft: composerDraft,
@@ -277,7 +292,10 @@ export function useGroupComposer({
         shell: targetSession?.shell,
         sessionId: targetSessionId,
       });
-      if (seq !== completionRequestSeqRef.current) {
+      if (seq !== completionRequestSeqRef.current ||
+          textarea !== composerTextareaRef.current ||
+          (textarea && (textarea.value !== composerDraft || textarea.selectionStart !== cursor ||
+            textarea.selectionEnd !== selectionEnd))) {
         return false;
       }
       completionMetricsRef.current.requests += 1;
@@ -296,8 +314,11 @@ export function useGroupComposer({
       if (seq !== completionRequestSeqRef.current) {
         return false;
       }
-      resetCompletionState(error instanceof Error ? error.message : "Completion failed.");
+      resetCompletionState(typeof error === "string" ? error : error instanceof Error ? error.message : "Completion failed.");
       return false;
+    } finally {
+      completionInFlightRef.current = false;
+      setCompletionPending(false);
     }
   }, [
     agentSlashMatches,
@@ -309,12 +330,12 @@ export function useGroupComposer({
     targetSessionId,
   ]);
 
-  const cycleComposerCompletion = useCallback((): boolean => {
+  const cycleComposerCompletion = useCallback((reverse = false): boolean => {
     const current = completionStateRef.current;
     if (!current.response || !hasCompletionCandidates(current.response)) {
       return false;
     }
-    const nextIndex = nextCompletionIndex(current.response, current.selectedIndex);
+    const nextIndex = nextCompletionIndex(current.response, current.selectedIndex, reverse);
     const applied = applyCompletionCandidate(composerDraft, current.response, nextIndex);
     if (!applied) {
       return false;
@@ -417,24 +438,14 @@ export function useGroupComposer({
         event.preventDefault();
         const ta = composerTextareaRef.current;
         const selectionStart = ta?.selectionStart ?? composerDraft.length;
-        const selectionEnd = ta?.selectionEnd ?? composerDraft.length;
         const requestKey = completionRequestKey(composerDraft, selectionStart);
         const canCycle =
           completionStateRef.current.requestKey === requestKey &&
           hasCompletionCandidates(completionStateRef.current.response);
-        if (canCycle && cycleComposerCompletion()) {
+        if (canCycle && cycleComposerCompletion(event.shiftKey)) {
           return;
         }
-        void requestComposerCompletion().then((applied) => {
-          if (applied) {
-            return;
-          }
-          if (prediction && canAcceptPrediction(composerDraft, prediction, selectionStart, selectionEnd)) {
-            setComposerDraft(prediction);
-            completionMetricsRef.current.accepted += 1;
-            setCompletionMetricsTick((tick) => tick + 1);
-          }
-        });
+        void requestComposerCompletion();
         return;
       }
       if (event.key === "Enter" && !event.shiftKey) {
@@ -484,6 +495,7 @@ export function useGroupComposer({
     agentSlashMatches,
     commandFailure,
     prediction,
+    completionPending,
     completionState,
     completionMetricsRef,
     completionMetricsTick,

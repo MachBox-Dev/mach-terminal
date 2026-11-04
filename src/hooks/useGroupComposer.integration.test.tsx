@@ -26,7 +26,10 @@ function Harness({ mode, agentActive = false }: { mode: SessionInputMode; agentA
     groupId: "group", panes: [{ id: "pane", sessionId: "s" }], activePaneId: "pane", targetPaneId: "pane",
     broadcastMode: "off", sessionsById: { s: { id: "s", shell: "pwsh.exe", status: "running" } },
     tabLabels: { s: "pwsh" }, sessionInputModes: { s: mode }, composerSubmitKinds: {},
-    historyEntries: [{ id: 1, session_id: "s", command: "npm run build", timestamp_ms: 1 }],
+    historyEntries: [
+      { id: 2, session_id: "another-session", command: "npm run old", timestamp_ms: 2 },
+      { id: 1, session_id: "s", command: "npm run build", timestamp_ms: 1 },
+    ],
     aiAssistEnabled: false, onSubmitToPty: submit, onRequestComposerCompletion: complete,
     onScrollOutput: scrollOutput,
   });
@@ -116,6 +119,52 @@ describe("mounted Operator composer", () => {
     expect(input().value).toBe("npm run build");
   });
 
+  it("never accepts a history prediction when Tab finds no completion", async () => {
+    complete.mockResolvedValueOnce({
+      replacementStart: 0, replacementEnd: 3, query: "npm", candidates: [],
+    });
+    await render();
+    await draft("npm");
+    expect(composer.prediction).toBe("npm run build");
+    await key("Tab");
+    expect(input().value).toBe("npm");
+    await key("ArrowRight");
+    expect(input().value).toBe("npm run build");
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first completion request when Tab is pressed again while waiting", async () => {
+    let resolveCompletion!: (response: Awaited<ReturnType<typeof complete>>) => void;
+    complete.mockImplementationOnce(() => new Promise(resolve => { resolveCompletion = resolve; }));
+    await render();
+    await draft("np");
+    await key("Tab");
+    await key("Tab");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(composer.completionPending).toBe(true);
+    await act(async () => resolveCompletion({
+      replacementStart: 0, replacementEnd: 2, query: "np",
+      candidates: [{ value: "npm", kind: "command" }],
+    }));
+    expect(input().value).toBe("npm");
+    expect(composer.completionPending).toBe(false);
+  });
+
+  it("ignores completion results after the draft changes", async () => {
+    let resolveCompletion!: (response: Awaited<ReturnType<typeof complete>>) => void;
+    complete.mockImplementationOnce(() => new Promise(resolve => { resolveCompletion = resolve; }));
+    await render();
+    await draft("np");
+    await key("Tab");
+    await draft("npm run lint");
+    await act(async () => resolveCompletion({
+      replacementStart: 0, replacementEnd: 2, query: "np",
+      candidates: [{ value: "npm", kind: "command" }],
+    }));
+    expect(input().value).toBe("npm run lint");
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("cycles different-length completions without corrupting following arguments", async () => {
     await render();
     await draft("np run test", 2);
@@ -127,6 +176,8 @@ describe("mounted Operator composer", () => {
     expect(input().selectionStart).toBe(7);
     await key("Tab");
     expect(input().value).toBe("npm run test");
+    await key("Tab", { shiftKey: true });
+    expect(input().value).toBe("npm.cmd run test");
     expect(complete).toHaveBeenCalledTimes(1);
     await key("Escape");
     expect(composer.completionState.response).toBeNull();

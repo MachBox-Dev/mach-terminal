@@ -294,6 +294,8 @@ export function TerminalSurface({
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingComposerCursorRef = useRef<number | null>(null);
   const completionRequestSeqRef = useRef(0);
+  const completionInFlightRef = useRef(false);
+  const [completionPending, setCompletionPending] = useState(false);
   const completionStateRef = useRef(createComposerCompletionState());
   const historyStateRef = useRef(createComposerHistoryState());
   const [completionState, setCompletionState] = useState(createComposerCompletionState);
@@ -513,16 +515,29 @@ export function TerminalSurface({
     }
   }, [composerDraft, resetCompletionState, sendTextToPty]);
 
+  useLayoutEffect(() => {
+    const empty = createComposerCompletionState();
+    completionStateRef.current = empty;
+    setCompletionState(empty);
+  }, [activeSession?.id, composerLocked, composerSubmitKind]);
+
+  useLayoutEffect(() => {
+    completionRequestSeqRef.current += 1;
+  }, [composerDraft, composerLocked, composerSubmitKind, activeSession?.id]);
+
   const requestComposerCompletion = useCallback(async (): Promise<boolean> => {
-    if (!onRequestComposerCompletion || composerLocked) {
+    if (completionInFlightRef.current || !onRequestComposerCompletion || composerLocked) {
       return false;
     }
     const textarea = composerTextareaRef.current;
     const cursor = textarea?.selectionStart ?? composerDraft.length;
+    const selectionEnd = textarea?.selectionEnd ?? cursor;
     const nextSeq = completionRequestSeqRef.current + 1;
     completionRequestSeqRef.current = nextSeq;
     const requestStartedAt = performance.now();
     completionMetricsRef.current.requests += 1;
+    completionInFlightRef.current = true;
+    setCompletionPending(true);
     try {
       const response = await onRequestComposerCompletion({
         draft: composerDraft,
@@ -531,7 +546,10 @@ export function TerminalSurface({
         shell: activeSession?.shell,
         sessionId: activeSession?.id,
       });
-      if (completionRequestSeqRef.current !== nextSeq) {
+      if (completionRequestSeqRef.current !== nextSeq ||
+          textarea !== composerTextareaRef.current ||
+          (textarea && (textarea.value !== composerDraft || textarea.selectionStart !== cursor ||
+            textarea.selectionEnd !== selectionEnd))) {
         return false;
       }
       if (!hasCompletionCandidates(response)) {
@@ -553,8 +571,12 @@ export function TerminalSurface({
         resetCompletionState("Completions unavailable");
       }
       return false;
+    } finally {
+      completionInFlightRef.current = false;
+      setCompletionPending(false);
     }
   }, [
+    activeSession?.id,
     activeSession?.shell,
     composerDraft,
     composerLocked,
@@ -563,12 +585,12 @@ export function TerminalSurface({
     resetCompletionState,
   ]);
 
-  const cycleComposerCompletion = useCallback(() => {
+  const cycleComposerCompletion = useCallback((reverse = false) => {
     const current = completionStateRef.current;
     if (!current.response || !hasCompletionCandidates(current.response)) {
       return false;
     }
-    const nextIndex = nextCompletionIndex(current.response, current.selectedIndex);
+    const nextIndex = nextCompletionIndex(current.response, current.selectedIndex, reverse);
     const applied = applyCompletionCandidate(composerDraft, current.response, nextIndex);
     pendingComposerCursorRef.current = applied.cursor;
     completionMetricsRef.current.accepted += 1;
@@ -1435,9 +1457,9 @@ export function TerminalSurface({
   }, [exitedInfo]);
 
   useEffect(() => {
-    const nextPrediction = predictionForDraft(composerDraft, boundedHistoryEntries);
+    const nextPrediction = predictionForDraft(composerDraft, boundedHistoryEntries.filter(entry => entry.session_id === activeSession?.id));
     setPrediction(nextPrediction);
-  }, [boundedHistoryEntries, composerDraft]);
+  }, [boundedHistoryEntries, composerDraft, activeSession?.id]);
 
   useEffect(() => {
     onComposerDraftChange?.(composerDraft);
@@ -1749,26 +1771,16 @@ export function TerminalSurface({
                       e.preventDefault();
                       const ta = composerTextareaRef.current;
                       const selectionStart = ta?.selectionStart ?? composerDraft.length;
-                      const selectionEnd = ta?.selectionEnd ?? composerDraft.length;
                       const requestKey = completionRequestKey(
                         composerDraft,
                         selectionStart,
                       );
                       const canCycle =
                         completionStateRef.current.requestKey === requestKey && hasCompletionCandidates(completionStateRef.current.response);
-                      if (canCycle && cycleComposerCompletion()) {
+                      if (canCycle && cycleComposerCompletion(e.shiftKey)) {
                         return;
                       }
-                      void requestComposerCompletion().then((applied) => {
-                        if (applied) {
-                          return;
-                        }
-                        if (prediction && canAcceptPrediction(composerDraft, prediction, selectionStart, selectionEnd)) {
-                          setComposerDraft(prediction);
-                          completionMetricsRef.current.accepted += 1;
-                          setCompletionMetricsTick((tick) => tick + 1);
-                        }
-                      });
+                      void requestComposerCompletion();
                       return;
                     }
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -1785,10 +1797,13 @@ export function TerminalSurface({
               </div>
               {prediction && prediction !== composerDraft ? (
                 <p className="terminal-composer-prediction" aria-live="polite">
-                  Suggestion: <span>{prediction}</span>
+                  History: <span>{prediction}</span> <kbd>→</kbd>
                 </p>
               ) : null}
-              {completionState.error ? (
+              {completionPending ? (
+                <p className="terminal-composer-prediction" role="status">Completing…</p>
+              ) : null}
+              {!completionPending && completionState.error ? (
                 <p className="terminal-composer-completion-error" aria-live="polite">
                   {completionState.error}
                 </p>

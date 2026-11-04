@@ -21,6 +21,7 @@ export interface GroupComposerViewProps {
   composerSubmitKind: ComposerSubmitKind;
   composerPlaceholder: string;
   prediction: string | null;
+  completionPending: boolean;
   completionState: { response: unknown; error: string | null; selectedIndex: number };
   completionMetricsTick: number;
   completionMetricsRef: React.MutableRefObject<{ requests: number; accepted: number; totalLatencyMs: number }>;
@@ -57,6 +58,7 @@ export function GroupComposer({
   composerSubmitKind,
   composerPlaceholder,
   prediction,
+  completionPending,
   completionState,
   completionMetricsTick,
   completionMetricsRef,
@@ -252,10 +254,13 @@ export function GroupComposer({
         </div>
         {prediction && prediction !== composerDraft ? (
           <p className="terminal-composer-prediction" aria-live="polite">
-            Suggestion: <span>{prediction}</span>
+            History: <span>{prediction}</span> <kbd>→</kbd>
           </p>
         ) : null}
-        {completionState.error ? (
+        {completionPending ? (
+          <p className="terminal-composer-prediction" role="status">Completing…</p>
+        ) : null}
+        {!completionPending && completionState.error ? (
           <p className="terminal-composer-completion-error" aria-live="polite">
             {completionState.error}
           </p>

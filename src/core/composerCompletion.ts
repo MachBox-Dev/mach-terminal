@@ -58,14 +58,19 @@ export function normalizeCompletionIndex(response: ComposerCompletionResponse | 
   return index % response.candidates.length;
 }
 
-export function nextCompletionIndex(response: ComposerCompletionResponse | null, current: number): number {
+export function nextCompletionIndex(
+  response: ComposerCompletionResponse | null,
+  current: number,
+  reverse = false,
+): number {
   if (!response || response.candidates.length === 0) {
     return -1;
   }
   if (current < 0) {
     return 0;
   }
-  return (current + 1) % response.candidates.length;
+  const count = response.candidates.length;
+  return (current + (reverse ? count - 1 : 1)) % count;
 }
 
 export function hasCompletionCandidates(response: ComposerCompletionResponse | null): boolean {

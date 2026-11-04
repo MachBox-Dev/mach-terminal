@@ -2695,6 +2695,7 @@ function App() {
             composerPlaceholder={groupComposer.composerPlaceholder}
             commandFailure={groupComposer.commandFailure}
             prediction={groupComposer.prediction}
+            completionPending={groupComposer.completionPending}
             completionState={groupComposer.completionState}
             completionMetricsTick={groupComposer.completionMetricsTick}
             completionMetricsRef={groupComposer.completionMetricsRef}
