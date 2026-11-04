@@ -99,3 +99,43 @@ The bounded PowerShell worker does not load profiles or read live session
 functions, modules, or PSReadLine settings. Native Windows coverage checks
 quoting, mid-line parameters, and empty results. Live shell integration is
 needed for profile-defined completions and custom key bindings.
+
+On macOS and Linux, Composer also asks Zsh's built-in ZLE completion or Bash
+4+ Readline for the edit produced by one Tab press. The isolated helper uses
+the target session's known cwd and never submits the draft. These providers
+return a single edit, including any common prefix chosen by the shell. They
+do not expose an interactive candidate menu. User completion plugins are opt-in.
+Bash 3.x and other unavailable providers use the local lookup. Right Arrow
+continues to accept only a visible prediction from the target session.
+
+### Custom Zsh and Bash completions
+
+Composer can load completion registrations from opt-in files in the app's
+configuration directory. On macOS the regular app uses
+`~/Library/Application Support/com.machbox.terminal/`. On Linux it uses
+`${XDG_CONFIG_HOME:-~/.config}/com.machbox.terminal/`. An isolated QA app uses
+its own identifier in the directory name.
+
+- `completion.zsh` enables the standard Zsh completion system and can add
+  `compdef` registrations or source trusted completion plugins.
+- `completion.bash` can register functions with `complete -F` or load a
+  trusted Bash completion script. This uses Bash 4 or newer.
+
+For example, put this in `completion.zsh`:
+
+```zsh
+_mach_demo() { compadd -- hello-world; }
+compdef _mach_demo mach-demo
+```
+
+Or put this in `completion.bash`:
+
+```bash
+_mach_demo() { COMPREPLY=(hello-world); }
+complete -F _mach_demo mach-demo
+```
+
+Type `mach-demo hel` in Composer and press Tab. Keep these files limited to
+completion setup. Composer sources them in the bounded helper on each fresh
+completion request. The regular shell profile and custom key bindings are
+outside this path.
