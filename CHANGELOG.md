@@ -4,6 +4,39 @@ All notable changes to Mach Terminal are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.13] - 2026-11-04
+
+### Added
+
+- Composer Tab uses PowerShell, Zsh, or Bash completion when a provider is available. Shell results preserve quoting and cursor placement, and an empty result leaves the draft alone.
+- Zsh and Bash can load custom completion registrations from opt-in files in Mach Terminal's configuration directory. The daily-driver runbook includes setup examples.
+- Right Arrow accepts visible history predictions from the target session. History stays separate from Tab completion.
+
+### Fixed
+
+- Repeated Tab presses keep the pending completion request. Composer shows progress and discards results if the draft, cursor, or target session changes.
+- Zsh and Bash completion helpers use UTF-8 so Unicode cursor positions stay correct even when the app inherits a non-UTF-8 locale.
+- Release candidates publish SHA-256 checksums after all platform builds succeed.
+
+## [0.1.0-rc.12] - 2026-11-03
+
+### Added
+
+- Native controls for supported coding CLIs, including agent detection, slash commands, and response buttons for recognized prompts.
+- Saved shell profiles in the new-tab picker.
+
+### Fixed
+
+- Numbered agent prompts can span output batches. Antigravity permission choices retain their full approval scopes.
+- Agent panes send the final size after dragging pauses. Prompt cards no longer resize the terminal viewport, and a short fade softens the repaint.
+- Terminal output continues after scrollback fills. Fast-exiting shells no longer leave stale running sessions.
+- Composer completion preserves Unicode cursor positions, and mode switches preserve drafts and route focus to the correct input.
+- Status probes run in the background with deadlines. Windows QA builds use the GUI subsystem, and background shell probes avoid opening console windows.
+
+### Security
+
+- Bound PTY writes and command buffering, validate AI requests, and update vulnerable dependencies.
+
 ## [0.1.0-rc.11] - 2026-07-03
 
 ### Added

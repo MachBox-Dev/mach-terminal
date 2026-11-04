@@ -176,6 +176,7 @@ jobs:
     name: Publish Release Checksums
     runs-on: ubuntu-22.04
     needs: build-and-release
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' }}
     steps:
       - name: Install GitHub CLI
         run: sudo apt-get update && sudo apt-get install -y gh
@@ -190,7 +191,8 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS.txt
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
 
       - name: Upload checksum file
         env:
