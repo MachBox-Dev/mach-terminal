@@ -24,16 +24,15 @@ On first launch, click **Quick start (AI off)** to drop straight into a working 
 
 ### Run from Source
 
-**Prerequisites:** [Node.js LTS](https://nodejs.org/) (v20+), [Rust stable toolchain](https://rustup.rs/), and [Tauri v2 platform dependencies](https://v2.tauri.app/start/prerequisites/) (WebView2 on Windows, Xcode CLI tools on macOS, `webkit2gtk` + build-essential on Linux).
+**Prerequisites:** [Node.js LTS](https://nodejs.org/) (`^20.19.0` or `>=22.12.0`, required by Vite 7), [Rust stable toolchain](https://rustup.rs/), and [Tauri v2 platform dependencies](https://v2.tauri.app/start/prerequisites/) (WebView2 on Windows, Xcode CLI tools on macOS, `webkit2gtk` + build-essential on Linux).
 
 ```bash
 git clone https://github.com/MachBox-Dev/mach-terminal.git
 cd mach-terminal
 npm install
 
-# Launch the desktop app in dev mode (cleans up stale dev processes automatically)
-npm run dev:tauri
-# Or directly via the Tauri CLI:
+# Launch the desktop app in dev mode (Tauri's beforeDevCommand runs `npm run dev:tauri`,
+# which stops any process listening on the dev port, default 1430, before starting Vite)
 npm run tauri dev
 ```
 
@@ -47,7 +46,7 @@ Press **`Ctrl+\``** (or use the Command Palette `Ctrl/Cmd+K`) at any time to tog
 
 | Mode | How Input Works | Best For |
 | --- | --- | --- |
-| **Operator Mode** *(default)* | Typing happens in the **Group Composer** below the terminal panes. Supports native shell `Tab` completion (`pwsh`, `zsh`, `bash` + cwd-aware path/command index), history browsing (`Up`/`Down`), multi-line editing (`Shift+Enter`), safe paste review, and one-key AI toggling (`?`). | Everyday shell work, multi-pane orchestration, composing multi-line commands, and CLI coding agents. |
+| **Operator Mode** *(default)* | Typing happens in the **Group Composer** below the terminal panes. Supports native shell `Tab` completion (`pwsh`, `zsh`, `bash` + cwd-aware path/command index), history browsing (`Up`/`Down`), multi-line draft editing (`Shift+Enter`), and one-key AI toggling (`?`). Pasting into the composer edits your draft directly; pasting onto a terminal pane (`Ctrl/Cmd+Shift+V` or context-menu Paste) runs through the safe-paste review card. | Everyday shell work, multi-pane orchestration, composing multi-line commands, and CLI coding agents. |
 | **Commander Mode** | Keystrokes go directly to **raw xterm.js stdin** in the focused pane. The composer locks out of the way. | Full-screen TUIs (`vim`, `nvim`, `tmux`, `htop`, `lazygit`), interactive prompts, and raw terminal apps. |
 
 > **Smart CLI Agent Handoff:** When you launch a supported CLI coding agent in **Operator Mode**, Mach Terminal automatically allows direct keyboard interaction in the terminal viewport while keeping the composer and inline Agent HUD available below.
@@ -56,7 +55,7 @@ Press **`Ctrl+\``** (or use the Command Palette `Ctrl/Cmd+K`) at any time to tog
 
 ### 2. Tabs, Splits, and Focus vs. Target
 
-Each tab hosts a binary split tree of **up to 6 independent PTY panes** with draggable resize handles (double-click any divider to reset 50/50).
+Each tab hosts a binary split tree of **up to 6 independent PTY panes** with draggable resize handles (double-click any divider to reset 50/50). Splitting again once a tab is already at the 6-pane cap replaces an inactive pane and closes its PTY session.
 
 In multi-pane tabs, Mach separates **Focus** from **Composer Target** so you can inspect or scroll one pane while firing commands into another:
 
@@ -66,7 +65,7 @@ In multi-pane tabs, Mach separates **Focus** from **Composer Target** so you can
   - Switch target without moving focus: **Click a pane pill** in the composer header, or press **`Ctrl+Alt+Shift+1..9`** (Windows/Linux) / **`Alt+Shift+1..9`** (macOS).
 - **Broadcast Mode:** Send composer input to **all Operator panes** in the active tab at once.
   - **One-shot broadcast:** Click **Broadcast** in the composer (or `Ctrl/Cmd+Shift+B` / `Alt+Shift+B`) — sends the next `Enter` to all panes, then disarms.
-  - **Sticky broadcast:** **Shift+click Broadcast** (or `Ctrl/Cmd+Alt+Shift+B`) — stays armed across commands until you click it again or run **Disarm broadcast** from the palette.
+  - **Sticky broadcast:** **Shift+click Broadcast** (or `Ctrl/Cmd+Alt+Shift+B`) — stays armed across commands until you **Shift+click Broadcast** again or run **Disarm broadcast** from the palette (a plain click switches sticky to one-shot).
 
 ---
 
