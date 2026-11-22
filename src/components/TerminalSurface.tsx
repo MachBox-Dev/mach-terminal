@@ -13,7 +13,6 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import {
   bufferLineIndexFromProviderLine,
-  isSafeHttpUrlForOpener,
   isSafeLocalPathForOpener,
   mergeHttpAndFileLinksForLine,
   xtermBufferRangeForScrapedSpan,
@@ -1075,12 +1074,7 @@ export function TerminalSurface({
               range,
               decorations: { pointerCursor: true, underline: true },
               activate(event, urlText) {
-                if (!shouldActivateTerminalLink(event)) {
-                  return;
-                }
-                if (isSafeHttpUrlForOpener(urlText)) {
-                  void openUrl(urlText);
-                }
+                activateTerminalLink(urlText, { openUrl, openPath }, event);
               },
             };
           }

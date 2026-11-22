@@ -31,6 +31,16 @@ impl Osc133Parser {
 
     /// Returns every complete OSC 133 sequence decoded from `chunk` (in order).
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<Osc133Kind> {
+        self.feed_with_offsets(chunk)
+            .into_iter()
+            .map(|(kind, _)| kind)
+            .collect()
+    }
+
+    /// Returns every complete OSC 133 sequence decoded from `chunk` along with the
+    /// byte offset in `chunk` immediately after the sequence's terminator.
+    pub fn feed_with_offsets(&mut self, chunk: &[u8]) -> Vec<(Osc133Kind, usize)> {
+        let prior_pending_len = self.pending.len();
         let mut work = std::mem::take(&mut self.pending);
         work.extend_from_slice(chunk);
 
@@ -58,11 +68,13 @@ impl Osc133Parser {
             let payload_start = cursor + 6;
             match find_terminator(&work[payload_start..]) {
                 Some((payload_end_rel, term_len)) => {
+                    let seq_end_in_work = payload_start + payload_end_rel + term_len;
+                    let chunk_end_offset = seq_end_in_work.saturating_sub(prior_pending_len).min(chunk.len());
                     let payload = &work[payload_start..payload_start + payload_end_rel];
                     if let Some(kind) = parse_payload(payload) {
-                        out.push(kind);
+                        out.push((kind, chunk_end_offset));
                     }
-                    cursor = payload_start + payload_end_rel + term_len;
+                    cursor = seq_end_in_work;
                 }
                 None => {
                     let tail = &work[cursor..];
@@ -211,5 +223,20 @@ mod tests {
         assert!(p.feed(b"\x1b").is_empty());
         let got = p.feed(b"]133;D;7\x07");
         assert_eq!(got, vec![Osc133Kind::OutputEnd { exit_code: Some(7) }]);
+    }
+
+    #[test]
+    fn feed_with_offsets_tracks_marker_positions_within_single_chunk() {
+        let mut p = Osc133Parser::new();
+        let chunk = b"\x1b]133;C\x07hello\n\x1b]133;D;0\x07PS> ";
+        let got = p.feed_with_offsets(chunk);
+        assert_eq!(
+            got,
+            vec![
+                (Osc133Kind::OutputStart, 8),
+                (Osc133Kind::OutputEnd { exit_code: Some(0) }, 24),
+            ]
+        );
+        assert_eq!(&chunk[8..14], b"hello\n");
     }
 }

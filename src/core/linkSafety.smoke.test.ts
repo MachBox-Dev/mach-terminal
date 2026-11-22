@@ -42,6 +42,8 @@ describe("Terminal link safety smoke contracts", () => {
     const click = { ctrlKey: true, metaKey: false };
 
     const httpDecision = activateTerminalLink("https://example.com/path", { openUrl, openPath }, click);
+    const machDecision = activateTerminalLink("mach-armory://open?id=note-1", { openUrl, openPath }, click);
+    const triageDecision = activateTerminalLink("machtriage://case/42", { openUrl, openPath }, click);
     const fileDecision = activateTerminalLink("file:///etc/hosts", { openUrl, openPath }, click);
     const rejectedDecision = activateTerminalLink("javascript:alert(1)", { openUrl, openPath }, click);
     const plainClick = activateTerminalLink("https://example.com/path", { openUrl, openPath }, {
@@ -50,12 +52,14 @@ describe("Terminal link safety smoke contracts", () => {
     });
 
     expect(httpDecision.kind).toBe("http");
+    expect(machDecision.kind).toBe("http");
+    expect(triageDecision.kind).toBe("http");
     expect(fileDecision.kind).toBe("file");
     expect(rejectedDecision.kind).toBe("rejected");
     expect(plainClick.kind).toBe("rejected");
     expect(openUrl).toHaveBeenCalledWith("https://example.com/path");
     expect(openPath).toHaveBeenCalledWith("/etc/hosts");
-    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledTimes(3);
     expect(openPath).toHaveBeenCalledTimes(1);
   });
 

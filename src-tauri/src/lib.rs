@@ -46,14 +46,34 @@ struct AiRuntime {
 /// Matches `AI_CONTEXT_OUTPUT_MAX_CHARS` in `src/core/terminal.ts` so both sides of the
 /// IPC boundary agree on one AI-context size budget instead of drifting independently.
 const AI_NOTE_MAX_CHARS: usize = 6000;
-const AI_NOTE_SCHEME_PREFIX: &str = "machterm://ai-note";
 /// Shares the same size budget as `AI_NOTE_MAX_CHARS` — see that constant's comment.
 const COMPOSER_MAX_CHARS: usize = 6000;
-const COMPOSER_SCHEME_PREFIX: &str = "machterm://composer";
 /// Hard cap on a single `pty_write` invoke's payload (TER audit 2026-06, CRITICAL).
 /// Legitimate input (typed keys, reasonable pastes) is nowhere near this; it exists to
 /// reject a pathological single-call payload before it reaches the session writer.
 const PTY_WRITE_MAX_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MachtermDeepLinkKind {
+    AiNote,
+    Composer,
+}
+
+fn parse_machterm_deep_link_kind(url_str: &str) -> Option<MachtermDeepLinkKind> {
+    let parsed = reqwest::Url::parse(url_str).ok()?;
+    if !parsed.scheme().eq_ignore_ascii_case("machterm") {
+        return None;
+    }
+    match parsed.host_str()?.to_ascii_lowercase().as_str() {
+        "ai-note" => Some(MachtermDeepLinkKind::AiNote),
+        "composer" => Some(MachtermDeepLinkKind::Composer),
+        _ => None,
+    }
+}
+
+fn is_machterm_url(url_str: &str) -> bool {
+    parse_machterm_deep_link_kind(url_str).is_some()
+}
 
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -83,12 +103,15 @@ fn parse_text_label_deep_link(url_str: &str, kind: &str) -> Option<(String, Opti
 /// Unrecognized schemes are logged and dropped — never crash the app. Always focuses the
 /// window first so the user sees why Terminal just came to the foreground.
 fn handle_deep_link(app: &AppHandle, url_str: &str) {
+    let Some(kind) = parse_machterm_deep_link_kind(url_str) else {
+        warn!(url = url_str, "ignoring unrecognized machterm deep link");
+        return;
+    };
     focus_main_window(app);
 
-    if url_str.starts_with(AI_NOTE_SCHEME_PREFIX) {
-        handle_ai_note_deep_link(app, url_str);
-    } else if url_str.starts_with(COMPOSER_SCHEME_PREFIX) {
-        handle_composer_deep_link(app, url_str);
+    match kind {
+        MachtermDeepLinkKind::AiNote => handle_ai_note_deep_link(app, url_str),
+        MachtermDeepLinkKind::Composer => handle_composer_deep_link(app, url_str),
     }
 }
 
@@ -557,16 +580,13 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-            for arg in argv
-                .iter()
-                .filter(|a| a.starts_with(AI_NOTE_SCHEME_PREFIX) || a.starts_with(COMPOSER_SCHEME_PREFIX))
-            {
+            let mut handled_deep_link = false;
+            for arg in argv.iter().filter(|a| is_machterm_url(a)) {
                 handle_deep_link(app, arg);
+                handled_deep_link = true;
+            }
+            if !handled_deep_link {
+                focus_main_window(app);
             }
         }));
     }
@@ -660,5 +680,35 @@ pub fn run() {
             error!("failed to build tauri app: {error}");
             telemetry::shutdown();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_machterm_url, parse_machterm_deep_link_kind, MachtermDeepLinkKind};
+
+    #[test]
+    fn parses_valid_machterm_deep_link_schemes_case_insensitively() {
+        assert_eq!(
+            parse_machterm_deep_link_kind("machterm://ai-note?text=hello"),
+            Some(MachtermDeepLinkKind::AiNote)
+        );
+        assert_eq!(
+            parse_machterm_deep_link_kind("MachTerm://AI-NOTE/?text=hello"),
+            Some(MachtermDeepLinkKind::AiNote)
+        );
+        assert_eq!(
+            parse_machterm_deep_link_kind("MACHTERM://composer?text=ls"),
+            Some(MachtermDeepLinkKind::Composer)
+        );
+        assert!(is_machterm_url("machterm://composer/?text=pwd"));
+    }
+
+    #[test]
+    fn rejects_prefix_lookalikes_and_other_schemes() {
+        assert_eq!(parse_machterm_deep_link_kind("machterm://ai-notebook?text=hi"), None);
+        assert_eq!(parse_machterm_deep_link_kind("machterm://composer2?text=hi"), None);
+        assert_eq!(parse_machterm_deep_link_kind("https://ai-note?text=hi"), None);
+        assert!(!is_machterm_url("machterm://ai-notebook?text=hi"));
     }
 }

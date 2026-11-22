@@ -520,6 +520,13 @@ body {
   color: #e2e8f0;
 }
 
+.ai-chat-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
 .ai-chat-status {
   margin: 0.35rem 0 0;
   font-size: 0.72rem;

@@ -77,6 +77,21 @@ function decodeFileUri(uri: string): string | null {
  * caller which opener to route to, and {@link activateTerminalLink} wires
  * that up for callers that already hold opener refs.
  */
+function isSafeMachDeepLinkForOpener(raw: string): boolean {
+  if (!raw || /[\s\u0000-\u001f\u007f]/.test(raw)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(raw);
+    return (
+      (parsed.protocol === "mach-armory:" || parsed.protocol === "machtriage:") &&
+      parsed.host.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function resolveTerminalLinkActivation(uri: string): TerminalLinkActivationResult {
   if (!uri || typeof uri !== "string") {
     return { kind: "rejected", reason: "empty uri" };
@@ -85,6 +100,11 @@ export function resolveTerminalLinkActivation(uri: string): TerminalLinkActivati
     return isSafeHttpUrlForOpener(uri)
       ? { kind: "http", target: uri }
       : { kind: "rejected", reason: "unsafe http url" };
+  }
+  if (/^(?:mach-armory|machtriage):\/\//i.test(uri)) {
+    return isSafeMachDeepLinkForOpener(uri)
+      ? { kind: "http", target: uri }
+      : { kind: "rejected", reason: "unsafe mach deep link" };
   }
   if (uri.startsWith("file://")) {
     const decoded = decodeFileUri(uri);
