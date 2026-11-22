@@ -380,26 +380,6 @@ impl SessionManager {
                                 }
                             }
                         }
-                        if app_for_thread
-                            .emit(
-                            AI_CONTEXT_EVENT,
-                            AiContextEvent {
-                                session_id: session_id_for_thread.clone(),
-                                event_type: "output_chunk".to_string(),
-                                payload: bytes_read.to_string(),
-                                sequence: chunk_sequence,
-                                timestamp_ms: unix_timestamp_ms(),
-                                source: "pty".to_string(),
-                            },
-                        )
-                        .is_err()
-                        {
-                            counters_for_thread.emit_failures.fetch_add(1, Ordering::Relaxed);
-                            warn!(
-                                session_id = %session_id_for_thread,
-                                "failed to emit ai-context output chunk"
-                            );
-                        }
                     }
                     Err(error) => {
                         let _ = update_status_and_emit(

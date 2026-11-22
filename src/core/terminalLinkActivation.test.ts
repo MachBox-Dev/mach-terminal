@@ -90,6 +90,18 @@ describe("resolveTerminalLinkActivation", () => {
   it("rejects file:// with malformed percent-encoding", () => {
     expect(resolveTerminalLinkActivation("file:///etc/%ZZhosts").kind).toBe("rejected");
   });
+
+  it("accepts mach-armory:// and machtriage:// deep links", () => {
+    expect(resolveTerminalLinkActivation("mach-armory://open?id=abc")).toEqual({
+      kind: "http",
+      target: "mach-armory://open?id=abc",
+    });
+    expect(resolveTerminalLinkActivation("machtriage://finding?id=TRI-1")).toEqual({
+      kind: "http",
+      target: "machtriage://finding?id=TRI-1",
+    });
+    expect(resolveTerminalLinkActivation("mach-armory://").kind).toBe("rejected");
+  });
 });
 
 const WIN_CLICK = { ctrlKey: true, metaKey: false } as const;

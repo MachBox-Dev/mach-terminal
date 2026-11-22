@@ -55,6 +55,7 @@ import {
   historyQuery,
   historyReplay,
   composerComplete,
+  getCachedGitBranch,
   onAiContext,
   onAiNoteDeepLink,
   onComposerDeepLink,
@@ -194,6 +195,8 @@ import { isTauri } from "./core/tauriRuntime";
 import { refocusMainWindow } from "./core/workspaceFocus";
 import {
   appendCommandSubmitted,
+  markCommandOutputEnd,
+  markCommandOutputStart,
   serializePinnedMap,
   toggleRunPin,
   type RunLedgerState,
@@ -394,7 +397,7 @@ function App() {
     setSessionSpawnArgs((current) => ({ ...current, [sessionId]: [...profile.args!] }));
   }, []);
 
-  const { pendingOutputRef, lastSequenceRef } = usePtyOutputStream({
+  const { pendingOutputRef, lastSequenceRef, flushSessionOutput } = usePtyOutputStream({
     maxSessionBuffer: MAX_SESSION_BUFFER,
     setRuntimeError,
     onSessionOutputFlushed: (sessionId, chunk) => {
@@ -530,19 +533,21 @@ function App() {
     });
   }, []);
 
-  const buildAiPromptContext = useCallback((): AiPromptContextPayload | undefined => {
-    if (!activeSession) {
+  const buildAiPromptContext = useCallback((sessionId?: string): AiPromptContextPayload | undefined => {
+    const targetSession = (sessionId ? sessionsById[sessionId] : undefined) ?? activeSession;
+    if (!targetSession) {
       return undefined;
     }
-    const cwd = sessionCwd[activeSession.id] ?? activeSession.cwd ?? undefined;
-    const rawBuffer = sessionBufferStore.get(activeSession.id);
+    const cwd = sessionCwd[targetSession.id] ?? targetSession.cwd ?? undefined;
+    const rawBuffer = sessionBufferStore.get(targetSession.id);
     const output_excerpt = trimAiContextExcerpt(rawBuffer);
     return {
       cwd,
-      shell: activeSession.shell ?? undefined,
+      shell: targetSession.shell ?? undefined,
+      git_branch: getCachedGitBranch(cwd),
       output_excerpt,
     };
-  }, [activeSession, sessionCwd]);
+  }, [activeSession, sessionCwd, sessionsById]);
 
   const openAiRail = useCallback(() => {
     setSideRailTab("ai");
@@ -1078,7 +1083,15 @@ function App() {
             return next;
           });
         }
+        if (event.phase === "outputStart") {
+          flushSessionOutput(event.session_id);
+          const bufLen = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
+          setRunLedger((ledger) => markCommandOutputStart(ledger, event.session_id, bufLen));
+        }
         if (event.phase === "outputEnd") {
+          flushSessionOutput(event.session_id);
+          const bufLen = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
+          setRunLedger((ledger) => markCommandOutputEnd(ledger, event.session_id, bufLen));
           const runs = runLedgerRef.current[event.session_id] ?? [];
           const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
           setSessionCommandFailures((prev) =>
@@ -1088,7 +1101,9 @@ function App() {
       });
 
       contextUnlisten = await onAiContext((event) => {
-        setLastAiContext(event);
+        if (event.event_type !== "output_chunk") {
+          setLastAiContext(event);
+        }
         if (event.event_type !== "command_submitted") {
           return;
         }
@@ -1122,6 +1137,7 @@ function App() {
             };
           });
         }
+        flushSessionOutput(sid);
         const bufLen = sessionBufferStore.getSnapshot(sid).totalAppended;
         setRunLedger((ledger) =>
           appendCommandSubmitted(ledger, {
@@ -2786,6 +2802,10 @@ function App() {
                 return;
               }
               void submitAiChat(activeSessionId, text);
+            }}
+            onInsertAiCommand={(text) => {
+              groupComposer.setComposerDraft(text);
+              groupComposer.focusComposerInput();
             }}
             onOpenAiSettings={() => openSettings(SETTINGS_SECTION_AI_PROVIDERS)}
             agentState={activeAgentState}

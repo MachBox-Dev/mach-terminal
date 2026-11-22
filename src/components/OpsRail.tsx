@@ -8,7 +8,7 @@ import {
   type AgentSlashCommand,
 } from "../core/agentTui";
 import type { RunRecord } from "../core/runLedger";
-import { sliceBufferForRun } from "../core/runLedger";
+import { sliceBufferForRun, stripTerminalEscapeSequences } from "../core/runLedger";
 import { sessionBufferStore } from "../state/sessionBufferStore";
 import { AgentRailPanel } from "./AgentRailPanel";
 import { AiChatPanel, type SideRailTab } from "./AiChatPanel";
@@ -37,6 +37,7 @@ interface OpsRailProps {
   aiPendingAttachments?: AiContextAttachment[];
   onRemoveAiAttachment?: (attachmentId: string) => void;
   onAiChatSubmit?: (text: string) => void;
+  onInsertAiCommand?: (text: string) => void;
   onOpenAiSettings?: () => void;
   agentState?: AgentSessionState | null;
   onLaunchAgent?: (agentId: AgentCliId) => void;
@@ -73,6 +74,7 @@ export function OpsRail({
   aiPendingAttachments = [],
   onRemoveAiAttachment,
   onAiChatSubmit,
+  onInsertAiCommand,
   onOpenAiSettings,
   agentState = null,
   onLaunchAgent,
@@ -92,7 +94,8 @@ export function OpsRail({
 
   const copySlice = useCallback((run: RunRecord) => {
     const scrollBuffer = sessionBufferStore.getSnapshot(run.sessionId);
-    void navigator.clipboard.writeText(sliceBufferForRun(scrollBuffer.text, run, scrollBuffer.startOffset));
+    const rawSlice = sliceBufferForRun(scrollBuffer.text, run, scrollBuffer.startOffset);
+    void navigator.clipboard.writeText(stripTerminalEscapeSequences(rawSlice));
   }, []);
 
   const expandToTab = (tab: SideRailTab) => {
@@ -334,6 +337,7 @@ export function OpsRail({
           pendingAttachments={aiPendingAttachments}
           onRemoveAttachment={(id) => onRemoveAiAttachment?.(id)}
           onSubmitMessage={(text) => onAiChatSubmit?.(text)}
+          onInsertToComposer={onInsertAiCommand}
           aiAssistEnabled={aiAssistEnabled}
           onOpenSettings={onOpenAiSettings}
         />

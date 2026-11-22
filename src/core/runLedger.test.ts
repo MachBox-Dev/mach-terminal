@@ -3,9 +3,12 @@ import { SessionBufferStore } from "../state/sessionBufferStore";
 import {
   appendCommandSubmitted,
   applyPinsFromStorage,
+  markCommandOutputEnd,
+  markCommandOutputStart,
   removeSessionRuns,
   serializePinnedMap,
   sliceBufferForRun,
+  stripTerminalEscapeSequences,
   toggleRunPin,
   type RunLedgerState,
 } from "./runLedger";
@@ -185,5 +188,38 @@ describe("runLedger", () => {
     const id = ledger.s1?.[0].id ?? "";
     ledger = toggleRunPin(ledger, "s1", id);
     expect(serializePinnedMap(ledger)).toEqual({ s1: { [id]: true } });
+  });
+
+  it("closes bufferEnd on outputEnd and advances bufferStart on outputStart", () => {
+    const store = new SessionBufferStore();
+    let ledger: RunLedgerState = {};
+    store.append("s1", "PS> ", 1000);
+    ledger = appendCommandSubmitted(ledger, {
+      sessionId: "s1",
+      commandText: "echo hello",
+      submittedAtMs: 1000,
+      sequence: 1,
+      bufferLengthBefore: store.getSnapshot("s1").totalAppended,
+    });
+    // Echoed command line before OSC 133 outputStart
+    store.append("s1", "echo hello\r\n", 1000);
+    ledger = markCommandOutputStart(ledger, "s1", store.getSnapshot("s1").totalAppended);
+    // Actual command output
+    store.append("s1", "hello\r\n", 1000);
+    ledger = markCommandOutputEnd(ledger, "s1", store.getSnapshot("s1").totalAppended);
+    // Subsequent prompt and unrelated output after outputEnd
+    store.append("s1", "PS> next-cmd\r\n", 1000);
+
+    const run = ledger.s1?.[0];
+    expect(run).toBeDefined();
+    expect(run?.bufferEnd).not.toBeNull();
+    const snap = store.getSnapshot("s1");
+    const rawSlice = sliceBufferForRun(snap.text, run!, snap.startOffset);
+    expect(stripTerminalEscapeSequences(rawSlice)).toBe("hello\n");
+  });
+
+  it("strips ANSI CSI, OSC 7, OSC 133, and normalizes CRLF", () => {
+    const raw = "\x1b]7;file://host/C:/repo\x07\x1b]133;C\x07\x1b[32mPASS\x1b[0m\r\n\x1b]133;D;0\x07";
+    expect(stripTerminalEscapeSequences(raw)).toBe("PASS\n");
   });
 });

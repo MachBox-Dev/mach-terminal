@@ -1,6 +1,7 @@
 import { createSingleFlightCache } from "./singleFlightCache";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { stripTerminalEscapeSequences } from "./runLedger";
 import type { WorkspaceLayout } from "../state/workspace";
 import type { ProviderDescriptor, ProviderSettings } from "./providers";
 
@@ -229,7 +230,11 @@ export function trimAiContextExcerpt(text: string | undefined | null, max = AI_C
   if (!text || text.length === 0) {
     return undefined;
   }
-  return text.length <= max ? text : text.slice(text.length - max);
+  const cleaned = stripTerminalEscapeSequences(text);
+  if (cleaned.length === 0) {
+    return undefined;
+  }
+  return cleaned.length <= max ? cleaned : cleaned.slice(cleaned.length - max);
 }
 
 export interface AiExecuteResponse {
@@ -565,11 +570,23 @@ export interface ShellContextSnapshot {
 }
 
 const cachedShellContext = createSingleFlightCache<ShellContextSnapshot>(12_000, 64);
+const cwdGitBranchCache = new Map<string, string | null>();
 
-export function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
-  return cachedShellContext(JSON.stringify([cwd, includeGitDiff]), () =>
+export function getCachedGitBranch(cwd?: string | null): string | undefined {
+  if (!cwd) {
+    return undefined;
+  }
+  return cwdGitBranchCache.get(cwd) ?? undefined;
+}
+
+export async function shellContextSnapshot(cwd: string | null, includeGitDiff = false) {
+  const snap = await cachedShellContext(JSON.stringify([cwd, includeGitDiff]), () =>
     invoke<ShellContextSnapshot>("shell_context_snapshot", { cwd, includeGitDiff }),
   );
+  if (cwd) {
+    cwdGitBranchCache.set(cwd, snap.gitBranch);
+  }
+  return snap;
 }
 
 export interface ShellIntegrationMaterializeResult {

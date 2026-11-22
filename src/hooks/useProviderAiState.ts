@@ -121,7 +121,7 @@ interface UseProviderAiStateParams {
   activeSession: PtySessionInfo | undefined;
   onHistoryActionStatus: (status: string) => void;
   /** Optional cwd/shell/scrollback tail assembled by the host (e.g. App.tsx). */
-  buildAiPromptContext?: () => AiPromptContextPayload | undefined;
+  buildAiPromptContext?: (sessionId?: string) => AiPromptContextPayload | undefined;
   /** Ops-rail run ledger + scrollback for read-only AI tools. */
   buildAiToolContext?: (sessionId: string) => AiToolContext;
   /** When true, eligible providers run the read-only tool loop for chat prompts. */
@@ -170,8 +170,9 @@ export function historyAiContract(action: HistoryAiAction, command: string): His
 function composeAiContext(
   buildAiPromptContext: UseProviderAiStateParams["buildAiPromptContext"],
   extras: Partial<AiPromptContextPayload> = {},
+  sessionId?: string,
 ): AiPromptContextPayload | undefined {
-  const base = buildAiPromptContext?.() ?? {};
+  const base = buildAiPromptContext?.(sessionId) ?? {};
   const merged: AiPromptContextPayload = { ...base, ...extras };
   merged.output_excerpt = trimAiContextExcerpt(merged.output_excerpt ?? undefined);
   const hasContext = [merged.cwd, merged.shell, merged.git_branch, merged.command_text, merged.output_excerpt].some(
@@ -463,7 +464,7 @@ export function useProviderAiState({
       setAiRequestStatus(aiPromptPendingStatus());
       setAiPrompt(trimmed);
       try {
-        const context = composeAiContext(buildAiPromptContext, options.contextExtras);
+        const context = composeAiContext(buildAiPromptContext, options.contextExtras, targetSessionId);
         const userMessageBody = buildToolUserMessage(trimmed, context);
         const toolContext = buildAiToolContext?.(targetSessionId) ?? {
           sessionId: targetSessionId,

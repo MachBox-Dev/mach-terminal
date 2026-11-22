@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { executeAiWithTools } from "./aiToolRunner";
 import { appendCommandSubmitted } from "./runLedger";
 import {
   AI_TOOL_GET_COMMAND_OUTPUT,
@@ -69,5 +70,37 @@ describe("aiTools", () => {
     const run = ctx.runLedger.s1?.[0]!;
     expect(formatRunCatalogLine(run)).toContain(run.id);
     expect(findRunForSession(ctx, run.id)?.output).toContain("FAIL");
+  });
+
+  it("runs a final tool-free synthesis call when maxRounds is exhausted", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        provider_id: "openai",
+        output: "",
+        finish_reason: "tool_calls",
+        tool_calls: [{ id: "call-1", name: "list_command_runs", arguments: "{}" }],
+      })
+      .mockResolvedValueOnce({
+        provider_id: "openai",
+        output: "Final synthesized answer",
+        finish_reason: "stop",
+      });
+
+    const res = await executeAiWithTools(
+      { session_id: "s1", prompt: "What failed?", provider_id: "openai", intent: "freeform" },
+      {
+        enabled: true,
+        providerId: "openai",
+        toolContext: ctx,
+        userMessageBody: "What failed?",
+        maxRounds: 1,
+        execute,
+      },
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[1][0].enable_tools).toBe(false);
+    expect(res.output).toBe("Final synthesized answer");
   });
 });

@@ -74,6 +74,8 @@ export function persistAiChatsForSessions(
     const messages = aiChatState[sessionId];
     if (messages && messages.length > 0) {
       next[chatKey] = messages;
+    } else {
+      delete next[chatKey];
     }
   }
   savePersistedAiChats(next);

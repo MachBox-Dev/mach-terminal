@@ -89,14 +89,31 @@ export async function executeAiWithTools(
     }
   }
 
-  return (
-    lastResponse ?? {
-      provider_id: options.providerId,
-      output: "AI tool loop exceeded max rounds without a final answer.",
-      tool_calls: undefined,
-      finish_reason: "stop",
+  if (providerMessages) {
+    const finalResponse = await options.execute({
+      ...baseRequest,
+      prompt: "",
+      history: undefined,
+      context: undefined,
+      enable_tools: false,
+      tools: undefined,
+      provider_messages: providerMessages,
+      use_provider_messages: true,
+    });
+    if (finalResponse.output.trim().length > 0) {
+      return finalResponse;
     }
-  );
+  }
+
+  return {
+    provider_id: options.providerId,
+    output:
+      lastResponse && lastResponse.output.trim().length > 0
+        ? lastResponse.output
+        : "AI tool loop exceeded max rounds without a final answer.",
+    tool_calls: undefined,
+    finish_reason: "stop",
+  };
 }
 
 function buildInitialProviderMessages(request: AiExecuteRequest, userMessageBody: string): AiProviderMessage[] {

@@ -5,6 +5,14 @@ export type SideRailTab = "log" | "agent" | "ai";
 
 export const SETTINGS_SECTION_AI_PROVIDERS = "settings-section-ai-providers";
 
+export function extractAiCommandText(content: string): string {
+  const fenced = /```[^\n]*\n([\s\S]*?)```/.exec(content);
+  if (fenced && fenced[1]) {
+    return fenced[1].trim();
+  }
+  return content.trim();
+}
+
 interface AiChatPanelProps {
   messages: AiChatMessage[];
   inFlight: boolean;
@@ -12,6 +20,7 @@ interface AiChatPanelProps {
   pendingAttachments: AiContextAttachment[];
   onRemoveAttachment: (attachmentId: string) => void;
   onSubmitMessage: (text: string) => void;
+  onInsertToComposer?: (text: string) => void;
   aiAssistEnabled?: boolean;
   onOpenSettings?: () => void;
 }
@@ -23,6 +32,7 @@ export function AiChatPanel({
   pendingAttachments,
   onRemoveAttachment,
   onSubmitMessage,
+  onInsertToComposer,
   aiAssistEnabled = false,
   onOpenSettings,
 }: AiChatPanelProps) {
@@ -100,6 +110,26 @@ export function AiChatPanel({
                 </div>
               ) : null}
               <pre className="ai-chat-message-body">{message.content}</pre>
+              {message.role === "assistant" && message.content.trim().length > 0 ? (
+                <div className="ai-chat-message-actions">
+                  <button
+                    type="button"
+                    className="inline-btn ghost ops-rail-action-btn"
+                    onClick={() => void navigator.clipboard.writeText(extractAiCommandText(message.content))}
+                  >
+                    Copy command
+                  </button>
+                  {onInsertToComposer ? (
+                    <button
+                      type="button"
+                      className="inline-btn ghost ops-rail-action-btn"
+                      onClick={() => onInsertToComposer(extractAiCommandText(message.content))}
+                    >
+                      Insert into composer
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {message.status === "error" ? <p className="ai-chat-message-error">Request failed.</p> : null}
             </article>
           ))

@@ -58,7 +58,13 @@ impl Osc7Parser {
 
             // Need at least `ESC ] 7 ;` (4 bytes) to decide.
             if cursor + 4 > work.len() {
-                break;
+                let tail = &work[cursor..];
+                if tail.len() > MAX_PENDING {
+                    self.pending.clear();
+                } else {
+                    self.pending = tail.to_vec();
+                }
+                return last;
             }
             if &work[cursor + 1..cursor + 4] != b"]7;" {
                 // Some other OSC / CSI / escape; skip just the ESC and keep scanning.
@@ -273,6 +279,24 @@ mod tests {
         assert_eq!(got.as_deref(), Some("/home/split"));
         #[cfg(target_os = "windows")]
         assert_eq!(got.as_deref(), Some("\\home\\split"));
+    }
+
+    #[test]
+    fn resolves_sequence_split_inside_introducer_prefix() {
+        let full = make_osc7("/home/prefix-split", b"\x07");
+        for split_at in 1..=4 {
+            let mut parser = Osc7Parser::new();
+            let (first, second) = full.split_at(split_at);
+            assert!(
+                parser.feed(first).is_none(),
+                "prefix split at {split_at} should not resolve early"
+            );
+            let got = parser.feed(second);
+            #[cfg(not(target_os = "windows"))]
+            assert_eq!(got.as_deref(), Some("/home/prefix-split"));
+            #[cfg(target_os = "windows")]
+            assert_eq!(got.as_deref(), Some("\\home\\prefix-split"));
+        }
     }
 
     #[test]

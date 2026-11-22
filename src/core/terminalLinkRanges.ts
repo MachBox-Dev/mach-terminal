@@ -1,8 +1,10 @@
 /**
- * Find http(s) URL substrings on a single buffer line (0-based column indices).
+ * Find http(s) and Mach deep-link (`mach-armory://`, `machtriage://`) URL substrings
+ * on a single buffer line (0-based column indices).
  * Used by the xterm link provider; keep regex conservative to avoid false positives.
  */
-const URL_PATTERN = /https?:\/\/[^\s\]"'<>[\]`]+/gi;
+const URL_PATTERN = /(?:https?|mach-armory|machtriage):\/\/[^\s\]"'<>[\]`]+/gi;
+const ALLOWED_URL_SCHEME_PREFIX = /^(?:https?|mach-armory|machtriage):\/\//i;
 
 /** Unix absolute paths: leading slash, no whitespace or shell metacharacters in the span. */
 const UNIX_ABS_PATH = /\/[^\s"'<>[\]`{}|;&\\]+/g;
@@ -70,7 +72,7 @@ export function findHttpUrlsInLine(line: string): UrlRange[] {
   while ((match = URL_PATTERN.exec(line)) !== null) {
     const raw = match[0];
     const url = trimTrailingPunctuation(raw);
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    if (!ALLOWED_URL_SCHEME_PREFIX.test(url)) {
       continue;
     }
     const endExclusive = match.index + raw.length;

@@ -120,10 +120,9 @@ Nothing is documented as outright broken in the handoff/changelog; open items ar
 
 ## Immediate Next Steps (recommended priority)
 
-1. **Triage-side Armory integration** — Terminal side of both `machterm://` schemes is done (TER-54/59); Triage needs its "Send to Terminal" (TRI-210, Backlog) and a not-yet-ticketed "Send to Composer" button before either can be exercised end-to-end for real.
-2. **TER-58:** full `NOTICE` dependency-list regeneration before the `v0.1.0` stable (non-RC) tag.
-3. **Windows-specific deep-link path** — registry scheme registration + single-instance argv forwarding not yet verified; TER-54/59 work was built/tested from a WSL Linux target only.
-4. **Remaining `docs/manual-qa.md` rows** not yet scripted — promote to smoke as they bite.
+1. **TER-58:** full `NOTICE` dependency-list regeneration before the `v0.1.0` stable (non-RC) tag.
+2. **Windows-specific deep-link verification** — `config/register-scheme.ps1` now registers `machterm://` in HKCU for dev builds; verify end-to-end single-instance argv forwarding with a packaged Windows binary.
+3. **Remaining `docs/manual-qa.md` rows** not yet scripted — promote to smoke as they bite.
 
 ## Verification Before You Commit
 ```

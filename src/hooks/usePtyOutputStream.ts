@@ -31,6 +31,7 @@ export function usePtyOutputStream({
 }: UsePtyOutputStreamOptions): {
   pendingOutputRef: React.MutableRefObject<Record<string, string[]>>;
   lastSequenceRef: React.MutableRefObject<Record<string, number>>;
+  flushSessionOutput: (sessionId: string) => void;
 } {
   const pendingOutputRef = useRef<Record<string, string[]>>({});
   const rafFlushRef = useRef<number | null>(null);
@@ -40,6 +41,22 @@ export function usePtyOutputStream({
   setRuntimeErrorRef.current = setRuntimeError;
   const onSessionOutputFlushedRef = useRef(onSessionOutputFlushed);
   onSessionOutputFlushedRef.current = onSessionOutputFlushed;
+  const maxSessionBufferRef = useRef(maxSessionBuffer);
+  maxSessionBufferRef.current = maxSessionBuffer;
+
+  const flushSessionOutput = useRef((sessionId: string) => {
+    const chunks = pendingOutputRef.current[sessionId];
+    if (!chunks || chunks.length === 0) {
+      delete pendingOutputRef.current[sessionId];
+      return;
+    }
+    const merged = chunks.join("");
+    delete pendingOutputRef.current[sessionId];
+    if (merged.length > 0) {
+      sessionBufferStore.append(sessionId, merged, maxSessionBufferRef.current);
+      onSessionOutputFlushedRef.current?.(sessionId, merged);
+    }
+  }).current;
 
   useEffect(() => {
     let outputUnlisten: (() => void) | undefined;
@@ -165,5 +182,5 @@ export function usePtyOutputStream({
     };
   }, [maxSessionBuffer]);
 
-  return { pendingOutputRef, lastSequenceRef };
+  return { pendingOutputRef, lastSequenceRef, flushSessionOutput };
 }

@@ -80,6 +80,71 @@ export function appendCommandSubmitted(ledger: RunLedgerState, input: AppendComm
   return { ...ledger, [sessionId]: combined };
 }
 
+/**
+ * Advances the current open run's `bufferStart` when OSC 133 `outputStart` arrives
+ * so echoed command lines are excluded from the captured output slice.
+ */
+export function markCommandOutputStart(
+  ledger: RunLedgerState,
+  sessionId: string,
+  bufferLengthAtOutputStart: number,
+): RunLedgerState {
+  const list = ledger[sessionId];
+  if (!list || list.length === 0) {
+    return ledger;
+  }
+  const lastIdx = list.length - 1;
+  const last = list[lastIdx];
+  if (last.bufferEnd !== null || bufferLengthAtOutputStart <= last.bufferStart) {
+    return ledger;
+  }
+  const nextList = list.map((run, idx) =>
+    idx === lastIdx ? { ...run, bufferStart: bufferLengthAtOutputStart } : run,
+  );
+  return { ...ledger, [sessionId]: nextList };
+}
+
+/**
+ * Closes the current open run's `bufferEnd` when OSC 133 `outputEnd` arrives so
+ * copying or reading output for the most recent command stops before subsequent prompts.
+ */
+export function markCommandOutputEnd(
+  ledger: RunLedgerState,
+  sessionId: string,
+  bufferLengthAtOutputEnd: number,
+): RunLedgerState {
+  const list = ledger[sessionId];
+  if (!list || list.length === 0) {
+    return ledger;
+  }
+  const lastIdx = list.length - 1;
+  const last = list[lastIdx];
+  if (last.bufferEnd !== null) {
+    return ledger;
+  }
+  const closedEnd = Math.max(last.bufferStart, bufferLengthAtOutputEnd);
+  const nextList = list.map((run, idx) =>
+    idx === lastIdx ? { ...run, bufferEnd: closedEnd } : run,
+  );
+  return { ...ledger, [sessionId]: nextList };
+}
+
+/**
+ * Strip ANSI/CSI/OSC/DCS/ESC control sequences from raw PTY text for clean
+ * clipboard copies and AI context excerpts without altering xterm rendering.
+ */
+export function stripTerminalEscapeSequences(text: string): string {
+  if (!text) {
+    return "";
+  }
+  return text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, "")
+    .replace(/\r\n/g, "\n");
+}
+
 export function toggleRunPin(ledger: RunLedgerState, sessionId: string, runId: string): RunLedgerState {
   const list = ledger[sessionId];
   if (!list) {
