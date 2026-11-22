@@ -3,7 +3,7 @@
  * on a single buffer line (0-based column indices).
  * Used by the xterm link provider; keep regex conservative to avoid false positives.
  */
-const URL_PATTERN = /(?:https?|mach-armory|machtriage):\/\/[^\s\]"'<>[\]`]+/gi;
+const URL_PATTERN = /(?:https?|mach-armory|machtriage):\/\/[^\s"'<>[\]`]+/gi;
 const ALLOWED_URL_SCHEME_PREFIX = /^(?:https?|mach-armory|machtriage):\/\//i;
 
 /** Unix absolute paths: leading slash, no whitespace or shell metacharacters in the span. */
