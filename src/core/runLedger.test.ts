@@ -222,4 +222,10 @@ describe("runLedger", () => {
     const raw = "\x1b]7;file://host/C:/repo\x07\x1b]133;C\x07\x1b[32mPASS\x1b[0m\r\n\x1b]133;D;0\x07";
     expect(stripTerminalEscapeSequences(raw)).toBe("PASS\n");
   });
+
+  it("discards unfinished trailing CSI and OSC sequences", () => {
+    expect(stripTerminalEscapeSequences("OK\x1b[31")).toBe("OK");
+    expect(stripTerminalEscapeSequences("OK\x1b]0;title")).toBe("OK");
+    expect(stripTerminalEscapeSequences("OK\x1b")).toBe("OK");
+  });
 });

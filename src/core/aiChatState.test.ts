@@ -62,6 +62,8 @@ describe("attachmentBlockForContext", () => {
 
   it("extracts fenced command block from AI responses", () => {
     expect(extractAiCommandText("Run this:\n```bash\ngit status\n```")).toBe("git status");
+    expect(extractAiCommandText("```bash\n   \n```\n```bash\ngit status\n```")).toBe("git status");
+    expect(extractAiCommandText("```bash\n   \n```")).toBe("");
     expect(extractAiCommandText("  echo hello  ")).toBe("echo hello");
   });
 });

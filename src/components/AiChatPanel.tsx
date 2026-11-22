@@ -6,9 +6,17 @@ export type SideRailTab = "log" | "agent" | "ai";
 export const SETTINGS_SECTION_AI_PROVIDERS = "settings-section-ai-providers";
 
 export function extractAiCommandText(content: string): string {
-  const fenced = /```[^\n]*\n([\s\S]*?)```/.exec(content);
-  if (fenced && fenced[1]) {
-    return fenced[1].trim();
+  const fencedMatches = content.matchAll(/```[^\n]*\n([\s\S]*?)```/g);
+  let sawFenced = false;
+  for (const match of fencedMatches) {
+    sawFenced = true;
+    const candidate = match[1]?.trim() ?? "";
+    if (candidate.length > 0) {
+      return candidate;
+    }
+  }
+  if (sawFenced) {
+    return "";
   }
   return content.trim();
 }
@@ -37,6 +45,7 @@ export function AiChatPanel({
   onOpenSettings,
 }: AiChatPanelProps) {
   const [draft, setDraft] = useState("");
+  const [clipboardError, setClipboardError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -110,30 +119,42 @@ export function AiChatPanel({
                 </div>
               ) : null}
               <pre className="ai-chat-message-body">{message.content}</pre>
-              {message.role === "assistant" && message.content.trim().length > 0 ? (
-                <div className="ai-chat-message-actions">
-                  <button
-                    type="button"
-                    className="inline-btn ghost ops-rail-action-btn"
-                    onClick={() => void navigator.clipboard.writeText(extractAiCommandText(message.content))}
-                  >
-                    Copy command
-                  </button>
-                  {onInsertToComposer ? (
+              {message.role === "assistant" && message.content.trim().length > 0 ? (() => {
+                const extracted = extractAiCommandText(message.content);
+                const disabled = extracted.length === 0;
+                return (
+                  <div className="ai-chat-message-actions">
                     <button
                       type="button"
                       className="inline-btn ghost ops-rail-action-btn"
-                      onClick={() => onInsertToComposer(extractAiCommandText(message.content))}
+                      disabled={disabled}
+                      onClick={() => {
+                        setClipboardError(null);
+                        void navigator.clipboard.writeText(extracted).catch(() => {
+                          setClipboardError("Clipboard copy failed — copy manually.");
+                        });
+                      }}
                     >
-                      Insert into composer
+                      Copy command
                     </button>
-                  ) : null}
-                </div>
-              ) : null}
+                    {onInsertToComposer ? (
+                      <button
+                        type="button"
+                        className="inline-btn ghost ops-rail-action-btn"
+                        disabled={disabled}
+                        onClick={() => onInsertToComposer(extracted)}
+                      >
+                        Insert into composer
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })() : null}
               {message.status === "error" ? <p className="ai-chat-message-error">Request failed.</p> : null}
             </article>
           ))
         )}
+        {clipboardError ? <p className="ai-chat-message-error">{clipboardError}</p> : null}
         {inFlight ? <p className="ai-chat-status">{statusLine ?? "Working…"}</p> : null}
         {!inFlight && statusLine && messages.length > 0 ? <p className="ai-chat-status">{statusLine}</p> : null}
       </div>

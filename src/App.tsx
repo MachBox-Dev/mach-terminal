@@ -1084,14 +1084,20 @@ function App() {
           });
         }
         if (event.phase === "outputStart") {
-          flushSessionOutput(event.session_id);
-          const bufLen = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
-          setRunLedger((ledger) => markCommandOutputStart(ledger, event.session_id, bufLen));
+          let markerOffset = event.stream_offset;
+          if (markerOffset == null) {
+            flushSessionOutput(event.session_id);
+            markerOffset = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
+          }
+          setRunLedger((ledger) => markCommandOutputStart(ledger, event.session_id, markerOffset));
         }
         if (event.phase === "outputEnd") {
-          flushSessionOutput(event.session_id);
-          const bufLen = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
-          setRunLedger((ledger) => markCommandOutputEnd(ledger, event.session_id, bufLen));
+          let markerOffset = event.stream_offset;
+          if (markerOffset == null) {
+            flushSessionOutput(event.session_id);
+            markerOffset = sessionBufferStore.getSnapshot(event.session_id).totalAppended;
+          }
+          setRunLedger((ledger) => markCommandOutputEnd(ledger, event.session_id, markerOffset));
           const runs = runLedgerRef.current[event.session_id] ?? [];
           const lastRun = runs.length > 0 ? runs[runs.length - 1] : undefined;
           setSessionCommandFailures((prev) =>
@@ -2804,6 +2810,10 @@ function App() {
               void submitAiChat(activeSessionId, text);
             }}
             onInsertAiCommand={(text) => {
+              const sid = targetSessionIdForComposer ?? activeSessionId;
+              if (sid) {
+                setSessionInputModes((current) => ({ ...current, [sid]: "operator" }));
+              }
               groupComposer.setComposerDraft(text);
               groupComposer.focusComposerInput();
             }}

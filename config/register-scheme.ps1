@@ -46,16 +46,18 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
     exit 1
 }
 
-if (Test-WslLookingPath $ExePath) {
+$resolvedExePath = (Resolve-Path -LiteralPath $ExePath).ProviderPath
+
+if (Test-WslLookingPath $resolvedExePath) {
     Write-Error @"
-ExePath looks like a WSL path ($ExePath).
+ExePath looks like a WSL path ($resolvedExePath).
 Sibling Mach apps running on Windows will ShellExecute machterm:// into that handler and open WSL Terminal.
 Build/run a Windows mach-terminal.exe and pass that path instead.
 "@
     exit 1
 }
 
-$command = "`"$ExePath`" `"%1`""
+$command = "`"$resolvedExePath`" `"%1`""
 
 New-Item -Path "HKCU:\Software\Classes\$scheme" -Force | Out-Null
 Set-ItemProperty -Path "HKCU:\Software\Classes\$scheme" -Name "(Default)" -Value "URL:Mach Terminal Protocol"
@@ -64,6 +66,6 @@ Set-ItemProperty -Path "HKCU:\Software\Classes\$scheme" -Name "URL Protocol" -Va
 New-Item -Path $commandKey -Force | Out-Null
 Set-ItemProperty -Path $commandKey -Name "(Default)" -Value $command
 
-Write-Host "Registered ${scheme}:// -> $ExePath"
+Write-Host "Registered ${scheme}:// -> $resolvedExePath"
 Write-Host "Test: start `"machterm://composer?text=echo%20hello`""
 Write-Host "Verify: .\config\register-scheme.ps1 -Show"

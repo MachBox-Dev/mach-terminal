@@ -141,6 +141,7 @@ export function stripTerminalEscapeSequences(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b(?:\][^\x07\x1b]*|[PX^_][\s\S]*|\[[0-?]*[ -/]*|[\x20-\x2f]*)$/g, "")
     .replace(/\x1b[\x20-\x2f]*[\x30-\x7e]/g, "")
     .replace(/\r\n/g, "\n");
 }

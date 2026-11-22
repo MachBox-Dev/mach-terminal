@@ -218,6 +218,7 @@ impl SessionManager {
             let mut utf8_carry: Vec<u8> = Vec::new();
             let mut osc7_parser = Osc7Parser::new();
             let mut osc133_parser = Osc133Parser::new();
+            let mut total_utf16_sent: u64 = 0;
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
@@ -274,42 +275,17 @@ impl SessionManager {
                                 }
                             }
                         }
-                        for kind in osc133_parser.feed(&buffer[..bytes_read]) {
-                            let (phase, exit_code) = match kind {
-                                Osc133Kind::PromptStart => (PtyCommandMarkerPhase::PromptStart, None),
-                                Osc133Kind::CommandStart => (PtyCommandMarkerPhase::CommandStart, None),
-                                Osc133Kind::OutputStart => (PtyCommandMarkerPhase::OutputStart, None),
-                                Osc133Kind::OutputEnd { exit_code } => {
-                                    (PtyCommandMarkerPhase::OutputEnd, exit_code)
-                                }
-                            };
-                            let emit_result = app_for_thread.emit(
-                                PTY_COMMAND_MARKER_EVENT,
-                                PtyCommandMarkerEvent {
-                                    session_id: session_id_for_thread.clone(),
-                                    phase,
-                                    exit_code,
-                                    timestamp_ms: unix_timestamp_ms(),
-                                },
-                            );
-                            if emit_result.is_err() {
-                                counters_for_thread
-                                    .emit_failures
-                                    .fetch_add(1, Ordering::Relaxed);
-                                warn!(
-                                    session_id = %session_id_for_thread,
-                                    "failed to emit pty-command-marker event"
-                                );
-                            }
-                        }
+                        let osc133_markers = osc133_parser.feed_with_offsets(&buffer[..bytes_read]);
                         // Prepend any incomplete trailing UTF-8 sequence carried from the
                         // previous read, then decode the longest valid prefix and stash a
                         // new carry. OSC parsers above intentionally see only the raw new
                         // bytes (`&buffer[..bytes_read]`); the carry is a display-only concern.
+                        let carry_len = utf8_carry.len();
                         let mut display_bytes = std::mem::take(&mut utf8_carry);
                         display_bytes.extend_from_slice(&buffer[..bytes_read]);
                         let (output, carry) = decode_utf8_streaming(&display_bytes);
                         utf8_carry = carry;
+                        let read_utf16_start = total_utf16_sent;
 
                         if !output.is_empty() {
                             let mut pending = VecDeque::new();
@@ -359,6 +335,7 @@ impl SessionManager {
                                     .map(|channel| channel.send(Response::new(framed)));
                                 match send_result {
                                     Some(Ok(())) => {
+                                        total_utf16_sent += chunk.encode_utf16().count() as u64;
                                         counters_for_thread
                                             .output_chunks_emitted
                                             .fetch_add(1, Ordering::Relaxed);
@@ -378,6 +355,39 @@ impl SessionManager {
                                     // the webview subscribes at mount before spawning sessions.
                                     None => {}
                                 }
+                            }
+                        }
+
+                        for (kind, chunk_end_offset) in osc133_markers {
+                            let (phase, exit_code) = match kind {
+                                Osc133Kind::PromptStart => (PtyCommandMarkerPhase::PromptStart, None),
+                                Osc133Kind::CommandStart => (PtyCommandMarkerPhase::CommandStart, None),
+                                Osc133Kind::OutputStart => (PtyCommandMarkerPhase::OutputStart, None),
+                                Osc133Kind::OutputEnd { exit_code } => {
+                                    (PtyCommandMarkerPhase::OutputEnd, exit_code)
+                                }
+                            };
+                            let prefix_len = (carry_len + chunk_end_offset).min(display_bytes.len());
+                            let (prefix_str, _) = decode_utf8_streaming(&display_bytes[..prefix_len]);
+                            let stream_offset = read_utf16_start + prefix_str.encode_utf16().count() as u64;
+                            let emit_result = app_for_thread.emit(
+                                PTY_COMMAND_MARKER_EVENT,
+                                PtyCommandMarkerEvent {
+                                    session_id: session_id_for_thread.clone(),
+                                    phase,
+                                    exit_code,
+                                    stream_offset: Some(stream_offset),
+                                    timestamp_ms: unix_timestamp_ms(),
+                                },
+                            );
+                            if emit_result.is_err() {
+                                counters_for_thread
+                                    .emit_failures
+                                    .fetch_add(1, Ordering::Relaxed);
+                                warn!(
+                                    session_id = %session_id_for_thread,
+                                    "failed to emit pty-command-marker event"
+                                );
                             }
                         }
                     }

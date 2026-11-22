@@ -111,6 +111,7 @@ export interface PtyCommandMarkerEvent {
   session_id: string;
   phase: PtyCommandMarkerPhase;
   exit_code?: number;
+  stream_offset?: number;
   timestamp_ms: number;
 }
 

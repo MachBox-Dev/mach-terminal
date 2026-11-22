@@ -462,6 +462,8 @@ pub struct PtyCommandMarkerEvent {
     pub phase: PtyCommandMarkerPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_offset: Option<u64>,
     pub timestamp_ms: u64,
 }
 
