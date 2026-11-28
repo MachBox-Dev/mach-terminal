@@ -3,6 +3,8 @@ export type AiBehaviorSettings = {
   echoAiPromptToTape: boolean;
   /** When true, configured AI providers may call read-only ops-rail tools (command log lookup). */
   enableAiTools: boolean;
+  /** When true, configured AI providers may also call tools from enabled external MCP servers. */
+  enableMcpClientTools: boolean;
 };
 
 export const AI_BEHAVIOR_STORAGE_KEY = "mach-terminal.aiBehavior.v1";
@@ -10,6 +12,7 @@ export const AI_BEHAVIOR_STORAGE_KEY = "mach-terminal.aiBehavior.v1";
 export const DEFAULT_AI_BEHAVIOR_SETTINGS: AiBehaviorSettings = {
   echoAiPromptToTape: true,
   enableAiTools: true,
+  enableMcpClientTools: true,
 };
 
 export function loadAiBehaviorSettings(): AiBehaviorSettings {

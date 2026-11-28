@@ -737,6 +737,7 @@ function App() {
       sessionBufferOffsets: { [sessionId]: sessionBufferStore.getSnapshot(sessionId).startOffset },
     }),
     enableAiTools: aiBehaviorSettings.enableAiTools,
+    enableMcpClientTools: aiBehaviorSettings.enableMcpClientTools,
     onAiAssistantReply: ({ output, sessionId }) => {
       const sid = sessionId ?? activeSessionId;
       if (!sid) {
@@ -2921,6 +2922,12 @@ function App() {
           enableAiTools={aiBehaviorSettings.enableAiTools}
           onEnableAiToolsChange={(enabled) => {
             const next = { ...aiBehaviorSettings, enableAiTools: enabled };
+            setAiBehaviorSettings(next);
+            saveAiBehaviorSettings(next);
+          }}
+          enableMcpClientTools={aiBehaviorSettings.enableMcpClientTools}
+          onEnableMcpClientToolsChange={(enabled) => {
+            const next = { ...aiBehaviorSettings, enableMcpClientTools: enabled };
             setAiBehaviorSettings(next);
             saveAiBehaviorSettings(next);
           }}

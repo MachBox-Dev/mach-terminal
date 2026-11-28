@@ -4,6 +4,14 @@ All notable changes to Mach Terminal are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.15] - 2026-11-27
+
+### Added
+
+- **MCP stdio Server Sidecar (`mach-terminal-mcp`)** — bundled sidecar binary exposing `query_command_history`, `list_workspace_sessions`, `list_shell_presets`, `get_terminal_profile`, `send_to_composer` (`machterm://composer`), and `send_ai_note` (`machterm://ai-note`) to external AI agents (Claude Desktop, Cursor, Antigravity). Gated by `mcp.serverEnabled` in Settings (off by default).
+- **MCP Client Bridge (`mcp_client.rs`)** — native JSON-RPC 2.0 stdio client bridge allowing Mach Terminal's AI panel to discover and invoke tools from external MCP servers (including `mach-triage-mcp` and `mach-armory-mcp`) inside the `executeAiWithTools` multi-round loop.
+- **Settings → AI Agent (MCP)** — in-app toggle and client config snippet copy for `mach-terminal-mcp`, one-click presets for Mach Triage and Mach Armory MCP servers, custom server CRUD, and live tool discovery preview.
+
 ## [0.1.0-rc.11] - 2026-07-03
 
 ### Added

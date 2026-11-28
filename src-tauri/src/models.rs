@@ -288,6 +288,63 @@ pub struct ShellPreset {
     pub env: HashMap<String, String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpClientServerConfig {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSettings {
+    /// When true, the bundled `mach-terminal-mcp` sidecar accepts incoming stdio requests.
+    #[serde(default)]
+    pub server_enabled: bool,
+    /// Configured external MCP stdio servers that Mach Terminal's AI panel can call as tools.
+    #[serde(default)]
+    pub client_servers: Vec<McpClientServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerStatus {
+    pub enabled: bool,
+    pub binary_path: Option<String>,
+    pub config_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpClientToolDescriptor {
+    pub server_id: String,
+    pub server_name: String,
+    pub tool_name: String,
+    pub qualified_name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpClientToolCallResult {
+    pub server_id: String,
+    pub tool_name: String,
+    pub output: String,
+    pub is_error: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default = "default_settings_schema_version")]
@@ -299,6 +356,8 @@ pub struct AppSettings {
     pub shell_integration: ShellIntegrationSettings,
     #[serde(default)]
     pub shell_presets: Vec<ShellPreset>,
+    #[serde(default)]
+    pub mcp: McpSettings,
 }
 
 impl Default for AppSettings {
@@ -335,6 +394,7 @@ impl Default for AppSettings {
             provider_routing: ProviderRoutingSettings::default(),
             shell_integration: ShellIntegrationSettings::default(),
             shell_presets: Vec::new(),
+            mcp: McpSettings::default(),
         }
     }
 }

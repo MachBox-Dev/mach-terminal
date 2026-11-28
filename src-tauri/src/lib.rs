@@ -8,6 +8,7 @@ pub mod composer_completion;
 mod unix_completion;
 pub mod history_store;
 pub mod input_sanitize;
+pub mod mcp_client;
 pub mod osc7;
 pub mod osc133;
 pub mod shell_integration;
@@ -23,12 +24,13 @@ pub mod workspace_store;
 mod telemetry;
 
 use crate::models::{
-    AiExecuteRequest, AiExecuteResponse, AiNotePayload, ComposerPayload, HistoryEntry, HistoryQueryRequest, ProfilePatch,
-    ProviderApiKeyStatus, ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings,
-    PtySessionInfo, PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot, RuntimeMetricsSnapshot,
-    SettingsSchemaDebug, ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset, TerminalProfile,
-    WorkspaceLayout, PluginExecutionResult, PluginExecuteRequest, PluginGrantRequest, PluginGrantSnapshot,
-    PluginMetricsSnapshot, PluginPolicyDecision,
+    AiExecuteRequest, AiExecuteResponse, AiNotePayload, ComposerPayload, HistoryEntry, HistoryQueryRequest,
+    McpClientServerConfig, McpClientToolCallResult, McpClientToolDescriptor, McpServerStatus, McpSettings,
+    ProfilePatch, ProviderApiKeyStatus, ProviderDescriptor, ProviderRoutingPatch, ProviderRoutingSettings,
+    ProviderSettings, PtySessionInfo, PtySpawnRequest, RuntimeCapabilitiesSnapshot, RuntimeDebugSnapshot,
+    RuntimeMetricsSnapshot, SettingsSchemaDebug, ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset,
+    TerminalProfile, WorkspaceLayout, PluginExecutionResult, PluginExecuteRequest, PluginGrantRequest,
+    PluginGrantSnapshot, PluginMetricsSnapshot, PluginPolicyDecision,
 };
 use crate::composer_completion::{ComposerCompletionRequest, ComposerCompletionResponse};
 use crate::plugin_host::PluginHost;
@@ -194,6 +196,98 @@ fn shell_presets_get(app: AppHandle) -> Result<Vec<ShellPreset>, String> {
 #[instrument(skip(app, presets))]
 fn shell_presets_set(app: AppHandle, presets: Vec<ShellPreset>) -> Result<Vec<ShellPreset>, String> {
     settings::set_shell_presets(&app, presets)
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+fn mcp_settings_get(app: AppHandle) -> Result<McpSettings, String> {
+    settings::get_mcp_settings(&app)
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+fn mcp_server_status(app: AppHandle) -> Result<McpServerStatus, String> {
+    let mcp = settings::get_mcp_settings(&app)?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    Ok(McpServerStatus {
+        enabled: mcp.server_enabled,
+        binary_path: mcp_client::resolve_terminal_mcp_sidecar_path(),
+        config_dir,
+    })
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+fn mcp_server_set_enabled(app: AppHandle, enabled: bool) -> Result<McpServerStatus, String> {
+    let mcp = settings::set_mcp_server_enabled(&app, enabled)?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    Ok(McpServerStatus {
+        enabled: mcp.server_enabled,
+        binary_path: mcp_client::resolve_terminal_mcp_sidecar_path(),
+        config_dir,
+    })
+}
+
+#[tauri::command]
+#[instrument(skip(app, servers))]
+fn mcp_client_servers_set(
+    app: AppHandle,
+    servers: Vec<McpClientServerConfig>,
+) -> Result<McpSettings, String> {
+    settings::set_mcp_client_servers(&app, servers)
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+async fn mcp_client_discover_tools(
+    app: AppHandle,
+    server_id: Option<String>,
+) -> Result<Vec<McpClientToolDescriptor>, String> {
+    let mcp = settings::get_mcp_settings(&app)?;
+    let targets: Vec<McpClientServerConfig> = match server_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(target_id) => mcp
+            .client_servers
+            .into_iter()
+            .filter(|s| s.id == target_id)
+            .collect(),
+        None => mcp.client_servers.into_iter().filter(|s| s.enabled).collect(),
+    };
+    let mut all_tools = Vec::new();
+    for server in targets {
+        match mcp_client::discover_server_tools(&server).await {
+            Ok(tools) => all_tools.extend(tools),
+            Err(err) => {
+                if server_id.is_some() {
+                    return Err(err);
+                }
+                warn!(server_id = %server.id, error = %err, "failed to discover tools from MCP server");
+            }
+        }
+    }
+    Ok(all_tools)
+}
+
+#[tauri::command]
+#[instrument(skip(app, arguments))]
+async fn mcp_client_call_tool(
+    app: AppHandle,
+    server_id: String,
+    tool_name: String,
+    arguments: serde_json::Value,
+) -> Result<McpClientToolCallResult, String> {
+    let mcp = settings::get_mcp_settings(&app)?;
+    let server = mcp_client::find_enabled_server_by_id_or_sanitized(&mcp.client_servers, &server_id)
+        .ok_or_else(|| format!("MCP server `{server_id}` is not configured or is disabled"))?
+        .clone();
+    mcp_client::call_server_tool(&server, &tool_name, arguments).await
 }
 
 #[tauri::command]
@@ -656,6 +750,12 @@ pub fn run() {
             shell_integration_settings_patch,
             shell_presets_get,
             shell_presets_set,
+            mcp_settings_get,
+            mcp_server_status,
+            mcp_server_set_enabled,
+            mcp_client_servers_set,
+            mcp_client_discover_tools,
+            mcp_client_call_tool,
             shell_integration::shell_integration_materialize_scripts,
             shell_integration::shell_integration_status,
             shell_integration::shell_integration_install,

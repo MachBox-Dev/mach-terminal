@@ -34,6 +34,8 @@ import {
 import { PROVIDER_REGISTRY, type ProviderDescriptor } from "../core/providers";
 import {
   aiExecute,
+  mcpClientCallTool,
+  mcpClientDiscoverTools,
   providerApiKeyClear,
   providerApiKeySet,
   providerEndpointSet,
@@ -46,6 +48,7 @@ import {
   type AiContextEvent,
   type AiExecuteIntent,
   type AiPromptContextPayload,
+  type McpClientToolDescriptor,
   type ProviderRoutingSettings,
   type PtySessionInfo,
 } from "../core/terminal";
@@ -126,6 +129,8 @@ interface UseProviderAiStateParams {
   buildAiToolContext?: (sessionId: string) => AiToolContext;
   /** When true, eligible providers run the read-only tool loop for chat prompts. */
   enableAiTools?: boolean;
+  /** When true, eligible providers also discover and invoke tools from enabled MCP client servers. */
+  enableMcpClientTools?: boolean;
   /** Fired after any successful AI execution (composer, explain, fix, settings prompt). */
   onAiAssistantReply?: (payload: {
     prompt: string;
@@ -187,6 +192,7 @@ export function useProviderAiState({
   buildAiPromptContext,
   buildAiToolContext,
   enableAiTools = false,
+  enableMcpClientTools = false,
   onAiAssistantReply,
 }: UseProviderAiStateParams) {
   const [providers, setProviders] = useState<ProviderDescriptor[]>(PROVIDER_REGISTRY);
@@ -479,12 +485,25 @@ export function useProviderAiState({
           context,
           history: options.history,
         };
+        let mcpTools: McpClientToolDescriptor[] = [];
+        if (enableMcpClientTools) {
+          try {
+            mcpTools = await mcpClientDiscoverTools();
+          } catch {
+            mcpTools = [];
+          }
+        }
         const response = await executeAiWithTools(baseRequest, {
           enabled: enableAiTools,
           providerId: routing.default_provider,
           toolContext,
           userMessageBody,
           execute: aiExecute,
+          mcpTools,
+          callMcpTool: async (serverId, toolName, toolArgs) => {
+            const res = await mcpClientCallTool(serverId, toolName, toolArgs);
+            return { output: res.output, isError: res.isError };
+          },
         });
         if (!shouldApplyAiResult(latestAiRequestRef.current, requestId)) {
           return;
@@ -512,7 +531,7 @@ export function useProviderAiState({
         }
       }
     },
-    [activeSession, buildAiPromptContext, buildAiToolContext, enableAiTools, onAiAssistantReply, routing.default_provider],
+    [activeSession, buildAiPromptContext, buildAiToolContext, enableAiTools, enableMcpClientTools, onAiAssistantReply, routing.default_provider],
   );
 
   const explainCommand = useCallback(async (command: string) => {

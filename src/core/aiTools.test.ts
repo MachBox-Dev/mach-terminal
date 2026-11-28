@@ -6,6 +6,8 @@ import {
   AI_TOOL_LIST_COMMAND_RUNS,
   findRunForSession,
   formatRunCatalogLine,
+  mcpToolDescriptorsToOpenAiTools,
+  parseQualifiedMcpToolName,
   resolveAiToolCall,
 } from "./aiTools";
 
@@ -102,5 +104,68 @@ describe("aiTools", () => {
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[1][0].enable_tools).toBe(false);
     expect(res.output).toBe("Final synthesized answer");
+  });
+
+  it("dispatches qualified external MCP tool calls through callMcpTool", async () => {
+    expect(parseQualifiedMcpToolName("mcp__mach-triage__list_today_board")).toEqual({
+      serverId: "mach-triage",
+      toolName: "list_today_board",
+    });
+
+    const mcpDescriptors = [
+      {
+        serverId: "mach-triage",
+        serverName: "Mach Triage",
+        toolName: "list_today_board",
+        qualifiedName: "mcp__mach-triage__list_today_board",
+        description: "List Today Board lanes",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+    expect(mcpToolDescriptorsToOpenAiTools(mcpDescriptors)[0]?.function.name).toBe(
+      "mcp__mach-triage__list_today_board",
+    );
+
+    const callMcpTool = vi.fn().mockResolvedValue({
+      output: '{"active":[{"external_key":"TRI-101"}]}',
+      isError: false,
+    });
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        provider_id: "openai",
+        output: "",
+        finish_reason: "tool_calls",
+        tool_calls: [
+          {
+            id: "mcp-1",
+            name: "mcp__mach-triage__list_today_board",
+            arguments: '{"workspace_id":"ws-1"}',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        provider_id: "openai",
+        output: "Active ticket is TRI-101.",
+        finish_reason: "stop",
+      });
+
+    const res = await executeAiWithTools(
+      { session_id: "s1", prompt: "What is on my Today Board?", provider_id: "openai", intent: "freeform" },
+      {
+        enabled: true,
+        providerId: "openai",
+        toolContext: ctx,
+        userMessageBody: "What is on my Today Board?",
+        execute,
+        mcpTools: mcpDescriptors,
+        callMcpTool,
+      },
+    );
+
+    expect(callMcpTool).toHaveBeenCalledWith("mach-triage", "list_today_board", {
+      workspace_id: "ws-1",
+    });
+    expect(res.output).toBe("Active ticket is TRI-101.");
   });
 });
