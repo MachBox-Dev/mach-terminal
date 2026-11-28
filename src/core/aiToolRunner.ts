@@ -1,6 +1,14 @@
-import type { AiExecuteRequest, AiExecuteResponse, AiProviderMessage } from "./terminal";
+import type {
+  AiExecuteRequest,
+  AiExecuteResponse,
+  AiProviderMessage,
+  McpClientToolDescriptor,
+} from "./terminal";
 import {
   MACH_AI_TOOL_DEFINITIONS,
+  mcpToolDescriptorsToOpenAiTools,
+  parseMcpToolArguments,
+  parseQualifiedMcpToolName,
   providerSupportsAiTools,
   resolveAiToolCall,
   type AiToolCall,
@@ -10,6 +18,11 @@ import {
 const DEFAULT_MAX_ROUNDS = 4;
 
 export type AiExecuteFn = (request: AiExecuteRequest) => Promise<AiExecuteResponse>;
+export type McpCallToolFn = (
+  serverId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+) => Promise<{ output: string; isError: boolean }>;
 
 function assistantMessageWithToolCalls(calls: AiToolCall[]): AiProviderMessage {
   return {
@@ -45,9 +58,19 @@ export async function executeAiWithTools(
     userMessageBody: string;
     execute: AiExecuteFn;
     maxRounds?: number;
+    mcpTools?: McpClientToolDescriptor[];
+    callMcpTool?: McpCallToolFn;
   },
 ): Promise<AiExecuteResponse> {
-  const useTools = options.enabled && providerSupportsAiTools(options.providerId);
+  const mcpDefs =
+    options.mcpTools && options.mcpTools.length > 0
+      ? mcpToolDescriptorsToOpenAiTools(options.mcpTools)
+      : [];
+  const combinedTools = [
+    ...(options.enabled ? MACH_AI_TOOL_DEFINITIONS : []),
+    ...mcpDefs,
+  ];
+  const useTools = combinedTools.length > 0 && providerSupportsAiTools(options.providerId);
   if (!useTools) {
     return options.execute({ ...baseRequest, enable_tools: false });
   }
@@ -59,14 +82,14 @@ export async function executeAiWithTools(
   for (let round = 0; round < maxRounds; round += 1) {
     const request: AiExecuteRequest =
       round === 0
-        ? { ...baseRequest, enable_tools: true, tools: MACH_AI_TOOL_DEFINITIONS }
+        ? { ...baseRequest, enable_tools: true, tools: combinedTools }
         : {
             ...baseRequest,
             prompt: "",
             history: undefined,
             context: undefined,
             enable_tools: true,
-            tools: MACH_AI_TOOL_DEFINITIONS,
+            tools: combinedTools,
             provider_messages: providerMessages,
             use_provider_messages: true,
           };
@@ -84,8 +107,32 @@ export async function executeAiWithTools(
     }
     providerMessages.push(assistantMessageWithToolCalls(toolCalls));
     for (const call of toolCalls) {
-      const result = resolveAiToolCall(call, options.toolContext);
-      providerMessages.push(toolResultMessage(call, result));
+      const mcpTarget = parseQualifiedMcpToolName(call.name);
+      if (mcpTarget && options.callMcpTool) {
+        try {
+          const parsedArgs = parseMcpToolArguments(call.arguments);
+          const mcpResult = await options.callMcpTool(
+            mcpTarget.serverId,
+            mcpTarget.toolName,
+            parsedArgs,
+          );
+          const output = mcpResult.isError
+            ? `MCP Error (${mcpTarget.serverId}/${mcpTarget.toolName}): ${mcpResult.output}`
+            : mcpResult.output;
+          providerMessages.push(toolResultMessage(call, output));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          providerMessages.push(
+            toolResultMessage(
+              call,
+              `MCP Error (${mcpTarget.serverId}/${mcpTarget.toolName}): ${msg}`,
+            ),
+          );
+        }
+      } else {
+        const result = resolveAiToolCall(call, options.toolContext);
+        providerMessages.push(toolResultMessage(call, result));
+      }
     }
   }
 

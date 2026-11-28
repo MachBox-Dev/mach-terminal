@@ -1,10 +1,54 @@
 import { sliceBufferForRun, type RunLedgerState, type RunRecord } from "./runLedger";
-import { trimAiContextExcerpt, type AiPromptContextPayload } from "./terminal";
+import {
+  trimAiContextExcerpt,
+  type AiPromptContextPayload,
+  type McpClientToolDescriptor,
+} from "./terminal";
 
 export const AI_TOOL_GET_COMMAND_OUTPUT = "get_command_output";
 export const AI_TOOL_LIST_COMMAND_RUNS = "list_command_runs";
+export const MCP_TOOL_QUALIFIED_PREFIX = "mcp__";
 
 export const AI_TOOL_MAX_OUTPUT_CHARS = 8_000;
+
+export function parseQualifiedMcpToolName(
+  qualifiedName: string,
+): { serverId: string; toolName: string } | null {
+  if (!qualifiedName.startsWith(MCP_TOOL_QUALIFIED_PREFIX)) {
+    return null;
+  }
+  const rest = qualifiedName.slice(MCP_TOOL_QUALIFIED_PREFIX.length);
+  const sepIdx = rest.indexOf("__");
+  if (sepIdx <= 0) {
+    return null;
+  }
+  const serverId = rest.slice(0, sepIdx).trim();
+  const toolName = rest.slice(sepIdx + 2).trim();
+  if (!serverId || !toolName) {
+    return null;
+  }
+  return { serverId, toolName };
+}
+
+export function mcpToolDescriptorsToOpenAiTools(descriptors: McpClientToolDescriptor[]) {
+  return descriptors.map((desc) => ({
+    type: "function" as const,
+    function: {
+      name: desc.qualifiedName,
+      description: desc.description
+        ? `[MCP:${desc.serverName}] ${desc.description}`
+        : `[MCP:${desc.serverName}] ${desc.toolName}`,
+      parameters:
+        desc.inputSchema && typeof desc.inputSchema === "object"
+          ? desc.inputSchema
+          : { type: "object", properties: {} },
+    },
+  }));
+}
+
+export function parseMcpToolArguments(raw: string): Record<string, unknown> {
+  return parseToolArgs(raw);
+}
 
 export interface AiToolContext {
   sessionId: string;

@@ -1,7 +1,7 @@
 use crate::models::{
-    AppSettings, LegacyAppSettings, ProfilePatch, ProviderRoutingPatch, ProviderRoutingSettings, ProviderSettings,
-    SettingsSchemaDebug, ShellIntegrationPatch, ShellIntegrationSettings, ShellPreset, TerminalProfile,
-    SETTINGS_SCHEMA_VERSION,
+    AppSettings, LegacyAppSettings, McpClientServerConfig, McpSettings, ProfilePatch, ProviderRoutingPatch,
+    ProviderRoutingSettings, ProviderSettings, SettingsSchemaDebug, ShellIntegrationPatch,
+    ShellIntegrationSettings, ShellPreset, TerminalProfile, SETTINGS_SCHEMA_VERSION,
 };
 use reqwest::Url;
 use std::fs;
@@ -242,6 +242,7 @@ pub fn load_settings_from_path(path: &Path) -> Result<AppSettings, String> {
                         provider_routing: legacy.provider_routing,
                         shell_integration: ShellIntegrationSettings::default(),
                         shell_presets: Vec::new(),
+                        mcp: McpSettings::default(),
                     },
                     true,
                 )
@@ -415,6 +416,28 @@ pub fn set_shell_presets(app: &AppHandle, presets: Vec<ShellPreset>) -> Result<V
     update_settings(app, |settings| {
         settings.shell_presets = presets.clone();
         Ok(presets)
+    })
+}
+
+pub fn get_mcp_settings(app: &AppHandle) -> Result<McpSettings, String> {
+    Ok(load_settings(app)?.mcp)
+}
+
+pub fn set_mcp_server_enabled(app: &AppHandle, enabled: bool) -> Result<McpSettings, String> {
+    update_settings(app, |settings| {
+        settings.mcp.server_enabled = enabled;
+        Ok(settings.mcp.clone())
+    })
+}
+
+pub fn set_mcp_client_servers(
+    app: &AppHandle,
+    servers: Vec<McpClientServerConfig>,
+) -> Result<McpSettings, String> {
+    crate::mcp_client::validate_mcp_client_servers(&servers)?;
+    update_settings(app, |settings| {
+        settings.mcp.client_servers = servers.clone();
+        Ok(settings.mcp.clone())
     })
 }
 

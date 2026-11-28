@@ -26,6 +26,7 @@ import {
   MACH_MINIMAL_PROMPT_ZSH,
 } from "../core/machShellSnippets";
 import { HistoryPanel } from "./HistoryPanel";
+import { McpSettingsSection } from "./McpSettingsSection";
 import { ShellIntegrationSection } from "./ShellIntegrationSection";
 import { StatusStripSettingsSection } from "./StatusStripSettingsSection";
 import { TerminalProfileSection } from "./TerminalProfileSection";
@@ -38,6 +39,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "settings-section-runtime", label: "Runtime" },
   { id: "settings-section-terminal-profile", label: "Terminal profile" },
   { id: "settings-section-ai-providers", label: "AI providers" },
+  { id: "settings-section-mcp", label: "AI Agent (MCP)" },
   { id: "settings-section-status-strip", label: "Status strip" },
   { id: "settings-section-shell-integration", label: "Shell integration" },
   { id: "settings-section-session", label: "Session & layout" },
@@ -143,6 +145,9 @@ export type AppSettingsModalProps = {
   /** When true, eligible AI providers may call read-only ops-rail tools. */
   enableAiTools: boolean;
   onEnableAiToolsChange: (enabled: boolean) => void;
+  /** When true, eligible AI providers may call tools from configured external MCP servers. */
+  enableMcpClientTools?: boolean;
+  onEnableMcpClientToolsChange?: (enabled: boolean) => void;
   /** Show composer completion assist metrics outside dev builds. */
   showComposerAssistMetrics: boolean;
   onShowComposerAssistMetricsChange: (enabled: boolean) => void | Promise<void>;
@@ -506,6 +511,14 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
                 ) : null}
               </div>
             </section>
+
+            <div className="settings-pane" hidden={paneHidden("settings-section-mcp")}>
+              <McpSettingsSection
+                modalOpen={props.open}
+                enableMcpClientTools={props.enableMcpClientTools ?? true}
+                onEnableMcpClientToolsChange={(enabled) => props.onEnableMcpClientToolsChange?.(enabled)}
+              />
+            </div>
 
             <div className="settings-pane" hidden={paneHidden("settings-section-status-strip")}>
               <StatusStripSettingsSection modalOpen={props.open} sectionId="settings-section-status-strip" />

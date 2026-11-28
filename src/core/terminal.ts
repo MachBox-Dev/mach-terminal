@@ -673,6 +673,76 @@ export async function shellPresetsSet(presets: ShellPreset[]) {
   return invoke<ShellPreset[]>("shell_presets_set", { presets });
 }
 
+export interface McpClientServerConfig {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface McpSettings {
+  serverEnabled: boolean;
+  clientServers: McpClientServerConfig[];
+}
+
+export interface McpServerStatus {
+  enabled: boolean;
+  binaryPath: string | null;
+  configDir: string;
+}
+
+export interface McpClientToolDescriptor {
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  qualifiedName: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface McpClientToolCallResult {
+  serverId: string;
+  toolName: string;
+  output: string;
+  isError: boolean;
+}
+
+export async function mcpSettingsGet() {
+  return invoke<McpSettings>("mcp_settings_get");
+}
+
+export async function mcpServerStatus() {
+  return invoke<McpServerStatus>("mcp_server_status");
+}
+
+export async function mcpServerSetEnabled(enabled: boolean) {
+  return invoke<McpServerStatus>("mcp_server_set_enabled", { enabled });
+}
+
+export async function mcpClientServersSet(servers: McpClientServerConfig[]) {
+  return invoke<McpSettings>("mcp_client_servers_set", { servers });
+}
+
+export async function mcpClientDiscoverTools(serverId?: string | null) {
+  return invoke<McpClientToolDescriptor[]>("mcp_client_discover_tools", {
+    serverId: serverId ?? null,
+  });
+}
+
+export async function mcpClientCallTool(
+  serverId: string,
+  toolName: string,
+  argumentsPayload: Record<string, unknown>,
+) {
+  return invoke<McpClientToolCallResult>("mcp_client_call_tool", {
+    serverId,
+    toolName,
+    arguments: argumentsPayload,
+  });
+}
+
 export async function shellIntegrationInstall(shellKind: "pwsh" | "bash" | "zsh") {
   return invoke<void>("shell_integration_install", { shell_kind: shellKind });
 }

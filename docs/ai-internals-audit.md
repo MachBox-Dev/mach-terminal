@@ -12,12 +12,12 @@ Living notes on the Mach Terminal AI stack.
 | Persona | `system_prompt` in routing → system message (OpenAI/Ollama) or Anthropic `system` field |
 | Chat persistence | `localStorage` keyed by stable `chatKey` on `RestorableSession`; survives full app restart |
 | Read-only tools | `list_command_runs` + `get_command_output` (ops-rail ledger); native tool loop for OpenAI-compatible, Ollama, and Anthropic via `executeAiWithTools` (max 4 rounds); toggle **Enable AI command-log tools** in Settings |
+| MCP server & client bridge | `mach-terminal-mcp` stdio sidecar + native `mcp_client.rs` bridge into `executeAiWithTools` for external MCP servers (Mach Triage, Mach Armory, custom stdio servers) |
 
 ## Still open
 
 ### Tooling
 - No write/exec tools (file read, run command, etc.)
-- No MCP / plugin bridge into AI context
 - Explain / Safer lack **apply to composer**
 
 ### Context window

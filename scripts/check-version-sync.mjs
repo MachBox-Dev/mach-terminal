@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf-8"));
 const cargoToml = readFileSync(resolve("src-tauri/Cargo.toml"), "utf-8");
+const mcpCargoToml = readFileSync(resolve("src-tauri/mcp/Cargo.toml"), "utf-8");
 const tauriConfig = JSON.parse(readFileSync(resolve("src-tauri/tauri.conf.json"), "utf-8"));
 
 const cargoMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
@@ -11,9 +12,16 @@ if (!cargoMatch) {
   process.exit(1);
 }
 
+const mcpCargoMatch = mcpCargoToml.match(/^version\s*=\s*"([^"]+)"/m);
+if (!mcpCargoMatch) {
+  console.error("Could not parse version from src-tauri/mcp/Cargo.toml");
+  process.exit(1);
+}
+
 const versions = {
   package: packageJson.version,
   cargo: cargoMatch[1],
+  mcpCargo: mcpCargoMatch[1],
   tauri: tauriConfig.version,
 };
 
